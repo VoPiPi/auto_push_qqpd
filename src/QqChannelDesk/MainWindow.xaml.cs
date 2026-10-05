@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private readonly ContentLibraryStore _contentLibrary = new();
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
+    private readonly UpdateCheckService _updateCheckService = new();
     private readonly AppDatabaseInitializer _databaseInitializer;
     private readonly AppLogger _logger = AppLogger.Instance;
     private readonly DiagnosticsPage _diagnosticsPage = new();
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
     private bool _isInstalling;
     private bool _startupInstallPromptShown;
     private bool _isClosing;
+    private int _updateCheckActive;
     private bool _exitRequested;
     private CloseWindowBehavior _closeWindowBehavior = CloseWindowBehavior.ExitApplication;
     private DiagnosticEnvironmentSnapshot _diagnosticSnapshot = DiagnosticEnvironmentSnapshot.Unavailable;
@@ -69,6 +71,8 @@ public partial class MainWindow : Window
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _settingPage = new SettingPage(_settingsStore, _mediaStorage);
         _settingPage.SettingsChanged += SettingPage_SettingsChanged;
+        _settingPage.UpdateCheckRequested += SettingPage_UpdateCheckRequested;
+        _settingPage.OpenReleasesRequested += (_, _) => OpenReleasePage(UpdateCheckService.RepositoryReleaseUrl);
         _pages = new Dictionary<string, UserControl>
         {
             ["环境检查"] = _diagnosticsPage,
@@ -135,6 +139,8 @@ public partial class MainWindow : Window
             var settings = await _settingsStore.GetAsync();
             _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
             _scheduler.Start(settings.RunTasksOnStartup);
+            if (settings.NotifyUpgrade)
+                _ = CheckForUpdatesAsync(showNoUpdate: false, delayed: true);
         };
     }
 
@@ -184,6 +190,92 @@ public partial class MainWindow : Window
     private void SettingPage_SettingsChanged(AppSettings settings)
     {
         _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
+    }
+
+    private async void SettingPage_UpdateCheckRequested(object? sender, EventArgs e) =>
+        await CheckForUpdatesAsync(showNoUpdate: true);
+
+    private async Task CheckForUpdatesAsync(bool showNoUpdate, bool delayed = false)
+    {
+        if (Interlocked.CompareExchange(ref _updateCheckActive, 1, 0) != 0) return;
+
+        try
+        {
+            if (delayed)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                if (_isClosing || !(await _settingsStore.GetAsync()).NotifyUpgrade) return;
+            }
+
+            _settingPage.SetUpdateCheckInProgress(true);
+            UpdateCheckResult result;
+            try
+            {
+                result = await _updateCheckService.CheckAsync(ApplicationVersionInfo.CurrentVersion);
+            }
+            catch (Exception ex)
+            {
+                result = new(false, false, $"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+            finally
+            {
+                _settingPage.SetUpdateCheckInProgress(false);
+            }
+
+            if (_isClosing) return;
+            _settingPage.DisplayUpdateCheckResult(result);
+            if (!result.Succeeded)
+            {
+                _logger.Warning(result.Message);
+                if (showNoUpdate)
+                    MessageBox.Show(this, result.Message, "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (result.LatestRelease is not { } release)
+            {
+                if (showNoUpdate)
+                    MessageBox.Show(this, result.Message, "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            // 启动时只提示新版本；手动检查则展示当前 Release 的说明，方便用户确认变更内容。
+            if (!result.HasUpdate && !showNoUpdate) return;
+            if (!showNoUpdate && !(await _settingsStore.GetAsync()).NotifyUpgrade) return;
+
+            _logger.Info(result.Message);
+            var prompt = UpdateCheckService.BuildReleasePrompt(ApplicationVersionInfo.CurrentVersion, result);
+            var promptTitle = result.HasUpdate ? "发现新版本" : "检查更新";
+            if (MessageBox.Show(this, prompt, promptTitle, MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                OpenReleasePage(release.ReleaseUrl);
+        }
+        catch (Exception ex)
+        {
+            if (!_isClosing)
+            {
+                _logger.Warning($"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                if (showNoUpdate)
+                    MessageBox.Show(this, $"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        finally
+        {
+            _settingPage.SetUpdateCheckInProgress(false);
+            Interlocked.Exchange(ref _updateCheckActive, 0);
+        }
+    }
+
+    private void OpenReleasePage(string url)
+    {
+        if (!UpdateCheckService.IsAllowedReleaseUrl(url)) url = UpdateCheckService.RepositoryReleaseUrl;
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开 Gitee Releases：{CliDiagnostics.Sanitize(ex.Message)}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async void NavigationButton_Click(object sender, RoutedEventArgs e)
@@ -677,6 +769,7 @@ public partial class MainWindow : Window
     {
         _logger.EntryWritten -= Logger_EntryWritten;
         _settingPage.SettingsChanged -= SettingPage_SettingsChanged;
+        _settingPage.UpdateCheckRequested -= SettingPage_UpdateCheckRequested;
         _trayIcon?.Dispose();
         base.OnClosed(e);
     }
