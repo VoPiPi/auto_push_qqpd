@@ -1,0 +1,29 @@
+<Window x:Class="QqChannelDesk.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="腾讯频道官方扫码授权" Height="470" Width="560" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Canvas}">
+  <Grid Margin="24">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="使用 QQ 扫码授权" FontSize="22" FontWeight="SemiBold" />
+      <TextBlock Text="二维码由 tencent-channel-cli 官方登录流程生成；授权凭证由 CLI 本机管理。" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+    </StackPanel>
+    <Grid Grid.Row="1" Margin="0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border Width="210" Height="210" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="8" HorizontalAlignment="Left">
+        <Image x:Name="QrImage" Stretch="Uniform" />
+      </Border>
+      <StackPanel Grid.Column="1" Margin="20,4,0,0" VerticalAlignment="Center">
+        <TextBlock x:Name="LoginStatus" Text="正在请求二维码…" FontWeight="SemiBold" />
+        <Button x:Name="OpenLinkButton" Content="在浏览器打开授权页" Margin="0,14,0,0" Padding="12,7" Style="{StaticResource QuietButton}"
+                HorizontalAlignment="Left" Click="OpenLinkButton_Click" IsEnabled="False" />
+        <TextBlock Text="扫码后本窗口会等待授权完成。不要分享二维码或授权链接。" Foreground="{StaticResource Warn}" FontSize="12" Margin="0,16,0,0" />
+      </StackPanel>
+    </Grid>
+    <DockPanel Grid.Row="2">
+      <TextBlock x:Name="TimeRemaining" Text="授权有效期最长约 10 分钟" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+      <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="取消" Padding="16,7" Click="CancelButton_Click" />
+    </DockPanel>
+  </Grid>
+</Window>

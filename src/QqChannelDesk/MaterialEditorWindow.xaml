@@ -1,0 +1,42 @@
+<Window x:Class="QqChannelDesk.MaterialEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="素材" Width="720" Height="760" MinWidth="620" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Canvas}" ResizeMode="CanResize">
+  <Grid Margin="24">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock x:Name="Heading" Text="新增素材" Style="{StaticResource PageTitle}" Margin="0,0,0,16"/>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/><TextBox x:Name="TitleBox"/>
+        <TextBlock Text="类型" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><ComboBox x:Name="TypeCombo" SelectedIndex="0" SelectionChanged="TypeCombo_SelectionChanged"><ComboBoxItem Content="文本" Tag="text"/><ComboBoxItem Content="图片" Tag="image"/><ComboBoxItem Content="视频" Tag="video"/></ComboBox>
+        <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><TextBox x:Name="ContentBox" MinHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+        <TextBlock Text="媒体文件或链接" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
+        <TextBlock Text="可选择本地文件，也可粘贴公开 HTTP/HTTPS 链接；每行一个。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6"/>
+        <DockPanel Margin="0,0,0,6">
+          <Button DockPanel.Dock="Right" Content="清空" Style="{StaticResource QuietButton}" Margin="6,0,0,0" Click="ClearMediaButton_Click"/>
+          <Button DockPanel.Dock="Right" Content="选择本地文件" Style="{StaticResource QuietButton}" Click="SelectMediaButton_Click"/>
+          <TextBlock x:Name="MediaSelectionHint" Text="图片可多选，视频请选择一个文件。" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+        </DockPanel>
+        <TextBox x:Name="MediaLinksBox" MinHeight="76" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" TextChanged="MediaLinksBox_TextChanged"/>
+        <TextBlock Text="频道/版块" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+          <ComboBox x:Name="GuildCombo" DisplayMemberPath="DisplayName" IsEditable="True" IsReadOnly="True" Text="-" SelectionChanged="GuildCombo_SelectionChanged"/>
+          <ComboBox x:Name="ChannelCombo" Grid.Column="2" DisplayMemberPath="DisplayName" IsEditable="True" IsReadOnly="True" Text="-"/>
+        </Grid>
+        <CheckBox x:Name="ScheduleEnabledCheckBox" Content="设置发布时间" Margin="0,14,0,6" Checked="ScheduleEnabledCheckBox_Changed" Unchecked="ScheduleEnabledCheckBox_Changed"/>
+        <Grid x:Name="ScheduleControls" Visibility="Collapsed">
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+          <DatePicker x:Name="PublishDatePicker"/>
+          <TextBox x:Name="PublishTimeBox" Grid.Column="2" VerticalContentAlignment="Center" ToolTip="时:分:秒，例如 14:30:00"/>
+        </Grid>
+        <TextBlock x:Name="FormMessage" Foreground="{StaticResource Warn}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+      </StackPanel>
+    </ScrollViewer>
+    <DockPanel Grid.Row="2" Margin="0,16,0,0">
+      <Button DockPanel.Dock="Right" Content="取消" IsCancel="True" Margin="8,0,0,0"/>
+      <Button DockPanel.Dock="Right" Content="保存素材" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click"/>
+      <Button Content="刷新频道" Style="{StaticResource QuietButton}" Click="RefreshButton_Click"/>
+    </DockPanel>
+  </Grid>
+</Window>

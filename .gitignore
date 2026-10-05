@@ -1,0 +1,36 @@
+# .NET and Visual Studio build output
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.rsuser
+
+# Local application data
+channels.db
+channels.db-*
+*.db
+*.db-*
+channels.sync.json
+settings.json
+logs/
+**/logs/
+temp/
+**/temp/
+media-cache/
+**/media-cache/
+
+# Extracted or downloaded runtime tools
+src/QqChannelDesk/tools/ffmpeg/
+src/QqChannelDesk/tools/media-cache/
+
+# Local environment and editor files
+.env
+.env.*
+*.local.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini

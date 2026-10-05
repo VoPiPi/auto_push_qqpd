@@ -1,0 +1,51 @@
+<UserControl x:Class="QqChannelDesk.Pages.DiagnosticsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="34,28,34,26">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel Grid.Row="0" Margin="0,0,0,22">
+            <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Padding="16,9" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
+      <StackPanel><TextBlock Text="环境检查" Style="{StaticResource PageTitle}"/><TextBlock Text="检查本机运行依赖；扫码登录与真实发帖均由你手动触发并确认。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/></StackPanel>
+    </DockPanel>
+    <Border Grid.Row="1" Background="{StaticResource WarnSoft}" BorderBrush="#F0D3A7" BorderThickness="1" CornerRadius="5" Padding="14,11" Margin="0,0,0,16">
+      <TextBlock Text="安全提示：请在 CLI 自带的官方扫码授权流程中登录。此工具不会读取浏览器 Cookie，也不会要求你粘贴 Token。" Foreground="#75440E"/>
+    </Border>
+    <Grid Grid.Row="2">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <StackPanel Grid.Row="0">
+        <TextBlock Text="运行环境" Style="{StaticResource SectionTitle}"/>
+        <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="16" Margin="0,0,0,18">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Text="Node.js" Foreground="{StaticResource Muted}" Margin="0,3,12,12"/><TextBlock x:Name="NodeValue" Grid.Row="0" Grid.Column="1" Text="正在检查…" Margin="0,3,12,12"/><TextBlock x:Name="NodeBadge" Grid.Row="0" Grid.Column="2" Text="检查中" Foreground="{StaticResource Muted}" Margin="0,3,0,12"/>
+            <TextBlock Grid.Row="1" Text="频道 CLI" Foreground="{StaticResource Muted}" Margin="0,3,12,12"/><TextBlock x:Name="CliValue" Grid.Row="1" Grid.Column="1" Text="正在检查…" Margin="0,3,12,12"/><TextBlock x:Name="CliBadge" Grid.Row="1" Grid.Column="2" Text="检查中" Foreground="{StaticResource Muted}" Margin="0,3,0,12"/>
+            <Button x:Name="InstallNodeButton" Grid.Row="0" Grid.Column="3" Content="安装 Node.js" Padding="10,4" Margin="12,0,0,8" Background="{StaticResource AccentSoft}" Foreground="{StaticResource Accent}" BorderBrush="{StaticResource Line}" Click="InstallNodeButton_Click" Visibility="Collapsed"/>
+            <Button x:Name="InstallCliButton" Grid.Row="1" Grid.Column="3" Content="安装/升级 CLI" Padding="10,4" Margin="12,0,0,8" Background="{StaticResource AccentSoft}" Foreground="{StaticResource Accent}" BorderBrush="{StaticResource Line}" Click="InstallCliButton_Click" Visibility="Collapsed"/>
+            <TextBlock Grid.Row="2" Text="FFmpeg" Foreground="{StaticResource Muted}" Margin="0,3,12,12"/><TextBlock x:Name="FfmpegValue" Grid.Row="2" Grid.Column="1" Text="正在检查…" Margin="0,3,12,12"/><TextBlock x:Name="FfmpegBadge" Grid.Row="2" Grid.Column="2" Text="检查中" Foreground="{StaticResource Muted}" Margin="0,3,0,12"/>
+            <TextBlock x:Name="InstallFfmpegButton" Grid.Row="2" Grid.Column="3" Margin="12,3,0,12" VerticalAlignment="Center" Visibility="Collapsed"><Hyperlink Click="InstallFfmpegButton_Click" Foreground="{StaticResource Accent}"><Run Text="手动部署"/></Hyperlink></TextBlock>
+            <TextBlock Grid.Row="3" Text="登录状态" Foreground="{StaticResource Muted}" Margin="0,3,12,0"/><TextBlock x:Name="LoginValue" Grid.Row="3" Grid.Column="1" Text="等待 CLI 检查" Margin="0,3,12,0"/><TextBlock x:Name="LoginBadge" Grid.Row="3" Grid.Column="2" Text="未检查" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/><TextBlock x:Name="LoginAction" Grid.Row="3" Grid.Column="3" Margin="12,3,0,0" VerticalAlignment="Center" Visibility="Collapsed"><Hyperlink Click="LoginAction_Click" Foreground="{StaticResource Accent}"><Run Text="扫码登录"/></Hyperlink></TextBlock>
+          </Grid>
+        </Border>
+      </StackPanel>
+      <StackPanel Grid.Row="1">
+        <TextBlock Text="手动发帖验证" Style="{StaticResource SectionTitle}"/>
+        <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="16" Margin="0,0,0,18">
+          <StackPanel>
+            <TextBlock Text="选择内容类型开始验证；每次真实发帖前都会显示预览并要求确认。" Foreground="{StaticResource Muted}" Margin="0,0,0,12"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Background="#F5F7F5" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,8,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="文本" FontWeight="SemiBold"/><TextBlock x:Name="TextFeedStatus" Text="待人工验证" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/></StackPanel><Button Grid.Column="1" Content="验证" Padding="12,6" VerticalAlignment="Center" Click="TextFeedButton_Click"/></Grid></Border>
+              <Border Grid.Column="1" Background="#F5F7F5" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="4,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="图片" FontWeight="SemiBold"/><TextBlock x:Name="ImageFeedStatus" Text="待人工验证" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/></StackPanel><Button Grid.Column="1" Content="验证" Padding="12,6" VerticalAlignment="Center" Click="ImageFeedButton_Click"/></Grid></Border>
+              <Border Grid.Column="2" Background="#F5F7F5" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="8,0,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="视频" FontWeight="SemiBold"/><TextBlock x:Name="VideoFeedStatus" Text="待人工验证" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/></StackPanel><Button Grid.Column="1" Content="验证" Padding="12,6" VerticalAlignment="Center" Click="VideoFeedButton_Click"/></Grid></Border>
+            </Grid>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+      <Grid Grid.Row="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,8"><CheckBox x:Name="DebugModeToggle" DockPanel.Dock="Right" Content="调试模式" VerticalAlignment="Center" ToolTip="开启后在下方显示详细操作和脱敏后的 CLI JSON；关闭时只写入本地日志文件。" Checked="DebugModeToggle_Changed" Unchecked="DebugModeToggle_Changed"/><TextBlock Text="诊断记录" Style="{StaticResource SectionTitle}"/></DockPanel>
+        <Border Grid.Row="1" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="12"><TextBox x:Name="DiagnosticLog" IsReadOnly="True" BorderThickness="0" Background="Transparent" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="72" VerticalAlignment="Stretch"/></Border>
+      </Grid>
+    </Grid>
+    <DockPanel Grid.Row="3" Margin="0,14,0,0"><TextBlock x:Name="FooterStatus" Text="准备检查" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/><TextBlock DockPanel.Dock="Right" Text="不会保存账号凭证" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></DockPanel>
+  </Grid>
+</UserControl>

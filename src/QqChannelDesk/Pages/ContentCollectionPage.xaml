@@ -1,0 +1,126 @@
+<UserControl x:Class="QqChannelDesk.Pages.ContentCollectionPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="28,24,28,22">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <DockPanel Grid.Row="0" Margin="0,0,0,14">
+      <TextBlock Text="公开网页内容先进入本地收件箱；保存或发布前请确认内容使用权限。" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+      <TextBlock DockPanel.Dock="Right" Text="不下载媒体 · 不自动发布" Foreground="{StaticResource Info}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+    </DockPanel>
+    <TabControl Grid.Row="1" x:Name="WorkspaceTabs">
+      <TabItem Header="内容收件箱">
+        <Grid Margin="12">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <Border Grid.ColumnSpan="2" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBox x:Name="UrlBox" VerticalContentAlignment="Center" ToolTip="输入公开网页 HTTP/HTTPS 地址"/>
+              <Button x:Name="FetchButton" Grid.Column="1" Content="提取网页" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="FetchButton_Click"/>
+              <Button Grid.Column="2" Content="新建手动素材" Margin="8,0,0,0" Click="NewItemButton_Click"/>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <WrapPanel Margin="0,0,0,8">
+              <TextBox x:Name="ItemSearchBox" Width="190" Margin="0,0,8,0" ToolTip="搜索标题、正文、来源或标签" KeyDown="SearchBox_KeyDown"/>
+              <ComboBox x:Name="ItemStatusFilter" Width="112" SelectedIndex="0" SelectionChanged="ItemStatusFilter_SelectionChanged"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待处理"/><ComboBoxItem Content="保留"/><ComboBoxItem Content="忽略"/><ComboBoxItem Content="已转草稿"/></ComboBox>
+              <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchItemsButton_Click"/>
+            </WrapPanel>
+            <DataGrid x:Name="ItemsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="ItemsGrid_SelectionChanged" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="150" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="来源" Binding="{Binding SourceHost}" Width="85" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="采集时间" Binding="{Binding CollectedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
+              </DataGrid.Columns>
+            </DataGrid>
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="ItemsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+                  <Button x:Name="ItemsPreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="ItemsPreviousPageButton_Click" />
+                  <TextBlock x:Name="ItemsPageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
+                  <Button x:Name="ItemsNextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="ItemsNextPageButton_Click" />
+                </StackPanel>
+              </StackPanel>
+            </Grid>
+          </Grid>
+          <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <TextBlock Text="素材详情" Style="{StaticResource SectionTitle}"/>
+              <TextBlock Text="原文链接" Foreground="{StaticResource Muted}" Margin="0,4,0,4"/>
+              <TextBox x:Name="ItemUrlBox" IsReadOnly="True" ToolTip="来源链接只作为出处信息，不会附加到帖子正文"/>
+              <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="ItemTitleBox"/>
+              <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="ItemContentBox" MinHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+              <TextBlock Text="备注" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="ItemNotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" VerticalContentAlignment="Top"/>
+              <TextBlock Text="标签（用逗号分隔）" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="ItemTagsBox"/>
+              <TextBlock x:Name="ItemMessage" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,9,0,0"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Button Content="保存修改" Style="{StaticResource QuietButton}" Click="SaveItemButton_Click"/>
+                <Button Content="保留" Margin="8,0,0,0" Click="KeepItemButton_Click"/>
+                <Button Content="忽略" Margin="8,0,0,0" Click="IgnoreItemButton_Click"/>
+                <Button Content="转为发布草稿" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="CreateDraftButton_Click"/>
+                <Button Content="删除" Margin="8,0,0,0" Click="DeleteItemButton_Click"/>
+              </WrapPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem Header="发布草稿箱">
+        <Grid Margin="12">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
+            <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource QuietButton}" Click="SearchDraftsButton_Click"/>
+            <TextBox x:Name="DraftSearchBox" Width="260" ToolTip="搜索草稿标题、正文或来源" KeyDown="SearchBox_KeyDown"/>
+            <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchDraftsButton_Click"/>
+          </DockPanel>
+          <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DataGrid x:Name="DraftsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="DraftsGrid_SelectionChanged" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="155" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="发布状态" Binding="{Binding PublishStatus}" Width="90" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
+              </DataGrid.Columns>
+            </DataGrid>
+            <Grid Grid.Row="1" Margin="0,8,0,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="DraftsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+                  <Button x:Name="DraftsPreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="DraftsPreviousPageButton_Click" />
+                  <TextBlock x:Name="DraftsPageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
+                  <Button x:Name="DraftsNextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="DraftsNextPageButton_Click" />
+                </StackPanel>
+              </StackPanel>
+            </Grid>
+          </Grid>
+          <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <TextBlock Text="草稿编辑" Style="{StaticResource SectionTitle}"/>
+              <TextBlock Text="来源链接" Foreground="{StaticResource Muted}" Margin="0,4,0,4"/>
+              <TextBox x:Name="DraftSourceBox" IsReadOnly="True"/>
+              <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="DraftTitleBox"/>
+              <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
+              <TextBox x:Name="DraftContentBox" MinHeight="220" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+              <TextBlock x:Name="DraftMessage" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Button Content="保存草稿" Style="{StaticResource QuietButton}" Click="SaveDraftButton_Click"/>
+                <Button Content="预览并发布" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="PublishDraftButton_Click"/>
+                <Button Content="删除" Margin="8,0,0,0" Click="DeleteDraftButton_Click"/>
+              </WrapPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</UserControl>

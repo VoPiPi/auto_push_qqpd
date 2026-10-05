@@ -1,0 +1,52 @@
+<UserControl x:Class="QqChannelDesk.Pages.HistoryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <UserControl.Resources>
+    <Style x:Key="FilterLabel" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="FontSize" Value="12"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Margin" Value="0,0,6,0"/></Style>
+    <Style x:Key="HistoryCellText" TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="HorizontalAlignment" Value="Left"/><Setter Property="TextWrapping" Value="NoWrap"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/></Style>
+    <Style x:Key="HistoryGridRow" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}"><Setter Property="MinHeight" Value="26"/></Style>
+    <Style x:Key="HistoryGridCell" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}"><Setter Property="Padding" Value="8,1"/></Style>
+  </UserControl.Resources>
+  <Grid Margin="34,28,34,26">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel Grid.Row="0" Margin="0,0,0,16">
+      <Button DockPanel.Dock="Right" Content="刷新记录" Style="{StaticResource QuietButton}" Click="HistoryRefreshButton_Click"/>
+      <StackPanel><TextBlock Text="发布记录" Style="{StaticResource PageTitle}"/><TextBlock Text="默认显示最近 7 天、最多 100 条发布操作；标题/内容筛选匹配标题和结果摘要。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/></StackPanel>
+    </DockPanel>
+    <Border Grid.Row="1" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14" KeyDown="HistoryFilter_KeyDown">
+      <WrapPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6"><TextBlock Text="发布时间" Style="{StaticResource FilterLabel}"/><DatePicker x:Name="StartDatePicker" Width="132" SelectedDateFormat="Short" Language="sv-SE" ToolTip="按自然日筛选"/><TextBlock Text="至" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="8,0"/><DatePicker x:Name="EndDatePicker" Width="132" SelectedDateFormat="Short" Language="sv-SE" ToolTip="按自然日筛选"/></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6"><TextBlock Text="类型" Style="{StaticResource FilterLabel}"/><ComboBox x:Name="TypeFilterComboBox" Width="100" SelectedIndex="0"><ComboBoxItem Tag="全部" Content="全部"/><ComboBoxItem Tag="文本" Content="文本"/><ComboBoxItem Tag="图片" Content="图片"/><ComboBoxItem Tag="视频" Content="视频"/></ComboBox></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6"><TextBlock Text="标题/内容" Style="{StaticResource FilterLabel}"/><TextBox x:Name="KeywordFilterTextBox" Width="220" ToolTip="模糊匹配标题或结果摘要"/></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <Button Content="筛选" Style="{StaticResource QuietButton}" Padding="18,7" Click="HistoryFilterButton_Click"/><Button Content="重置" Style="{StaticResource QuietButton}" Padding="18,7" Margin="8,0,0,0" Click="HistoryResetButton_Click"/></StackPanel>
+      </WrapPanel>
+    </Border>
+    <Grid Grid.Row="2">
+      <DataGrid x:Name="RecordsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource HistoryGridRow}" CellStyle="{StaticResource HistoryGridCell}" MouseDoubleClick="RecordsGrid_MouseDoubleClick">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTemplateColumn Header="标题" Width="220"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Title}" ToolTip="{Binding Title}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTemplateColumn Header="类型" Width="50"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding TypeName}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTemplateColumn Header="频道/板块" Width="145"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Target}" ToolTip="{Binding Target}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTemplateColumn Header="状态" Width="50"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding StatusName}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTextColumn Header="发帖时间" Binding="{Binding StartedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="125" ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTemplateColumn Header="结果" Width="275"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Summary}" ToolTip="{Binding Summary}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTemplateColumn Header="跳转链接" Width="98"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"><Hyperlink Click="OpenPostUrl_Click" Tag="{Binding PostUrl}"><Hyperlink.Style><Style TargetType="Hyperlink"><Setter Property="TextDecorations" Value="Underline"/><Setter Property="Foreground" Value="{StaticResource TableLink}"/><Setter Property="Cursor" Value="Hand"/><Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource TableLinkHover}"/></Trigger><DataTrigger Binding="{Binding PostUrl}" Value=""><Setter Property="TextDecorations" Value="None"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Arrow"/></DataTrigger><DataTrigger Binding="{Binding PostUrl}" Value="{x:Null}"><Setter Property="TextDecorations" Value="None"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Arrow"/></DataTrigger></Style.Triggers></Style></Hyperlink.Style><Run Text="查看帖子"/></Hyperlink></TextBlock></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+        </DataGrid.Columns>
+      </DataGrid>
+      <Border x:Name="EmptyState" Margin="1,43,1,1" Background="#FBFCFB" CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed"><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock x:Name="EmptyTitle" Text="暂无发布记录" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock x:Name="EmptyMessage" Text="发布完成后，记录会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="380" Margin="0,7,0,0"/></StackPanel></Border>
+    </Grid>
+    <Grid Grid.Row="3" Margin="0,12,0,0">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock x:Name="StatusText" Text="尚未加载记录" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+        <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+          <Button x:Name="PreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click" />
+          <TextBlock x:Name="PageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
+          <Button x:Name="NextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="NextPageButton_Click" />
+        </StackPanel>
+      </StackPanel>
+      <TextBlock x:Name="LastRefreshText" Text="尚未刷新" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+    </Grid>
+  </Grid>
+</UserControl>

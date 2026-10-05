@@ -1,0 +1,17 @@
+<UserControl x:Class="QqChannelDesk.Pages.AccountManagementPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="34,28,34,26">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="账号管理" Style="{StaticResource PageTitle}" />
+      <TextBlock Text="查看和管理本机频道账号" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
+    </StackPanel>
+    <Border Grid.Row="1" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,24,0,0">
+      <StackPanel VerticalAlignment="Top" Margin="0,24,0,0">
+        <TextBlock Text="待开发" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="账号管理功能正在规划中。" Foreground="{StaticResource Muted}" Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>
