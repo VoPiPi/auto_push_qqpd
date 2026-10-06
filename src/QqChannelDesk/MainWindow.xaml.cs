@@ -28,7 +28,10 @@ public partial class MainWindow : Window
     private readonly UpdateCheckService _updateCheckService = new();
     private readonly AppDatabaseInitializer _databaseInitializer;
     private readonly AppLogger _logger = AppLogger.Instance;
-    private readonly DiagnosticsPage _diagnosticsPage = new();
+    private readonly RuntimeSessionState _runtimeSession = new();
+    private readonly DashboardService _dashboardService;
+    private readonly OperationsCenterPage _operationsCenterPage;
+    private readonly LogPage _logPage;
     private readonly HistoryPage _historyPage;
     private readonly ContentCollectionPage _contentCollectionPage;
     private readonly MaterialsPage _materialsPage;
@@ -70,30 +73,35 @@ public partial class MainWindow : Window
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _settingPage = new SettingPage(_settingsStore, _mediaStorage);
+        _dashboardService = new DashboardService(_contentLibrary, _historyStore, _settingsStore);
+        _operationsCenterPage = new OperationsCenterPage(_dashboardService, _runtimeSession);
+        _logPage = new LogPage();
         _settingPage.SettingsChanged += SettingPage_SettingsChanged;
         _settingPage.UpdateCheckRequested += SettingPage_UpdateCheckRequested;
         _settingPage.OpenReleasesRequested += (_, _) => OpenReleasePage(UpdateCheckService.RepositoryReleaseUrl);
         _pages = new Dictionary<string, UserControl>
         {
-            ["环境检查"] = _diagnosticsPage,
+            ["运行中台"] = _operationsCenterPage,
             ["内容采集"] = _contentCollectionPage,
             ["素材仓库"] = _materialsPage,
             ["发布计划"] = _schedulePage,
             ["发布记录"] = _historyPage,
+            ["日志中心"] = _logPage,
             ["账号管理"] = new AccountManagementPage(),
             ["系统设置"] = _settingPage
         };
 
-        PageHost.Content = _diagnosticsPage;
-        _selectedNavigationButton = DiagnosticsNavButton;
+        PageHost.Content = _operationsCenterPage;
+        _selectedNavigationButton = OperationsNavButton;
         _logger.EntryWritten += Logger_EntryWritten;
-        _diagnosticsPage.RefreshRequested += async (_, _) => await RefreshDiagnosticsAsync();
-        _diagnosticsPage.InstallNodeRequested += async (_, _) => await InstallNodeAsync();
-        _diagnosticsPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
-        _diagnosticsPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
-        _diagnosticsPage.LoginRequested += async (_, _) => await LoginAsync();
-        _diagnosticsPage.PublishRequested += type => _ = OpenPublishDialogAsync(type);
-        _diagnosticsPage.DebugModeChanged += DebugMode_Changed;
+        _operationsCenterPage.RefreshRequested += async (_, _) => await RefreshDiagnosticsAsync();
+        _operationsCenterPage.InstallNodeRequested += async (_, _) => await InstallNodeAsync();
+        _operationsCenterPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
+        _operationsCenterPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
+        _operationsCenterPage.LoginRequested += async (_, _) => await LoginAsync();
+        _operationsCenterPage.PublishRequested += type => _ = OpenPublishDialogAsync(type);
+        _logPage.DebugModeChanged += DebugMode_Changed;
+        _scheduler.StatusChanged += Scheduler_StatusChanged;
         _contentCollectionPage.PublishDraftRequested += draft => _ = OpenDraftPublishDialogAsync(draft);
         _materialsPage.PublishMaterialRequested += material => _ = OpenMaterialPublishDialogAsync(material);
         InitializeTrayIcon();
@@ -111,7 +119,7 @@ public partial class MainWindow : Window
             {
                 var message = CliDiagnostics.Sanitize(ex.Message);
                 _logger.Error($"本地数据库初始化失败：{message}");
-                _diagnosticsPage.SetFooter("本地数据初始化失败，发布相关功能暂不可用");
+                _operationsCenterPage.SetFooter("本地数据初始化失败，发布相关功能暂不可用");
                 MessageBox.Show(this,
                     $"程序已启动，但本地数据初始化失败，设置、素材和发布记录暂不可用。\n\n{message}\n\n请确认程序目录可写后重启程序。",
                     "本地数据初始化失败", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -139,6 +147,8 @@ public partial class MainWindow : Window
             var settings = await _settingsStore.GetAsync();
             _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
             _scheduler.Start(settings.RunTasksOnStartup);
+            _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            await _operationsCenterPage.RefreshDashboardAsync();
             if (settings.NotifyUpgrade)
                 _ = CheckForUpdatesAsync(showNoUpdate: false, delayed: true);
         };
@@ -300,7 +310,7 @@ public partial class MainWindow : Window
 
     private async Task LoginAsync()
     {
-        if (_diagnosticsPage.CliState != "可用")
+        if (_operationsCenterPage.CliState != "可用")
         {
             MessageBox.Show(this, "请先安装并确认频道 CLI 版本可用。", "无法扫码登录", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -313,11 +323,11 @@ public partial class MainWindow : Window
             dialog.ShowDialog();
             if (!dialog.LoginSucceeded) return;
 
-            _diagnosticsPage.SetFooter("扫码授权成功，正在同步频道和版块…");
+            _operationsCenterPage.SetFooter("扫码授权成功，正在同步频道和版块…");
             await RefreshDiagnosticsAsync();
             await RecordLoginSessionAsync();
-            var sync = await _channelSync.SynchronizeAsync(new Progress<string>(_diagnosticsPage.SetFooter));
-            _diagnosticsPage.SetFooter(sync.Succeeded
+            var sync = await _channelSync.SynchronizeAsync(new Progress<string>(_operationsCenterPage.SetFooter));
+            _operationsCenterPage.SetFooter(sync.Succeeded
                 ? $"频道数据已同步：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块"
                 : $"频道数据同步失败，发布已禁用：{sync.Error}");
         }
@@ -335,13 +345,13 @@ public partial class MainWindow : Window
             return;
 
         SetAccountActionsEnabled(false);
-        _diagnosticsPage.SetFooter("正在退出登录…");
+        _operationsCenterPage.SetFooter("正在退出登录…");
         try
         {
             var result = await _workflow.LogoutAsync();
             if (!result.Succeeded)
             {
-                _diagnosticsPage.SetFooter(result.Message);
+                _operationsCenterPage.SetFooter(result.Message);
                 MessageBox.Show(this, result.Message, "退出登录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                 await RefreshDiagnosticsAsync();
                 return;
@@ -349,13 +359,13 @@ public partial class MainWindow : Window
 
             await _accountSessionStore.ClearAsync();
             UpdateAccountSessionDisplay("未知账号", null);
-            _diagnosticsPage.SetFooter(result.Message);
+            _operationsCenterPage.SetFooter(result.Message);
             await RefreshDiagnosticsAsync();
         }
         catch (Exception ex)
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
-            _diagnosticsPage.SetFooter($"退出登录失败：{message}");
+            _operationsCenterPage.SetFooter($"退出登录失败：{message}");
             MessageBox.Show(this, message, "退出登录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
@@ -366,47 +376,47 @@ public partial class MainWindow : Window
 
     private Task OpenPublishDialogAsync(FeedType type)
     {
-        if (_diagnosticsPage.LoginState != "已登录")
+        if (_operationsCenterPage.LoginState != "已登录")
         {
             MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return Task.CompletedTask;
         }
 
         var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, type, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _diagnosticsPage.SetFooter($"正在验证{(type == FeedType.Text ? "文本" : type == FeedType.Image ? "图片" : "视频")} Feed…");
+        _operationsCenterPage.SetFooter($"正在验证{(type == FeedType.Text ? "文本" : type == FeedType.Image ? "图片" : "视频")} Feed…");
         dialog.ShowDialog();
         if (dialog.Result is { } result)
         {
-            _diagnosticsPage.SetFeedResult(type, result);
+            _operationsCenterPage.SetFeedResult(type, result);
             var details = result.Message;
             if (!string.IsNullOrWhiteSpace(result.Url)) details += $"\n帖子链接：{result.Url}";
             if (!string.IsNullOrWhiteSpace(result.PostId)) details += $"\n帖子 ID：{result.PostId}";
             _logger.Info($"{(result.Succeeded ? "发布成功" : "发布未成功")}：{details}");
-            _diagnosticsPage.SetFooter(result.Succeeded ? "发布请求成功" : $"发布失败：{result.Category}");
+            _operationsCenterPage.SetFooter(result.Succeeded ? "发布请求成功" : $"发布失败：{result.Category}");
         }
         else
         {
-            _diagnosticsPage.SetFooter("验证窗口已关闭，未发布或发布未成功");
+            _operationsCenterPage.SetFooter("验证窗口已关闭，未发布或发布未成功");
         }
         return Task.CompletedTask;
     }
 
     private Task OpenDraftPublishDialogAsync(ContentDraft draft)
     {
-        if (_diagnosticsPage.LoginState != "已登录")
+        if (_operationsCenterPage.LoginState != "已登录")
         {
             MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return Task.CompletedTask;
         }
 
         var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, FeedType.Text, draft, _contentLibrary, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _diagnosticsPage.SetFooter("正在从草稿箱打开文本发布窗口…");
+        _operationsCenterPage.SetFooter("正在从草稿箱打开文本发布窗口…");
         dialog.ShowDialog();
         if (dialog.Result is { } result)
         {
-            _diagnosticsPage.SetFeedResult(FeedType.Text, result);
+            _operationsCenterPage.SetFeedResult(FeedType.Text, result);
             _logger.Info($"草稿发布{(result.Succeeded ? "成功" : "未成功")}：{CliDiagnostics.Sanitize(result.Message)}");
-            _diagnosticsPage.SetFooter(result.Succeeded ? "草稿发布成功" : $"草稿发布失败：{result.Category}");
+            _operationsCenterPage.SetFooter(result.Succeeded ? "草稿发布成功" : $"草稿发布失败：{result.Category}");
             _ = _contentCollectionPage.LoadDraftsAsync();
         }
         return Task.CompletedTask;
@@ -414,7 +424,7 @@ public partial class MainWindow : Window
 
     private async Task OpenMaterialPublishDialogAsync(MaterialRecord material)
     {
-        if (_diagnosticsPage.LoginState != "已登录")
+        if (_operationsCenterPage.LoginState != "已登录")
         {
             MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -447,19 +457,19 @@ public partial class MainWindow : Window
         var originalStatus = material.Status;
         await _materialsPage.SetMaterialStatusAsync(material.Id, "queue");
         var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, type, contentLibrary: _contentLibrary, sourceMaterial: material, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _diagnosticsPage.SetFooter($"正在发布素材：{material.Title}");
+        _operationsCenterPage.SetFooter($"正在发布素材：{material.Title}");
         dialog.ShowDialog();
         if (dialog.Result is { Succeeded: true } result)
         {
             var link = result.Url ?? (string.IsNullOrWhiteSpace(result.PostId) ? "" : result.PostId);
             await _materialsPage.MarkMaterialPublishedAsync(material.Id, link);
             _logger.Info($"素材发布成功：{CliDiagnostics.Sanitize(material.Title)}");
-            _diagnosticsPage.SetFooter("素材发布成功");
+            _operationsCenterPage.SetFooter("素材发布成功");
         }
         else if (dialog.Result is { } failed)
         {
             await _materialsPage.SetMaterialStatusAsync(material.Id, originalStatus);
-            _diagnosticsPage.SetFooter($"素材发布失败：{failed.Category}");
+            _operationsCenterPage.SetFooter($"素材发布失败：{failed.Category}");
         }
         else await _materialsPage.SetMaterialStatusAsync(material.Id, originalStatus);
     }
@@ -509,7 +519,7 @@ public partial class MainWindow : Window
 
         await RunInstallOperationAsync("正在安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
         await RefreshDiagnosticsAsync();
-        if (_diagnosticsPage.NodeState == "可用" && _diagnosticsPage.CliState != "可用")
+        if (_operationsCenterPage.NodeState == "可用" && _operationsCenterPage.CliState != "可用")
             await InstallCliAsync(confirm: false);
     }
 
@@ -530,7 +540,7 @@ public partial class MainWindow : Window
         if (confirmation != MessageBoxResult.Yes) return;
 
         SetInstalling(true);
-        _diagnosticsPage.SetFooter("正在从本地压缩包部署 FFmpeg…");
+        _operationsCenterPage.SetFooter("正在从本地压缩包部署 FFmpeg…");
         CliInstallResult result;
         try { result = await _ffmpegManager.InstallAsync(); }
         catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
@@ -538,7 +548,7 @@ public partial class MainWindow : Window
 
         _logger.Info($"{(result.Succeeded ? "FFmpeg 部署成功" : "FFmpeg 部署失败")}：{result.Message}");
         await RefreshDiagnosticsAsync();
-        _diagnosticsPage.SetFooter(result.Message);
+        _operationsCenterPage.SetFooter(result.Message);
         if (!result.Succeeded)
             MessageBox.Show(this, result.Message, "FFmpeg 部署未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
@@ -552,8 +562,8 @@ public partial class MainWindow : Window
 
         var result = await RunInstallOperationAsync("正在通过 npm 安装腾讯频道 CLI…", () => _diagnostics.InstallAsync());
         await RefreshDiagnosticsAsync();
-        _diagnosticsPage.SetFooter(result.Succeeded
-            ? _diagnosticsPage.CliState == "可用" ? "CLI 已安装，版本检查通过" : "npm 安装完成，但 CLI 版本检查未通过"
+        _operationsCenterPage.SetFooter(result.Succeeded
+            ? _operationsCenterPage.CliState == "可用" ? "CLI 已安装，版本检查通过" : "npm 安装完成，但 CLI 版本检查未通过"
             : result.Message);
         return result.Succeeded;
     }
@@ -561,7 +571,7 @@ public partial class MainWindow : Window
     private async Task<CliInstallResult> RunInstallOperationAsync(string status, Func<Task<CliInstallResult>> install)
     {
         SetInstalling(true);
-        _diagnosticsPage.SetFooter(status);
+        _operationsCenterPage.SetFooter(status);
         CliInstallResult result;
         try { result = await install(); }
         catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
@@ -575,9 +585,9 @@ public partial class MainWindow : Window
     private void SetInstalling(bool installing)
     {
         _isInstalling = installing;
-        _diagnosticsPage.Installing = installing;
-        _diagnosticsPage.SetInstallEnabled(!installing);
-        _diagnosticsPage.SetRefreshEnabled(!installing && !_isChecking);
+        _operationsCenterPage.Installing = installing;
+        _operationsCenterPage.SetInstallEnabled(!installing);
+        _operationsCenterPage.SetRefreshEnabled(!installing && !_isChecking);
     }
 
     private async Task RefreshDiagnosticsAsync()
@@ -586,21 +596,21 @@ public partial class MainWindow : Window
 
         var promptForAutomaticInstall = false;
         _isChecking = true;
-        _diagnosticsPage.SetRefreshEnabled(false);
-        _diagnosticsPage.SetFooter("正在检查运行环境…");
+        _operationsCenterPage.SetRefreshEnabled(false);
+        _operationsCenterPage.SetFooter("正在检查运行环境…");
         try
         {
             var report = await _diagnostics.CheckAsync();
             Volatile.Write(ref _diagnosticSnapshot, new DiagnosticEnvironmentSnapshot(
                 report.Login.State == DiagnosticState.Ready,
                 report.Cli.State == DiagnosticState.Ready));
-            _diagnosticsPage.UpdateReport(report);
+            _operationsCenterPage.UpdateReport(report);
             var loggedIn = report.Login.State == DiagnosticState.Ready;
             UpdateAccountActionVisibility(loggedIn);
             await RefreshAccountSessionDisplayAsync(report.Login.StateLabel);
             foreach (var line in report.LogLines) _logger.Info(line);
             _logger.Info($"运行环境：{report.OverallMessage}");
-            _diagnosticsPage.SetFooter(report.OverallMessage);
+            _operationsCenterPage.SetFooter(report.OverallMessage);
             if (!_startupInstallPromptShown && (report.Node.State != DiagnosticState.Ready || report.Cli.State != DiagnosticState.Ready))
             {
                 _startupInstallPromptShown = true;
@@ -612,12 +622,12 @@ public partial class MainWindow : Window
             Volatile.Write(ref _diagnosticSnapshot, DiagnosticEnvironmentSnapshot.Unavailable);
             UpdateAccountActionVisibility(false);
             UpdateAccountSessionDisplay("状态未知", null);
-            _diagnosticsPage.SetFooter("检查失败");
+            _operationsCenterPage.SetFooter("检查失败");
             _logger.Error($"检查过程发生错误：{ex.Message}");
         }
         finally
         {
-            _diagnosticsPage.SetRefreshEnabled(!_isInstalling);
+            _operationsCenterPage.SetRefreshEnabled(!_isInstalling);
             _isChecking = false;
         }
 
@@ -627,11 +637,11 @@ public partial class MainWindow : Window
             "首次运行需要安装环境", MessageBoxButton.YesNo, MessageBoxImage.Information);
         if (confirmation != MessageBoxResult.Yes) return;
 
-        if (_diagnosticsPage.NodeState != "可用")
+        if (_operationsCenterPage.NodeState != "可用")
         {
             var nodeInstall = await RunInstallOperationAsync("正在自动安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
             await RefreshDiagnosticsAsync();
-            if (!nodeInstall.Succeeded || _diagnosticsPage.NodeState != "可用")
+            if (!nodeInstall.Succeeded || _operationsCenterPage.NodeState != "可用")
             {
                 if (!nodeInstall.Succeeded)
                     MessageBox.Show(this, $"Node.js 自动安装失败：{nodeInstall.Message}\n\n可点击“安装 Node.js”重试，或选择手动下载。",
@@ -639,7 +649,7 @@ public partial class MainWindow : Window
                 return;
             }
         }
-        if (_diagnosticsPage.CliState != "可用") await InstallCliAsync(confirm: false);
+        if (_operationsCenterPage.CliState != "可用") await InstallCliAsync(confirm: false);
     }
 
     private async Task RefreshAccountSessionDisplayAsync(string loginState)
@@ -693,6 +703,20 @@ public partial class MainWindow : Window
         AccountLoginTimeText.Text = loginAt.HasValue
             ? $"本地登录记录：{loginAt.Value.ToLocalTime():yyyy-MM-dd HH:mm}"
             : "登录时间：未记录";
+        _operationsCenterPage.SetAccountDisplay(AccountNameText.Text);
+    }
+
+    private void Scheduler_StatusChanged(PublishSchedulerStatus status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => Scheduler_StatusChanged(status));
+            return;
+        }
+
+        _operationsCenterPage.UpdateSchedulerStatus(status);
+        if (status.Running || status.Paused)
+            _ = _operationsCenterPage.RefreshDashboardAsync();
     }
 
     private void AccountLoginAction_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) => _ = LoginAsync();
@@ -762,7 +786,7 @@ public partial class MainWindow : Window
             _ = Dispatcher.BeginInvoke(() => Logger_EntryWritten(entry));
             return;
         }
-        _diagnosticsPage.AppendLog(entry);
+        _logPage.AppendLog(entry);
     }
 
     protected override void OnClosed(EventArgs e)

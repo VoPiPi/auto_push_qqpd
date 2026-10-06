@@ -1,7 +1,7 @@
 <UserControl x:Class="QqChannelDesk.Pages.MaterialsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Grid Margin="34,28,34,26">
+  <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock Grid.Row="0" Text="素材仓库" Style="{StaticResource PageTitle}" Margin="0,0,0,6" />
     <TextBlock Grid.Row="1" Text="管理待发布和已发布素材；发布操作仍需逐条确认。" Foreground="{StaticResource Muted}" Margin="0,0,0,14" />
