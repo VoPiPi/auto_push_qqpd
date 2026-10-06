@@ -51,6 +51,7 @@
 - Windows 开机启动。
 - 最小化到系统托盘或关闭程序。
 - 计划任务执行策略和诊断日志详细程度。
+- 可选检查 Gitee 最新版本；发现新版本时只提示并打开 Release 页面，不自动下载或覆盖程序。
 
 > “账号管理”页面目前保留为功能入口，多账号管理能力尚未实现；扫码登录由环境检查页面和 CLI 授权流程提供。
 
@@ -104,6 +105,18 @@ dotnet build .\src\QqChannelDesk\QqChannelDesk.csproj -c Release
 dotnet test .\tests\QqChannelDesk.Tests\QqChannelDesk.Tests.csproj -c Release
 ```
 
+### 5. 制作更新包
+
+更新包由发布者在干净的 `dotnet publish` 输出上制作，不从正在运行的用户目录打包：
+
+```powershell
+.\scripts\Build-UpdateZip.ps1 -Version 1.0.1
+```
+
+脚本生成的 ZIP 只包含应用运行文件，明确排除 `channels.db`、`account.session.json`、`channels.sync.json`、`settings.json`、日志、`temp`、媒体缓存和 `tools`。上传到 [Gitee Releases](https://gitee.com/vopipi/auto_push_qqpd/releases) 后，用户关闭程序并将 ZIP 内容覆盖到原程序目录即可。覆盖前请保留用户目录中的数据库、登录授权文件、日志、素材和本地工具。
+
+发布标签建议使用 `v主版本.次版本.修订版本`，例如 `v1.0.1` 或 `v1.0.1-release`。程序只比较其中的数字版本，不执行 Release 资产中的任何脚本。
+
 ## FFmpeg 本地工具包
 
 仓库内的 FFmpeg 压缩包位于：
@@ -137,6 +150,7 @@ tools/ffmpeg/bin
 | --- | --- |
 | `channels.db` | 频道缓存、内容、素材、发布计划和发布记录 |
 | `channels.sync.json` | 频道同步状态，不保存 Token 或 Cookie |
+| `account.session.json` | 本地账号昵称和登录时间展示信息，不存储 CLI 授权凭证 |
 | `logs/` | 按日期保存的程序日志 |
 | `tools/media-cache/` | 公开媒体链接的本地缓存 |
 | `%LOCALAPPDATA%/QqChannelDesk/settings.json` | 部分本地界面设置 |
@@ -173,6 +187,7 @@ LICENSE                    项目许可证
 - 多账号管理、批量发布、模板和复杂失败重试尚未实现。
 - 计划任务执行依赖程序运行；是否在启动时处理逾期任务由设置项控制。
 - 平台限制和 CLI 参数可能变化，实际行为以当前 CLI 和 QQ 频道平台规则为准。
+- 更新功能只负责读取公开 Gitee Release 元数据和提醒用户；当前版本不自动下载、安装、替换或回滚程序文件。
 
 真实发布前，建议先在本人管理的测试频道验证文本、图片、视频和计划执行流程。人工验证清单见 [`docs/manual-validation-checklist.md`](docs/manual-validation-checklist.md)。
 

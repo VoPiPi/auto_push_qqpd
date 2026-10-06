@@ -14,6 +14,8 @@ public partial class SettingPage : UserControl
     private bool _loading;
 
     public event Action<AppSettings>? SettingsChanged;
+    public event EventHandler? UpdateCheckRequested;
+    public event EventHandler? OpenReleasesRequested;
 
     public SettingPage(SystemSettingsStore settingsStore, MediaStorageService? mediaStorage = null)
     {
@@ -208,4 +210,20 @@ public partial class SettingPage : UserControl
             SettingsStatus.Text = $"复制机器码失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
     }
+
+    public void SetUpdateCheckInProgress(bool inProgress)
+    {
+        if (inProgress) UpdateStatusText.Text = "正在查询 Gitee 最新发布…";
+        CheckUpdateButton.IsEnabled = !inProgress;
+    }
+
+    public void DisplayUpdateCheckResult(UpdateCheckResult result)
+    {
+        UpdateStatusText.Text = result.Message;
+    }
+
+    private void CheckUpdateButton_Click(object sender, RoutedEventArgs e) => UpdateCheckRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OpenReleasesButton_Click(object sender, RoutedEventArgs e) => OpenReleasesRequested?.Invoke(this, EventArgs.Empty);
+
 }

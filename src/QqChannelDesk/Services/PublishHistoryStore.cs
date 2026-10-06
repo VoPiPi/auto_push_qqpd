@@ -132,15 +132,36 @@ public sealed class PublishHistoryStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            records.Add(new PublishRecord(
-                reader.GetInt64(0), DateTimeOffset.Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : DateTimeOffset.Parse(reader.GetString(2)),
-                Enum.Parse<FeedType>(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
-                reader.GetString(8), reader.GetString(9).Split('\n', StringSplitOptions.RemoveEmptyEntries),
-                Enum.Parse<PublishRecordStatus>(reader.GetString(10)), reader.GetString(11), reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14)));
+            records.Add(ReadRecord(reader));
         }
         return records;
     }
+
+    public async Task<IReadOnlyList<PublishRecord>> GetSinceAsync(DateTimeOffset start, CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
+                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
+            FROM PublishRecords
+            WHERE COALESCE(CompletedAt, StartedAt) >= $start
+            ORDER BY COALESCE(CompletedAt, StartedAt) DESC, Id DESC;
+            """;
+        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        var records = new List<PublishRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) records.Add(ReadRecord(reader));
+        return records;
+    }
+
+    private static PublishRecord ReadRecord(Microsoft.Data.Sqlite.SqliteDataReader reader) => new(
+        reader.GetInt64(0), DateTimeOffset.Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : DateTimeOffset.Parse(reader.GetString(2)),
+        Enum.Parse<FeedType>(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
+        reader.GetString(8), reader.GetString(9).Split('\n', StringSplitOptions.RemoveEmptyEntries),
+        Enum.Parse<PublishRecordStatus>(reader.GetString(10)), reader.GetString(11), reader.GetString(12),
+        reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {

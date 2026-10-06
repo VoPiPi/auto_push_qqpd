@@ -66,7 +66,7 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,12">
           <StackPanel Margin="8,0,6,0">
             <TextBlock Text="工作区" Foreground="#91A29A" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,9" />
-            <Button x:Name="DiagnosticsNavButton" Style="{StaticResource ActiveNavigationButton}" Tag="环境检查" Click="NavigationButton_Click"><TextBlock Text="环境检查" Style="{StaticResource NavigationLabel}" /></Button>
+            <Button x:Name="OperationsNavButton" Style="{StaticResource ActiveNavigationButton}" Tag="运行中台" Click="NavigationButton_Click" ToolTip="打开运行中台"><TextBlock Text="运行中台" Style="{StaticResource NavigationLabel}" /></Button>
             <Button x:Name="ContentCollectionNavButton" Style="{StaticResource NavigationButton}" Tag="内容采集" Click="NavigationButton_Click" ToolTip="打开内容收件箱">
               <TextBlock Text="内容采集" Style="{StaticResource NavigationLabel}" />
             </Button>
@@ -77,6 +77,7 @@
               <TextBlock Text="发布计划" Style="{StaticResource NavigationLabel}" />
             </Button>
             <Button x:Name="HistoryNavButton" Style="{StaticResource NavigationButton}" Tag="发布记录" Click="NavigationButton_Click" ToolTip="查看已保存的发布历史"><TextBlock Text="发布记录" Style="{StaticResource NavigationLabel}" /></Button>
+            <Button x:Name="LogNavButton" Style="{StaticResource NavigationButton}" Tag="日志中心" Click="NavigationButton_Click" ToolTip="查看本次启动后的操作日志"><TextBlock Text="日志中心" Style="{StaticResource NavigationLabel}" /></Button>
             <Button x:Name="AccountsNavButton" Style="{StaticResource NavigationButton}" Tag="账号管理" Click="NavigationButton_Click" ToolTip="打开账号管理页面">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="账号管理" Style="{StaticResource NavigationLabel}"/><Border Grid.Column="1" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}"/></Border></Grid>
             </Button>
