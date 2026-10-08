@@ -49,9 +49,13 @@ public sealed class MediaStorageService
         }
     }
 
-    public async Task<string> ImportToLibraryAsync(string sourcePath, string expectedType, CancellationToken cancellationToken = default)
+    public async Task<string> ImportToLibraryAsync(
+        string sourcePath,
+        string expectedType,
+        CancellationToken cancellationToken = default,
+        bool allowUnknownSources = false)
     {
-        EnsureLocalSource(sourcePath, expectedType);
+        EnsureLocalSource(sourcePath, expectedType, allowUnknownSources);
         var root = await GetStorageRootAsync(cancellationToken);
         var libraryDirectory = Path.Combine(root, "library");
         var directoryResult = await ValidateDirectoryAsync(libraryDirectory, cancellationToken);
@@ -60,9 +64,13 @@ public sealed class MediaStorageService
         return await CopyToUniquePathAsync(sourcePath, directoryResult.FullPath, cancellationToken);
     }
 
-    public async Task<string> CreateJobCopyAsync(string sourcePath, string expectedType, CancellationToken cancellationToken = default)
+    public async Task<string> CreateJobCopyAsync(
+        string sourcePath,
+        string expectedType,
+        CancellationToken cancellationToken = default,
+        bool allowUnknownSources = false)
     {
-        EnsureLocalSource(sourcePath, expectedType);
+        EnsureLocalSource(sourcePath, expectedType, allowUnknownSources);
         var jobsDirectory = await GetJobsDirectoryAsync(cancellationToken);
         return await CopyToUniquePathAsync(sourcePath, jobsDirectory, cancellationToken);
     }
@@ -147,11 +155,11 @@ public sealed class MediaStorageService
         return destination;
     }
 
-    private static void EnsureLocalSource(string sourcePath, string expectedType)
+    private static void EnsureLocalSource(string sourcePath, string expectedType, bool allowUnknownSources)
     {
         if (!MaterialMediaValidator.IsLocalPath(sourcePath) || !File.Exists(sourcePath))
             throw new FileNotFoundException("本地媒体文件不存在。", sourcePath);
-        if (!MaterialMediaValidator.IsValidSource(sourcePath, expectedType))
+        if (!MaterialMediaValidator.IsValidSource(sourcePath, expectedType, allowUnknownSources))
             throw new InvalidDataException($"媒体文件类型与{(expectedType == "image" ? "图片" : "视频")}不匹配。");
     }
 

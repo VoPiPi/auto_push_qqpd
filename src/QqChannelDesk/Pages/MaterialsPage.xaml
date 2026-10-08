@@ -9,10 +9,11 @@
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
         <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown" />
         <ComboBox x:Name="MaterialStatusFilter" Width="130" SelectedIndex="0" Margin="8,0,0,0">
-          <ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队待发布" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
+          <ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
         </ComboBox>
         <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchMaterialsButton_Click" />
-        <Button Content="导入数据（暂未开放）" Style="{StaticResource QuietButton}" IsEnabled="False" Margin="8,0,0,0" />
+        <Button Content="下载导入模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click" />
+        <Button Content="导入数据" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportDataButton_Click" />
         <Button Content="手动添加素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click" />
       </WrapPanel>
       <DataGrid x:Name="MaterialsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">

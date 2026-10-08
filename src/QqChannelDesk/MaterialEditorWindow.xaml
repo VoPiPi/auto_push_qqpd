@@ -9,7 +9,6 @@
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel>
         <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/><TextBox x:Name="TitleBox"/>
-        <TextBlock Text="类型" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><ComboBox x:Name="TypeCombo" SelectedIndex="0" SelectionChanged="TypeCombo_SelectionChanged"><ComboBoxItem Content="文本" Tag="text"/><ComboBoxItem Content="图片" Tag="image"/><ComboBoxItem Content="视频" Tag="video"/></ComboBox>
         <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><TextBox x:Name="ContentBox" MinHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
         <TextBlock Text="媒体文件或链接" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
         <TextBlock Text="可选择本地文件，也可粘贴公开 HTTP/HTTPS 链接；每行一个。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6"/>
@@ -19,6 +18,7 @@
           <TextBlock x:Name="MediaSelectionHint" Text="图片可多选，视频请选择一个文件。" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
         </DockPanel>
         <TextBox x:Name="MediaLinksBox" MinHeight="76" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" TextChanged="MediaLinksBox_TextChanged"/>
+        <TextBlock x:Name="TypeDetectionHint" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
         <TextBlock Text="频道/版块" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
         <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
           <ComboBox x:Name="GuildCombo" DisplayMemberPath="DisplayName" IsEditable="True" IsReadOnly="True" Text="-" SelectionChanged="GuildCombo_SelectionChanged"/>

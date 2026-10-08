@@ -7,11 +7,15 @@ namespace QqChannelDesk.Services;
 public sealed class ContentLibraryStore
 {
     private readonly string _databasePath;
+    private readonly AccountContext? _accountContext;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private bool _initialized;
 
-    public ContentLibraryStore(string? databasePath = null) =>
+    public ContentLibraryStore(string? databasePath = null, AccountContext? accountContext = null)
+    {
         _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "channels.db");
+        _accountContext = accountContext;
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -36,7 +40,8 @@ public sealed class ContentLibraryStore
                     Status TEXT NOT NULL DEFAULT '待处理',
                     Notes TEXT NOT NULL DEFAULT '',
                     TagsJson TEXT NOT NULL DEFAULT '[]',
-                    ParseError TEXT NOT NULL DEFAULT ''
+                    ParseError TEXT NOT NULL DEFAULT '',
+                    AccountKey TEXT NULL
                 );
                 DROP INDEX IF EXISTS UX_CollectedItems_Url;
                 CREATE INDEX IF NOT EXISTS IX_CollectedItems_Url ON CollectedItems (Url) WHERE Url <> '';
@@ -51,6 +56,7 @@ public sealed class ContentLibraryStore
                     UpdatedAt TEXT NOT NULL,
                     PublishCount INTEGER NOT NULL DEFAULT 0,
                     LastPublishedAt TEXT NULL,
+                    AccountKey TEXT NULL,
                     FOREIGN KEY (CollectedItemId) REFERENCES CollectedItems(Id) ON DELETE SET NULL
                 );
                 CREATE INDEX IF NOT EXISTS IX_ContentDrafts_UpdatedAt ON ContentDrafts (UpdatedAt DESC);
@@ -68,7 +74,8 @@ public sealed class ContentLibraryStore
                     Link TEXT NOT NULL DEFAULT '',
                     MediaJson TEXT NOT NULL DEFAULT '[]',
                     CreatedAt TEXT NOT NULL,
-                    UpdatedAt TEXT NOT NULL
+                    UpdatedAt TEXT NOT NULL,
+                    AccountKey TEXT NULL
                 );
                 CREATE INDEX IF NOT EXISTS IX_Materials_StatusPublishAt ON Materials (Status, PublishAt);
                 CREATE TABLE IF NOT EXISTS ScheduleExecutions (
@@ -82,12 +89,26 @@ public sealed class ContentLibraryStore
                     PublishRecordId INTEGER NULL,
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
+                    AccountKey TEXT NULL,
                     UNIQUE (MaterialId, ScheduledAt),
                     FOREIGN KEY (MaterialId) REFERENCES Materials(Id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS IX_ScheduleExecutions_StatusTime ON ScheduleExecutions (Status, ScheduledAt);
+                CREATE TABLE IF NOT EXISTS MaterialImports (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    AccountKey TEXT NOT NULL,
+                    FileHash TEXT NOT NULL,
+                    ImportedAt TEXT NOT NULL,
+                    ImportedCount INTEGER NOT NULL,
+                    UNIQUE (AccountKey, FileHash)
+                );
+                CREATE INDEX IF NOT EXISTS IX_MaterialImports_AccountImportedAt ON MaterialImports (AccountKey, ImportedAt DESC);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
+            await EnsureAccountKeyColumnAsync(connection, "CollectedItems", cancellationToken);
+            await EnsureAccountKeyColumnAsync(connection, "ContentDrafts", cancellationToken);
+            await EnsureAccountKeyColumnAsync(connection, "Materials", cancellationToken);
+            await EnsureAccountKeyColumnAsync(connection, "ScheduleExecutions", cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -95,60 +116,74 @@ public sealed class ContentLibraryStore
 
     public async Task<long> SaveItemAsync(CollectedItemDraft item, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError)
-            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error);
+            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, AccountKey)
+            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error, $accountKey);
             SELECT last_insert_rowid();
             """;
         AddItemParameters(command, item);
+        AddAccountParameter(command, accountKey);
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     public async Task UpdateItemAsync(CollectedItemDraft item, CancellationToken cancellationToken = default)
     {
         if (item.Id is null) throw new ArgumentException("采集条目 ID 不能为空。", nameof(item));
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE CollectedItems SET Url=$url, SourceHost=$host, Title=$title, Content=$content,
-                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error WHERE Id=$id;
+                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error WHERE Id=$id AND ACCOUNT_SCOPE;
             """;
+        command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         AddItemParameters(command, item, includeCollectedAt: false);
         command.Parameters.AddWithValue("$id", item.Id.Value);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        AddAccountParameter(command, accountKey);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw new InvalidOperationException("采集条目不存在或不属于当前账号。");
     }
 
     public async Task<CollectedItem?> FindByUrlAsync(string normalizedUrl, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError FROM CollectedItems WHERE Url=$url ORDER BY Id LIMIT 1";
+        command.CommandText = $"SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError FROM CollectedItems WHERE Url=$url AND {AccountScope("AccountKey")} ORDER BY Id LIMIT 1";
         command.Parameters.AddWithValue("$url", normalizedUrl);
+        AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadItem(reader) : null;
     }
 
     public async Task<IReadOnlyList<CollectedItem>> GetItemsAsync(string? keyword = null, string? status = null, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError
             FROM CollectedItems
-            WHERE ($status='' OR Status=$status)
+            WHERE ACCOUNT_SCOPE
+              AND ($status='' OR Status=$status)
               AND ($keyword='' OR Title LIKE $pattern OR Content LIKE $pattern OR SourceHost LIKE $pattern OR TagsJson LIKE $pattern)
             ORDER BY CollectedAt DESC, Id DESC;
             """;
+        command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         var query = keyword?.Trim() ?? "";
         command.Parameters.AddWithValue("$status", status ?? "");
         command.Parameters.AddWithValue("$keyword", query);
         command.Parameters.AddWithValue("$pattern", $"%{query}%");
+        AddAccountParameter(command, accountKey);
         var items = new List<CollectedItem>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) items.Add(ReadItem(reader));
@@ -157,22 +192,34 @@ public sealed class ContentLibraryStore
 
     public async Task DeleteItemAsync(long id, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM CollectedItems WHERE Id=$id";
+        command.CommandText = $"DELETE FROM CollectedItems WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<long> CreateDraftAsync(long? itemId, string title, string content, string sourceUrl, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
+        if (itemId is not null)
+        {
+            await using var itemCheck = connection.CreateCommand();
+            itemCheck.CommandText = $"SELECT 1 FROM CollectedItems WHERE Id=$itemId AND {AccountScope("AccountKey")} LIMIT 1";
+            itemCheck.Parameters.AddWithValue("$itemId", itemId.Value);
+            AddAccountParameter(itemCheck, accountKey);
+            if (await itemCheck.ExecuteScalarAsync(cancellationToken) is null)
+                throw new InvalidOperationException("采集条目不存在或不属于当前账号。");
+        }
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ContentDrafts (CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt)
-            VALUES ($itemId, $title, $content, $url, $now, $now);
+            INSERT INTO ContentDrafts (CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
+            VALUES ($itemId, $title, $content, $url, $now, $now, $accountKey);
             SELECT last_insert_rowid();
             """;
         command.Parameters.AddWithValue("$itemId", (object?)itemId ?? DBNull.Value);
@@ -180,6 +227,7 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$content", content.Trim());
         command.Parameters.AddWithValue("$url", sourceUrl.Trim());
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
+        AddAccountParameter(command, accountKey);
         var id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
         if (itemId is not null) await SetItemStatusAsync(itemId.Value, "已转草稿", cancellationToken);
         return id;
@@ -187,27 +235,32 @@ public sealed class ContentLibraryStore
 
     public async Task UpdateDraftAsync(ContentDraft draft, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ContentDrafts SET Title=$title, Content=$content, SourceUrl=$url, UpdatedAt=$now WHERE Id=$id";
+        command.CommandText = $"UPDATE ContentDrafts SET Title=$title, Content=$content, SourceUrl=$url, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$title", draft.Title.Trim());
         command.Parameters.AddWithValue("$content", draft.Content.Trim());
         command.Parameters.AddWithValue("$url", draft.SourceUrl.Trim());
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", draft.Id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ContentDraft>> GetDraftsAsync(string? keyword = null, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, PublishCount, LastPublishedAt FROM ContentDrafts WHERE ($q='' OR Title LIKE $p OR Content LIKE $p OR SourceUrl LIKE $p) ORDER BY UpdatedAt DESC, Id DESC";
+        command.CommandText = $"SELECT Id, CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, PublishCount, LastPublishedAt FROM ContentDrafts WHERE {AccountScope("AccountKey")} AND ($q='' OR Title LIKE $p OR Content LIKE $p OR SourceUrl LIKE $p) ORDER BY UpdatedAt DESC, Id DESC";
         var query = keyword?.Trim() ?? "";
         command.Parameters.AddWithValue("$q", query);
         command.Parameters.AddWithValue("$p", $"%{query}%");
+        AddAccountParameter(command, accountKey);
         var drafts = new List<ContentDraft>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -217,53 +270,63 @@ public sealed class ContentLibraryStore
 
     public async Task DeleteDraftAsync(long id, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM ContentDrafts WHERE Id=$id";
+        command.CommandText = $"DELETE FROM ContentDrafts WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task MarkDraftPublishedAsync(long id, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ContentDrafts SET PublishCount=PublishCount+1, LastPublishedAt=$now, UpdatedAt=$now WHERE Id=$id";
+        command.CommandText = $"UPDATE ContentDrafts SET PublishCount=PublishCount+1, LastPublishedAt=$now, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task SetItemStatusAsync(long id, string status, CancellationToken cancellationToken = default)
     {
         if (status is not ("待处理" or "保留" or "忽略" or "已转草稿")) throw new ArgumentOutOfRangeException(nameof(status));
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE CollectedItems SET Status=$status WHERE Id=$id";
+        command.CommandText = $"UPDATE CollectedItems SET Status=$status WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<MaterialRecord>> GetMaterialsAsync(string? keyword = null, string? status = null, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt
             FROM Materials
-            WHERE Status <> 'delete' AND ($status='' OR Status=$status)
+            WHERE ACCOUNT_SCOPE AND Status <> 'delete' AND ($status='' OR Status=$status)
               AND ($keyword='' OR Title LIKE $pattern OR Content LIKE $pattern OR Link LIKE $pattern OR GuildName LIKE $pattern OR ChannelName LIKE $pattern)
             ORDER BY CASE Status WHEN 'queue' THEN 0 ELSE 1 END, PublishAt, Id DESC;
             """;
+        command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         var query = keyword?.Trim() ?? "";
         command.Parameters.AddWithValue("$status", status ?? "");
         command.Parameters.AddWithValue("$keyword", query);
         command.Parameters.AddWithValue("$pattern", $"%{query}%");
+        AddAccountParameter(command, accountKey);
         var materials = new List<MaterialRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) materials.Add(ReadMaterial(reader));
@@ -272,15 +335,19 @@ public sealed class ContentLibraryStore
 
     public async Task<IReadOnlyList<MaterialRecord>> GetScheduledMaterialsAsync(CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt
             FROM Materials
-            WHERE Status = 'queue' AND PublishAt IS NOT NULL
+            WHERE ACCOUNT_SCOPE AND Status = 'queue' AND PublishAt IS NOT NULL
             ORDER BY PublishAt ASC, Id ASC;
             """;
+        command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
+        AddAccountParameter(command, accountKey);
         var materials = new List<MaterialRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) materials.Add(ReadMaterial(reader));
@@ -290,6 +357,7 @@ public sealed class ContentLibraryStore
     public async Task<long> SaveMaterialAsync(MaterialDraft material, CancellationToken cancellationToken = default)
     {
         ValidateMaterial(material);
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
@@ -299,8 +367,8 @@ public sealed class ContentLibraryStore
         if (material.Id is null)
         {
             command.CommandText = """
-                INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt)
-                VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$now,$now);
+                INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt, AccountKey)
+                VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$now,$now,$accountKey);
                 SELECT last_insert_rowid();
                 """;
         }
@@ -309,36 +377,164 @@ public sealed class ContentLibraryStore
             command.CommandText = """
                 UPDATE Materials SET Title=$title, Type=$type, Content=$content, GuildId=$guildId, GuildName=$guildName,
                     ChannelId=$channelId, ChannelName=$channelName, PublishAt=$publishAt, Status=$status,
-                    Link=$link, MediaJson=$media, UpdatedAt=$now WHERE Id=$id;
+                    Link=$link, MediaJson=$media, UpdatedAt=$now WHERE Id=$id AND ACCOUNT_SCOPE;
                 SELECT $id;
                 """;
             command.Parameters.AddWithValue("$id", material.Id.Value);
         }
         AddMaterialParameters(command, material, now);
-        var id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-        await CancelPendingExecutionsAsync(connection, transaction, id, now, cancellationToken);
+        AddAccountParameter(command, accountKey);
+        long id;
+        if (material.Id is null)
+        {
+            id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        }
+        else
+        {
+            command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
+            var updated = await command.ExecuteNonQueryAsync(cancellationToken);
+            if (updated != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw new InvalidOperationException("素材不存在或不属于当前账号。");
+            }
+            id = material.Id.Value;
+        }
+        await CancelPendingExecutionsAsync(connection, transaction, id, now, accountKey, cancellationToken);
         if (material.Status == "queue" && material.PublishAt is { } scheduledAt && scheduledAt > DateTimeOffset.Now)
-            await InsertPendingExecutionAsync(connection, transaction, id, scheduledAt, now, cancellationToken);
+            await InsertPendingExecutionAsync(connection, transaction, id, scheduledAt, now, accountKey, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return id;
+    }
+
+    public Task<long[]> SaveMaterialsAsync(
+        IReadOnlyList<MaterialDraft> materials,
+        CancellationToken cancellationToken = default) =>
+        SaveMaterialsCoreAsync(materials, null, cancellationToken);
+
+    public Task<long[]> SaveMaterialsAsync(
+        IReadOnlyList<MaterialDraft> materials,
+        string importFileHash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(importFileHash);
+        return SaveMaterialsCoreAsync(materials, importFileHash.Trim(), cancellationToken);
+    }
+
+    public async Task<bool> HasImportedFileAsync(
+        string fileHash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileHash);
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return false;
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT 1 FROM MaterialImports WHERE FileHash=$hash AND {AccountScope("AccountKey")} LIMIT 1";
+        command.Parameters.AddWithValue("$hash", fileHash.Trim());
+        AddAccountParameter(command, accountKey);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    private async Task<long[]> SaveMaterialsCoreAsync(
+        IReadOnlyList<MaterialDraft> materials,
+        string? importFileHash,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(materials);
+        if (materials.Count == 0) return [];
+        if (materials.Any(material => material.Id is not null))
+            throw new ArgumentException("批量导入只能创建新素材。", nameof(materials));
+
+        foreach (var material in materials)
+        {
+            ValidateMaterial(material);
+            if (string.IsNullOrWhiteSpace(material.Title))
+                throw new ArgumentException("素材标题不能为空。", nameof(materials));
+            if (string.IsNullOrWhiteSpace(material.Content))
+                throw new ArgumentException("素材正文不能为空。", nameof(materials));
+            if (material.Status == "published")
+                throw new ArgumentException("批量导入不允许直接写入已发布状态。", nameof(materials));
+        }
+
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.Now.ToString("O");
+        var ids = new List<long>(materials.Count);
+        try
+        {
+            foreach (var material in materials)
+            {
+                await using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt, AccountKey)
+                    VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$now,$now,$accountKey);
+                    SELECT last_insert_rowid();
+                    """;
+                AddMaterialParameters(insert, material, now);
+                AddAccountParameter(insert, accountKey);
+                var id = Convert.ToInt64(await insert.ExecuteScalarAsync(cancellationToken));
+                ids.Add(id);
+
+                if (material.Status == "queue" && material.PublishAt is { } scheduledAt && scheduledAt > DateTimeOffset.Now)
+                    await InsertPendingExecutionAsync(connection, transaction, id, scheduledAt, now, accountKey, cancellationToken);
+            }
+
+            if (!string.IsNullOrWhiteSpace(importFileHash))
+            {
+                await using var import = connection.CreateCommand();
+                import.Transaction = transaction;
+                import.CommandText = """
+                    INSERT INTO MaterialImports (AccountKey, FileHash, ImportedAt, ImportedCount)
+                    VALUES ($accountKey, $hash, $now, $count);
+                    """;
+                AddAccountParameter(import, accountKey);
+                import.Parameters.AddWithValue("$hash", importFileHash);
+                import.Parameters.AddWithValue("$now", now);
+                import.Parameters.AddWithValue("$count", materials.Count);
+                try
+                {
+                    await import.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+                {
+                    throw new InvalidOperationException("该导入文件已经处理过，不能重复导入。", ex);
+                }
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return ids.ToArray();
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public async Task UpdateMaterialStatusAsync(long id, string status, string? link = null, CancellationToken cancellationToken = default)
     {
         if (status is not ("waitsend" or "queue" or "published" or "delete")) throw new ArgumentOutOfRangeException(nameof(status));
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE Materials SET Status=$status, Link=CASE WHEN $status='published' THEN $link ELSE Link END, UpdatedAt=$now WHERE Id=$id";
+        command.CommandText = $"UPDATE Materials SET Status=$status, Link=CASE WHEN $status='published' THEN $link ELSE Link END, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$link", link ?? "");
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<bool> CancelMaterialScheduleAsync(long id, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
@@ -347,11 +543,15 @@ public sealed class ContentLibraryStore
         command.CommandText = """
             UPDATE Materials
             SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now
-            WHERE Id=$id AND Status='queue' AND PublishAt IS NOT NULL
-              AND EXISTS (SELECT 1 FROM ScheduleExecutions WHERE MaterialId=$id AND Status='Pending');
+            WHERE Id=$id AND ACCOUNT_SCOPE AND Status='queue' AND PublishAt IS NOT NULL
+              AND EXISTS (SELECT 1 FROM ScheduleExecutions WHERE MaterialId=$id AND ACCOUNT_SCOPE_EXECUTION AND Status='Pending');
             """;
+        command.CommandText = command.CommandText
+            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("AccountKey", "ScheduleExecutions"), StringComparison.Ordinal)
+            .Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -359,9 +559,10 @@ public sealed class ContentLibraryStore
         }
         await using var cancel = connection.CreateCommand();
         cancel.Transaction = transaction;
-        cancel.CommandText = "UPDATE ScheduleExecutions SET Status='Cancelled', UpdatedAt=$now, CompletedAt=$now, LastError='用户取消计划' WHERE MaterialId=$id AND Status='Pending'";
+        cancel.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', UpdatedAt=$now, CompletedAt=$now, LastError='用户取消计划' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
         cancel.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         cancel.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(cancel, accountKey);
         await cancel.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
@@ -369,6 +570,8 @@ public sealed class ContentLibraryStore
 
     public async Task<IReadOnlyList<ScheduleExecutionRecord>> GetScheduleExecutionsAsync(CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -378,8 +581,13 @@ public sealed class ContentLibraryStore
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
+            WHERE ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
             ORDER BY e.ScheduledAt ASC, e.MaterialId ASC, e.Id ASC;
             """;
+        command.CommandText = command.CommandText
+            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("e.AccountKey"), StringComparison.Ordinal)
+            .Replace("ACCOUNT_SCOPE_MATERIAL", AccountScope("m.AccountKey"), StringComparison.Ordinal);
+        AddAccountParameter(command, accountKey);
         var records = new List<ScheduleExecutionRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) records.Add(ReadScheduleExecution(reader));
@@ -392,6 +600,8 @@ public sealed class ContentLibraryStore
         DateTimeOffset? notBefore = null,
         CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
@@ -401,14 +611,19 @@ public sealed class ContentLibraryStore
             SELECT e.Id
             FROM ScheduleExecutions e
             INNER JOIN Materials m ON m.Id=e.MaterialId
-            WHERE e.Status='Pending' AND e.ScheduledAt <= $now AND m.Status='queue' AND m.PublishAt IS NOT NULL
+            WHERE ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
+              AND e.Status='Pending' AND e.ScheduledAt <= $now AND m.Status='queue' AND m.PublishAt IS NOT NULL
               AND ($includeOverdue=1 OR e.ScheduledAt >= $notBefore)
             ORDER BY e.ScheduledAt ASC, e.MaterialId ASC, e.Id ASC
             LIMIT 1;
             """;
+        select.CommandText = select.CommandText
+            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("e.AccountKey"), StringComparison.Ordinal)
+            .Replace("ACCOUNT_SCOPE_MATERIAL", AccountScope("m.AccountKey"), StringComparison.Ordinal);
         select.Parameters.AddWithValue("$now", now.ToString("O"));
         select.Parameters.AddWithValue("$includeOverdue", includeOverdue ? 1 : 0);
         select.Parameters.AddWithValue("$notBefore", (object?)(notBefore?.ToString("O")) ?? DBNull.Value);
+        AddAccountParameter(select, accountKey);
         var idValue = await select.ExecuteScalarAsync(cancellationToken);
         if (idValue is null || idValue is DBNull)
         {
@@ -436,9 +651,14 @@ public sealed class ContentLibraryStore
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
             FROM ScheduleExecutions e
-            INNER JOIN Materials m ON m.Id=e.MaterialId WHERE e.Id=$id;
+            INNER JOIN Materials m ON m.Id=e.MaterialId
+            WHERE e.Id=$id AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL;
             """;
+        fetch.CommandText = fetch.CommandText
+            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("e.AccountKey"), StringComparison.Ordinal)
+            .Replace("ACCOUNT_SCOPE_MATERIAL", AccountScope("m.AccountKey"), StringComparison.Ordinal);
         fetch.Parameters.AddWithValue("$id", executionId);
+        AddAccountParameter(fetch, accountKey);
         ScheduleExecutionRecord result;
         await using (var reader = await fetch.ExecuteReaderAsync(cancellationToken))
         {
@@ -455,6 +675,8 @@ public sealed class ContentLibraryStore
 
     public async Task<ScheduleExecutionRecord?> GetActiveScheduleExecutionAsync(long materialId, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -464,17 +686,23 @@ public sealed class ContentLibraryStore
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
-            WHERE e.MaterialId=$materialId AND e.Status IN ('Pending','Running')
+            WHERE e.MaterialId=$materialId AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
+              AND e.Status IN ('Pending','Running')
             ORDER BY CASE e.Status WHEN 'Running' THEN 0 ELSE 1 END, e.ScheduledAt ASC, e.Id DESC
             LIMIT 1;
             """;
+        command.CommandText = command.CommandText
+            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("e.AccountKey"), StringComparison.Ordinal)
+            .Replace("ACCOUNT_SCOPE_MATERIAL", AccountScope("m.AccountKey"), StringComparison.Ordinal);
         command.Parameters.AddWithValue("$materialId", materialId);
+        AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadScheduleExecution(reader) : null;
     }
 
     public async Task<bool> CompleteScheduleExecutionAsync(long executionId, long? publishRecordId, PublishResult result, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
@@ -486,12 +714,13 @@ public sealed class ContentLibraryStore
             update.Transaction = transaction;
             // Only the task that successfully claimed the execution may complete it.
             // This prevents a late publisher from overwriting a recovery result.
-            update.CommandText = "UPDATE ScheduleExecutions SET Status=$status, CompletedAt=$now, UpdatedAt=$now, LastError=$error, PublishRecordId=$record WHERE Id=$id AND Status='Running'";
+            update.CommandText = $"UPDATE ScheduleExecutions SET Status=$status, CompletedAt=$now, UpdatedAt=$now, LastError=$error, PublishRecordId=$record WHERE Id=$id AND {AccountScope("AccountKey")} AND Status='Running'";
             update.Parameters.AddWithValue("$status", status.ToString());
             update.Parameters.AddWithValue("$now", now);
             update.Parameters.AddWithValue("$error", result.Succeeded ? "" : AppLogger.Redact(result.Message));
             update.Parameters.AddWithValue("$record", (object?)publishRecordId ?? DBNull.Value);
             update.Parameters.AddWithValue("$id", executionId);
+            AddAccountParameter(update, accountKey);
             if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
             {
                 await transaction.RollbackAsync(cancellationToken);
@@ -502,11 +731,12 @@ public sealed class ContentLibraryStore
         {
             material.Transaction = transaction;
             material.CommandText = result.Succeeded
-                ? "UPDATE Materials SET Status='published', Link=$link, PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id)"
-                : "UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id) AND Status='queue'";
+                ? $"UPDATE Materials SET Status='published', Link=$link, PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey", "ScheduleExecutions")}) AND {AccountScope("AccountKey")}"
+                : $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey", "ScheduleExecutions")}) AND {AccountScope("AccountKey")} AND Status='queue'";
             material.Parameters.AddWithValue("$link", result.Url ?? result.PostId ?? "");
             material.Parameters.AddWithValue("$now", now);
             material.Parameters.AddWithValue("$id", executionId);
+            AddAccountParameter(material, accountKey);
             await material.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
@@ -515,6 +745,7 @@ public sealed class ContentLibraryStore
 
     public async Task MarkRunningExecutionsAsNeedsVerificationAsync(string reason, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
@@ -522,16 +753,18 @@ public sealed class ContentLibraryStore
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
-            update.CommandText = "UPDATE ScheduleExecutions SET Status='NeedsVerification', CompletedAt=$now, UpdatedAt=$now, LastError=$error WHERE Status='Running'";
+            update.CommandText = $"UPDATE ScheduleExecutions SET Status='NeedsVerification', CompletedAt=$now, UpdatedAt=$now, LastError=$error WHERE {AccountScope("AccountKey")} AND Status='Running'";
             update.Parameters.AddWithValue("$now", now);
             update.Parameters.AddWithValue("$error", AppLogger.Redact(reason));
+            AddAccountParameter(update, accountKey);
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
         await using (var material = connection.CreateCommand())
         {
             material.Transaction = transaction;
-            material.CommandText = "UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id IN (SELECT MaterialId FROM ScheduleExecutions WHERE Status='NeedsVerification' AND CompletedAt=$now) AND Status='queue'";
+            material.CommandText = $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE {AccountScope("AccountKey")} AND Id IN (SELECT MaterialId FROM ScheduleExecutions WHERE {AccountScope("AccountKey", "ScheduleExecutions")} AND Status='NeedsVerification' AND CompletedAt=$now) AND Status='queue'";
             material.Parameters.AddWithValue("$now", now);
+            AddAccountParameter(material, accountKey);
             await material.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
@@ -539,11 +772,14 @@ public sealed class ContentLibraryStore
 
     public async Task<MaterialRecord?> GetMaterialAsync(long id, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt FROM Materials WHERE Id=$id AND Status<>'delete'";
+        command.CommandText = $"SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, CreatedAt, UpdatedAt FROM Materials WHERE Id=$id AND {AccountScope("AccountKey")} AND Status<>'delete'";
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadMaterial(reader) : null;
     }
@@ -570,6 +806,44 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$now", now);
     }
 
+    private string? ReadAccountKey() => _accountContext?.CurrentAccountKey;
+
+    private string RequireAccountKey() => _accountContext?.RequireAccountKey() ?? "";
+
+    private string AccountScope(string column, string? table = null) =>
+        _accountContext is null ? "1=1" : $"{column} = $accountKey";
+
+    private static void AddAccountParameter(SqliteCommand command, string? accountKey)
+    {
+        if (accountKey is not null)
+            command.Parameters.AddWithValue("$accountKey", accountKey);
+    }
+
+    private static async Task EnsureAccountKeyColumnAsync(
+        SqliteConnection connection,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName})";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var found = false;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (string.Equals(reader.GetString(1), "AccountKey", StringComparison.OrdinalIgnoreCase))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if (found) return;
+        await reader.DisposeAsync();
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN AccountKey TEXT NULL";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static MaterialRecord ReadMaterial(SqliteDataReader reader) => new(
         reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
         reader.GetString(6), reader.GetString(7), reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8)), reader.GetString(9),
@@ -586,27 +860,29 @@ public sealed class ContentLibraryStore
         reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14)),
         reader.IsDBNull(15) ? "" : reader.GetString(15));
 
-    private static async Task CancelPendingExecutionsAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, string now, CancellationToken cancellationToken)
+    private async Task CancelPendingExecutionsAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, string now, string accountKey, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "UPDATE ScheduleExecutions SET Status='Cancelled', CompletedAt=$now, UpdatedAt=$now, LastError='计划已重新安排' WHERE MaterialId=$id AND Status='Pending'";
+        command.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', CompletedAt=$now, UpdatedAt=$now, LastError='计划已重新安排' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
         command.Parameters.AddWithValue("$now", now);
         command.Parameters.AddWithValue("$id", materialId);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task InsertPendingExecutionAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, DateTimeOffset scheduledAt, string now, CancellationToken cancellationToken)
+    private async Task InsertPendingExecutionAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, DateTimeOffset scheduledAt, string now, string accountKey, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO ScheduleExecutions (MaterialId, ScheduledAt, Status, CreatedAt, UpdatedAt)
-            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now);
+            INSERT INTO ScheduleExecutions (MaterialId, ScheduledAt, Status, CreatedAt, UpdatedAt, AccountKey)
+            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now, $accountKey);
             """;
         command.Parameters.AddWithValue("$materialId", materialId);
         command.Parameters.AddWithValue("$scheduledAt", scheduledAt.ToString("O"));
         command.Parameters.AddWithValue("$now", now);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

@@ -9,14 +9,16 @@ namespace QqChannelDesk.Services;
 public sealed class CliDiagnostics
 {
     private readonly FfmpegManager _ffmpegManager;
+    private readonly string? _cliEntryPoint;
     private const string MinimumCliVersion = "1.0.6";
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NodeInstallTimeout = TimeSpan.FromMinutes(10);
 
-    public CliDiagnostics(FfmpegManager? ffmpegManager = null)
+    public CliDiagnostics(FfmpegManager? ffmpegManager = null, string? cliEntryPoint = null)
     {
         _ffmpegManager = ffmpegManager ?? new FfmpegManager();
+        _cliEntryPoint = cliEntryPoint;
     }
 
     public async Task<DiagnosticReport> CheckAsync(CancellationToken cancellationToken = default)
@@ -33,7 +35,7 @@ public sealed class CliDiagnostics
             "CLI",
             async () =>
             {
-                cliPath = await FindCliEntryPointAsync(cancellationToken);
+                cliPath = _cliEntryPoint ?? await FindCliEntryPointAsync(cancellationToken);
                 if (cliPath is null)
                     return new DiagnosticItem(DiagnosticState.Warning, "未安装", "未找到全局或当前目录的 tencent-channel-cli NPM 包");
 
@@ -239,7 +241,7 @@ public sealed class CliDiagnostics
         return safe.Trim();
     }
 
-    private static async Task<DiagnosticItem> CheckNodeAsync(CancellationToken cancellationToken)
+    private async Task<DiagnosticItem> CheckNodeAsync(CancellationToken cancellationToken)
     {
         RefreshNodePath();
         var result = await RunCommandAsync("node", ["--version"], cancellationToken);
@@ -254,7 +256,7 @@ public sealed class CliDiagnostics
             : new DiagnosticItem(DiagnosticState.Error, "异常", FirstUsefulLine(result.CombinedOutput, "Node.js 检查失败"));
     }
 
-    private static async Task<string?> FindCliEntryPointAsync(CancellationToken cancellationToken)
+    private async Task<string?> FindCliEntryPointAsync(CancellationToken cancellationToken)
     {
         var candidates = new List<string>();
         var npmCli = FindNpmCliPath();
@@ -276,19 +278,23 @@ public sealed class CliDiagnostics
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private static async Task<ProcessResult> RunNodeScriptAsync(string scriptPath, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+    private async Task<ProcessResult> RunNodeScriptAsync(string scriptPath, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
         var args = new List<string> { scriptPath };
         args.AddRange(arguments);
-        return await RunCommandAsync("node", args, cancellationToken, Path.GetDirectoryName(scriptPath));
+        var path = await _ffmpegManager.BuildCliPathAsync(
+            Environment.GetEnvironmentVariable("PATH"), cancellationToken).ConfigureAwait(false);
+        return await RunCommandAsync(
+            "node", args, cancellationToken, Path.GetDirectoryName(scriptPath), pathOverride: path);
     }
 
-    private static async Task<ProcessResult> RunCommandAsync(
+    private async Task<ProcessResult> RunCommandAsync(
         string fileName,
         IReadOnlyList<string> arguments,
         CancellationToken cancellationToken,
         string? workingDirectory = null,
-        TimeSpan? timeoutDuration = null)
+        TimeSpan? timeoutDuration = null,
+        string? pathOverride = null)
     {
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
@@ -302,6 +308,8 @@ public sealed class CliDiagnostics
             StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
         };
+        if (pathOverride is not null)
+            process.StartInfo.Environment["PATH"] = pathOverride;
         foreach (var argument in arguments)
         {
             process.StartInfo.ArgumentList.Add(argument);
@@ -342,7 +350,7 @@ public sealed class CliDiagnostics
         }
     }
 
-    private static async Task<ProcessResult> RunInstallCommandAsync(CancellationToken cancellationToken)
+    private async Task<ProcessResult> RunInstallCommandAsync(CancellationToken cancellationToken)
     {
         var npmCli = FindNpmCliPath();
         if (npmCli is null)

@@ -13,16 +13,17 @@ namespace QqChannelDesk;
 
 public partial class MainWindow : Window
 {
-    private readonly CliDiagnostics _diagnostics = new();
-    private readonly FfmpegManager _ffmpegManager = new();
-    private readonly CliWorkflow _workflow = new();
-    private readonly ChannelCacheStore _channelCache = new();
+    private readonly CliDiagnostics _diagnostics;
+    private readonly FfmpegManager _ffmpegManager;
+    private readonly CliWorkflow _workflow;
+    private readonly AccountContext _accountContext = new();
+    private readonly ChannelCacheStore _channelCache;
     private readonly ChannelSyncService _channelSync;
-    private readonly PublishHistoryStore _historyStore = new();
+    private readonly PublishHistoryStore _historyStore;
     private readonly AccountSessionStore _accountSessionStore = new();
     private readonly SystemSettingsStore _settingsStore = new();
     private readonly MediaStorageService _mediaStorage;
-    private readonly ContentLibraryStore _contentLibrary = new();
+    private readonly ContentLibraryStore _contentLibrary;
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
     private readonly UpdateCheckService _updateCheckService = new();
@@ -54,8 +55,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _ffmpegManager = new FfmpegManager(settingsStore: _settingsStore);
+        _diagnostics = new CliDiagnostics(_ffmpegManager);
+        _workflow = new CliWorkflow(ffmpegManager: _ffmpegManager);
+        _channelCache = new ChannelCacheStore(accountContext: _accountContext);
+        _historyStore = new PublishHistoryStore(accountContext: _accountContext);
+        _contentLibrary = new ContentLibraryStore(accountContext: _accountContext);
         _mediaStorage = new MediaStorageService(_settingsStore);
-        _channelSync = new ChannelSyncService(new CliWorkflow(), _channelCache);
+        _channelSync = new ChannelSyncService(_workflow, _channelCache);
         _publisher = new PublishExecutionService(_workflow, _historyStore, _mediaStorage, _logger);
         _databaseInitializer = new AppDatabaseInitializer(
             _settingsStore,
@@ -72,7 +79,7 @@ public partial class MainWindow : Window
         _contentCollectionPage = new ContentCollectionPage(_contentLibrary);
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
-        _settingPage = new SettingPage(_settingsStore, _mediaStorage);
+        _settingPage = new SettingPage(_settingsStore, _mediaStorage, _ffmpegManager);
         _dashboardService = new DashboardService(_contentLibrary, _historyStore, _settingsStore);
         _operationsCenterPage = new OperationsCenterPage(_dashboardService, _runtimeSession);
         _logPage = new LogPage();
@@ -126,24 +133,20 @@ public partial class MainWindow : Window
                 return;
             }
 
-            try
-            {
-                await _historyStore.MarkInterruptedAsUnverifiedAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"恢复未完成发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}");
-            }
-            try
-            {
-                await _contentLibrary.MarkRunningExecutionsAsNeedsVerificationAsync(
-                    "应用上次未能确认计划发布结果，请检查目标频道。");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"恢复未完成计划失败：{CliDiagnostics.Sanitize(ex.Message)}");
-            }
             await RefreshDiagnosticsAsync();
+            try
+            {
+                if (_accountContext.IsAuthenticated)
+                {
+                    await _historyStore.MarkInterruptedAsUnverifiedAsync();
+                    await _contentLibrary.MarkRunningExecutionsAsNeedsVerificationAsync(
+                        "应用上次未能确认计划发布结果，请检查目标频道。");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"恢复未完成计划和发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
             var settings = await _settingsStore.GetAsync();
             _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
             _scheduler.Start(settings.RunTasksOnStartup);
@@ -316,12 +319,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        var schedulerWasStopped = false;
         try
         {
             SetAccountActionsEnabled(false);
+            schedulerWasStopped = _scheduler.Status.Running || _scheduler.Status.Paused;
+            if (!await StopSchedulerForContextChangeAsync("登录前无法安全停止计划执行器，账号未切换。"))
+                return;
             var dialog = new LoginWindow(_workflow) { Owner = this };
             dialog.ShowDialog();
-            if (!dialog.LoginSucceeded) return;
+            if (!dialog.LoginSucceeded)
+            {
+                await RestartSchedulerAsync();
+                return;
+            }
 
             _operationsCenterPage.SetFooter("扫码授权成功，正在同步频道和版块…");
             await RefreshDiagnosticsAsync();
@@ -330,9 +341,18 @@ public partial class MainWindow : Window
             _operationsCenterPage.SetFooter(sync.Succeeded
                 ? $"频道数据已同步：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块"
                 : $"频道数据同步失败，发布已禁用：{sync.Error}");
+            await RestartSchedulerAsync();
         }
         finally
         {
+            if (schedulerWasStopped && !_isClosing && _accountContext.IsAuthenticated)
+            {
+                try { await RestartSchedulerAsync(); }
+                catch (Exception ex)
+                {
+                    _logger.Error($"登录流程结束后恢复计划执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                }
+            }
             SetAccountActionsEnabled(true);
         }
     }
@@ -346,20 +366,27 @@ public partial class MainWindow : Window
 
         SetAccountActionsEnabled(false);
         _operationsCenterPage.SetFooter("正在退出登录…");
+        var schedulerWasStopped = false;
         try
         {
+            schedulerWasStopped = _scheduler.Status.Running || _scheduler.Status.Paused;
+            if (!await StopSchedulerForContextChangeAsync("退出登录前无法安全停止计划执行器，当前账号仍保持登录。"))
+                return;
             var result = await _workflow.LogoutAsync();
             if (!result.Succeeded)
             {
                 _operationsCenterPage.SetFooter(result.Message);
                 MessageBox.Show(this, result.Message, "退出登录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                 await RefreshDiagnosticsAsync();
+                await RestartSchedulerAsync();
                 return;
             }
 
-            await _accountSessionStore.ClearAsync();
+            _accountContext.Clear();
             UpdateAccountSessionDisplay("未知账号", null);
             _operationsCenterPage.SetFooter(result.Message);
+            await RefreshAccountScopedViewsAsync();
+            await _accountSessionStore.ClearAsync();
             await RefreshDiagnosticsAsync();
         }
         catch (Exception ex)
@@ -370,6 +397,14 @@ public partial class MainWindow : Window
         }
         finally
         {
+            if (schedulerWasStopped && !_isClosing && _accountContext.IsAuthenticated)
+            {
+                try { await RestartSchedulerAsync(); }
+                catch (Exception ex)
+                {
+                    _logger.Error($"退出登录流程结束后恢复计划执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                }
+            }
             SetAccountActionsEnabled(true);
         }
     }
@@ -607,7 +642,11 @@ public partial class MainWindow : Window
             _operationsCenterPage.UpdateReport(report);
             var loggedIn = report.Login.State == DiagnosticState.Ready;
             UpdateAccountActionVisibility(loggedIn);
+            var schedulerWasActive = _scheduler.Status.Running || _scheduler.Status.Paused;
             await RefreshAccountSessionDisplayAsync(report.Login.StateLabel);
+            if (schedulerWasActive && _accountContext.IsAuthenticated &&
+                !_scheduler.Status.Running && !_scheduler.Status.Paused)
+                await RestartSchedulerAsync();
             foreach (var line in report.LogLines) _logger.Info(line);
             _logger.Info($"运行环境：{report.OverallMessage}");
             _operationsCenterPage.SetFooter(report.OverallMessage);
@@ -621,6 +660,12 @@ public partial class MainWindow : Window
         {
             Volatile.Write(ref _diagnosticSnapshot, DiagnosticEnvironmentSnapshot.Unavailable);
             UpdateAccountActionVisibility(false);
+            var hadAccount = _accountContext.IsAuthenticated;
+            if (!hadAccount || await StopSchedulerForContextChangeAsync("无法确认当前 CLI 账号，计划执行器未能安全停止；暂时保留当前账号数据。"))
+            {
+                _accountContext.Clear();
+                if (hadAccount) await RefreshAccountScopedViewsAsync();
+            }
             UpdateAccountSessionDisplay("状态未知", null);
             _operationsCenterPage.SetFooter("检查失败");
             _logger.Error($"检查过程发生错误：{ex.Message}");
@@ -652,12 +697,17 @@ public partial class MainWindow : Window
         if (_operationsCenterPage.CliState != "可用") await InstallCliAsync(confirm: false);
     }
 
-    private async Task RefreshAccountSessionDisplayAsync(string loginState)
+    private async Task<bool> RefreshAccountSessionDisplayAsync(string loginState)
     {
         if (!string.Equals(loginState, "已登录", StringComparison.Ordinal))
         {
+            var changed = _accountContext.IsAuthenticated;
+            if (changed && !await StopSchedulerForContextChangeAsync("当前 CLI 已退出登录，但计划执行器未能安全停止；暂时保留当前页面数据。"))
+                return false;
+            _accountContext.Clear();
             UpdateAccountSessionDisplay(AccountSessionStore.ResolveDisplay(loginState, null, null).Nickname, null);
-            return;
+            if (changed) await RefreshAccountScopedViewsAsync();
+            return changed;
         }
 
         AccountProfile? stored = null;
@@ -667,34 +717,95 @@ public partial class MainWindow : Window
         }
         catch (Exception) { }
 
-        string? nickname = null;
+        CurrentAccountIdentity? identity = null;
         AccountProfile? detected = null;
         try
         {
-            nickname = await _workflow.GetCurrentAccountAsync();
-            if (!string.IsNullOrWhiteSpace(nickname))
-                detected = await _accountSessionStore.SaveDetectedAsync(nickname);
+            identity = await _workflow.GetCurrentAccountAsync();
         }
         catch (Exception) { }
 
+        if (identity is null)
+        {
+            var changed = _accountContext.IsAuthenticated;
+            if (changed && !await StopSchedulerForContextChangeAsync("无法读取当前 CLI 账号，计划执行器未能安全停止；暂时保留当前页面数据。"))
+                return false;
+            _accountContext.Clear();
+            var fallback = AccountSessionStore.ResolveDisplay(loginState, null, null);
+            UpdateAccountSessionDisplay(fallback.Nickname, fallback.LoginAt);
+            if (changed) await RefreshAccountScopedViewsAsync();
+            return changed;
+        }
+
+        var changedAccount = !string.Equals(_accountContext.CurrentAccountKey, identity.AccountKey, StringComparison.Ordinal);
+        if (changedAccount)
+        {
+            if (!await StopSchedulerForContextChangeAsync("检测到 CLI 账号已变化，但计划执行器未能安全停止；账号未切换。"))
+                return false;
+            _accountContext.Set(identity);
+        }
+        else if (!_accountContext.IsAuthenticated)
+        {
+            _accountContext.Set(identity);
+            changedAccount = true;
+        }
+
+        try { detected = await _accountSessionStore.SaveDetectedAsync(identity); }
+        catch (Exception) { }
         var loginAt = detected?.LoginAt ??
-            (string.Equals(stored?.Nickname, nickname, StringComparison.Ordinal) ? stored?.LoginAt : null);
-        var display = AccountSessionStore.ResolveDisplay(loginState, nickname, loginAt);
+            (string.Equals(stored?.AccountKey, identity.AccountKey, StringComparison.Ordinal) ? stored?.LoginAt : null);
+        var display = AccountSessionStore.ResolveDisplay(loginState, identity.Nickname, loginAt);
         UpdateAccountSessionDisplay(display.Nickname, display.LoginAt);
+        if (changedAccount) await RefreshAccountScopedViewsAsync();
+        return changedAccount;
     }
 
     private async Task RecordLoginSessionAsync()
     {
-        string nickname;
-        try { nickname = await _workflow.GetCurrentAccountAsync(); }
-        catch (Exception) { nickname = "已登录账号"; }
+        CurrentAccountIdentity identity;
+        try { identity = await _workflow.GetCurrentAccountAsync(); }
+        catch (Exception)
+        {
+            UpdateAccountSessionDisplay("已登录账号", DateTimeOffset.Now);
+            return;
+        }
 
         try
         {
-            var profile = await _accountSessionStore.SaveLoginAsync(nickname, DateTimeOffset.Now);
+            _accountContext.Set(identity);
+            var profile = await _accountSessionStore.SaveLoginAsync(identity, DateTimeOffset.Now);
             UpdateAccountSessionDisplay(profile.Nickname, profile.LoginAt);
         }
-        catch (Exception) { UpdateAccountSessionDisplay(nickname, DateTimeOffset.Now); }
+        catch (Exception) { UpdateAccountSessionDisplay(identity.Nickname, DateTimeOffset.Now); }
+    }
+
+    private async Task RefreshAccountScopedViewsAsync()
+    {
+        await _contentCollectionPage.LoadItemsAsync();
+        await _contentCollectionPage.LoadDraftsAsync();
+        await _materialsPage.LoadMaterialsAsync();
+        await _schedulePage.LoadSchedulesAsync();
+        await _historyPage.LoadRecordsAsync();
+        await _operationsCenterPage.RefreshDashboardAsync();
+    }
+
+    private async Task<bool> StopSchedulerForContextChangeAsync(string failureMessage)
+    {
+        if (!_scheduler.Status.Running && !_scheduler.Status.Paused) return true;
+        var stopped = await _scheduler.StopAsync();
+        if (stopped) return true;
+
+        _operationsCenterPage.SetFooter(failureMessage);
+        MessageBox.Show(this, failureMessage, "无法切换账号", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return false;
+    }
+
+    private async Task RestartSchedulerAsync()
+    {
+        if (!_accountContext.IsAuthenticated || _isClosing) return;
+        var settings = await _settingsStore.GetAsync();
+        _scheduler.Start(settings.RunTasksOnStartup);
+        _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
     }
 
     private void UpdateAccountSessionDisplay(string nickname, DateTimeOffset? loginAt)
@@ -772,10 +883,14 @@ public partial class MainWindow : Window
         {
             await _scheduler.StopAsync();
         }
+        catch (Exception ex)
+        {
+            _logger.Error($"关闭程序时停止计划执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
         finally
         {
             if (_trayIcon is not null) _trayIcon.Visible = false;
-            Close();
+            _ = Dispatcher.BeginInvoke(() => Close());
         }
     }
 

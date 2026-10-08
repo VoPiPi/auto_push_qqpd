@@ -72,6 +72,64 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
+    public async Task CheckAsyncUsesResolvedFfmpegPathForCliCommands()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"QqChannelDiagnostics-{Guid.NewGuid():N}");
+        var appDirectory = Path.Combine(directory, "app");
+        var toolsDirectory = Path.Combine(appDirectory, "tools", "ffmpeg", "bin");
+        var ffmpegPath = Path.Combine(directory, "configured", "ffmpeg.exe");
+        var databasePath = Path.Combine(directory, "channels.db");
+        var scriptPath = Path.Combine(directory, "fake-cli.js");
+        var markerPath = Path.Combine(directory, "path.log");
+        Directory.CreateDirectory(Path.GetDirectoryName(ffmpegPath)!);
+        Directory.CreateDirectory(toolsDirectory);
+        await File.WriteAllBytesAsync(ffmpegPath, []);
+        var script = "const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(" +
+            System.Text.Json.JsonSerializer.Serialize(markerPath) +
+            ",a.join(' ')+\"|\"+process.env.PATH+\"\\n\");if(a[0]==='version') console.log(JSON.stringify({success:true,data:{version:'1.0.6'}}));else console.log(JSON.stringify({success:true,data:{message:'logged in'}}));";
+        await File.WriteAllTextAsync(scriptPath, script);
+
+        try
+        {
+            var settings = new SystemSettingsStore(databasePath);
+            await settings.SaveAsync(new AppSettings(FfmpegPath: ffmpegPath));
+            var manager = new FfmpegManager(
+                installDirectory: toolsDirectory,
+                includePath: false,
+                baseDirectory: appDirectory,
+                settingsStore: settings);
+            var report = await new CliDiagnostics(manager, scriptPath).CheckAsync();
+
+            Assert.Equal(DiagnosticState.Ready, report.Cli.State);
+            Assert.Equal(DiagnosticState.Ready, report.Login.State);
+            var expectedDirectory = Path.GetDirectoryName(ffmpegPath)!;
+            var lines = await File.ReadAllLinesAsync(markerPath);
+            Assert.Equal(2, lines.Length);
+            Assert.All(lines, line =>
+            {
+                var path = line[(line.IndexOf('|') + 1)..];
+                var firstEntry = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)[0];
+                Assert.Equal(Path.GetFullPath(expectedDirectory), Path.GetFullPath(firstEntry));
+            });
+        }
+        finally
+        {
+            if (File.Exists(scriptPath)) File.Delete(scriptPath);
+            if (File.Exists(markerPath)) File.Delete(markerPath);
+            if (File.Exists(ffmpegPath)) File.Delete(ffmpegPath);
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (Directory.Exists(Path.GetDirectoryName(ffmpegPath)!)) Directory.Delete(Path.GetDirectoryName(ffmpegPath)!);
+            if (Directory.Exists(toolsDirectory)) Directory.Delete(toolsDirectory);
+            if (Directory.Exists(Path.Combine(appDirectory, "tools", "ffmpeg"))) Directory.Delete(Path.Combine(appDirectory, "tools", "ffmpeg"));
+            if (Directory.Exists(Path.Combine(appDirectory, "tools"))) Directory.Delete(Path.Combine(appDirectory, "tools"));
+            if (Directory.Exists(appDirectory)) Directory.Delete(appDirectory);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
+    [Fact]
     public void AppLoggerDefaultsToSummaryOnlyAndUsesDailyLogName()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

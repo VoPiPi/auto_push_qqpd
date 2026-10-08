@@ -14,13 +14,18 @@ public sealed class CliWorkflow
     private static readonly TimeSpan LoginTimeout = TimeSpan.FromMinutes(10);
     private readonly string? _cliEntryPoint;
     private readonly string _nodeExecutable;
-    private readonly FfmpegManager _ffmpegManager = new();
+    private readonly FfmpegManager _ffmpegManager;
 
-    public CliWorkflow(string? cliEntryPoint = null, string nodeExecutable = "node", AppLogger? logger = null)
+    public CliWorkflow(
+        string? cliEntryPoint = null,
+        string nodeExecutable = "node",
+        AppLogger? logger = null,
+        FfmpegManager? ffmpegManager = null)
     {
         _cliEntryPoint = cliEntryPoint;
         _nodeExecutable = nodeExecutable;
         _logger = logger ?? AppLogger.Instance;
+        _ffmpegManager = ffmpegManager ?? new FfmpegManager();
     }
 
     public async Task<LoginChallenge> StartLoginAsync(CancellationToken cancellationToken = default)
@@ -120,7 +125,7 @@ public sealed class CliWorkflow
             .ToArray();
     }
 
-    public async Task<string> GetCurrentAccountAsync(CancellationToken cancellationToken = default)
+    public async Task<CurrentAccountIdentity> GetCurrentAccountAsync(CancellationToken cancellationToken = default)
     {
         var result = await RunCliAsync(["manage", "get-user-info", "--json"], ShortTimeout, cancellationToken);
         if (result.ExitCode != 0)
@@ -130,10 +135,16 @@ public sealed class CliWorkflow
 
         using var json = ParseLastJson(result.StandardOutput);
         var data = GetData(json.RootElement);
+        var globalNickname = ReadString(data, "global_nickname");
         var nickname = ReadString(data, "nickname");
-        if (nickname.Length == 0) nickname = ReadString(data, "global_nickname");
-        if (nickname.Length == 0) throw new InvalidOperationException("CLI 未返回当前账号昵称。");
-        return nickname;
+        try
+        {
+            return CurrentAccountIdentity.Create(globalNickname, nickname);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new InvalidOperationException(ex.Message, ex);
+        }
     }
 
     public static IReadOnlyList<ChannelChoice> ParseGuildChoices(string jsonText)
@@ -166,13 +177,13 @@ public sealed class CliWorkflow
             .ToArray();
     }
 
-    public static string ValidatePublishRequest(PublishRequest request)
-        => ValidatePublishRequestCore(request, requireExistingFiles: true);
+    public static string ValidatePublishRequest(PublishRequest request, bool allowUnknownSources = false)
+        => ValidatePublishRequestCore(request, requireExistingFiles: true, allowUnknownSources);
 
-    public static string ValidatePublishRequestSources(PublishRequest request)
-        => ValidatePublishRequestCore(request, requireExistingFiles: false);
+    public static string ValidatePublishRequestSources(PublishRequest request, bool allowUnknownSources = false)
+        => ValidatePublishRequestCore(request, requireExistingFiles: false, allowUnknownSources);
 
-    private static string ValidatePublishRequestCore(PublishRequest request, bool requireExistingFiles)
+    private static string ValidatePublishRequestCore(PublishRequest request, bool requireExistingFiles, bool allowUnknownSources)
     {
         if (!Regex.IsMatch(request.GuildId.Trim(), @"^\d+$")) return "频道 ID 必须为数字。";
         if (!Regex.IsMatch(request.ChannelId.Trim(), @"^\d+$")) return "版块 ID 必须为数字。";
@@ -190,7 +201,10 @@ public sealed class CliWorkflow
         if (requireExistingFiles && request.MediaPaths.Any(path => IsNonRemoteMediaPath(path) && !File.Exists(path)))
             return "所选媒体文件不存在，请重新选择。";
         if (request.Type is FeedType.Image or FeedType.Video &&
-            request.MediaPaths.Any(path => !MaterialMediaValidator.IsValidSource(path, request.Type == FeedType.Image ? "image" : "video")))
+            request.MediaPaths.Any(path => !MaterialMediaValidator.IsValidSource(
+                path,
+                request.Type == FeedType.Image ? "image" : "video",
+                allowUnknownSources)))
             return "所选媒体文件或链接无效，请重新选择。";
         return string.Empty;
     }
@@ -331,14 +345,10 @@ public sealed class CliWorkflow
             StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
         };
-        var ffmpegDirectory = _ffmpegManager.FindExecutableDirectory();
-        if (!string.IsNullOrWhiteSpace(ffmpegDirectory))
-        {
-            var inheritedPath = info.Environment.TryGetValue("PATH", out var path) ? path : Environment.GetEnvironmentVariable("PATH");
-            info.Environment["PATH"] = string.IsNullOrWhiteSpace(inheritedPath)
-                ? ffmpegDirectory
-                : string.Join(Path.PathSeparator, ffmpegDirectory, inheritedPath);
-        }
+        var inheritedPath = info.Environment.TryGetValue("PATH", out var path)
+            ? path
+            : Environment.GetEnvironmentVariable("PATH");
+        info.Environment["PATH"] = await _ffmpegManager.BuildCliPathAsync(inheritedPath, cancellationToken).ConfigureAwait(false);
         info.ArgumentList.Add(cli);
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
 

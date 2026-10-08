@@ -13,7 +13,6 @@ public partial class MaterialEditorWindow : Window
     private readonly MediaStorageService _mediaStorage;
     private readonly MaterialRecord? _existing;
     private bool _loading;
-    private bool _settingType;
     private bool _settingSchedule;
 
     public MaterialDraft? Material { get; private set; }
@@ -30,7 +29,6 @@ public partial class MaterialEditorWindow : Window
             TitleBox.Text = existing.Title;
             ContentBox.Text = existing.Content;
             MediaLinksBox.Text = string.Join(Environment.NewLine, existing.MediaLinks);
-            TypeCombo.SelectedIndex = existing.Type switch { "image" => 1, "video" => 2, _ => 0 };
             if (existing.PublishAt is { } scheduled)
             {
                 _settingSchedule = true;
@@ -92,30 +90,14 @@ public partial class MaterialEditorWindow : Window
         catch (Exception ex) { FormMessage.Text = $"刷新失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
-    private void TypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_settingType || MediaLinksBox is null) return;
-        UpdateMediaSelectionHint();
-        InferTypeFromLinks();
-    }
-
     private void MediaLinksBox_TextChanged(object sender, TextChangedEventArgs e) => InferTypeFromLinks();
 
     private void SelectMediaButton_Click(object sender, RoutedEventArgs e)
     {
-        var type = SelectedType;
-        if (type == "text")
-        {
-            FormMessage.Text = "请先将素材类型改为图片或视频，再选择本地媒体文件。";
-            return;
-        }
-
         var dialog = new OpenFileDialog
         {
-            Multiselect = type == "image",
-            Filter = type == "image"
-                ? "图片文件|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|所有文件|*.*"
-                : "视频文件|*.mp4;*.mov;*.m4v;*.webm;*.avi;*.mkv|所有文件|*.*"
+            Multiselect = true,
+            Filter = "媒体文件|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.mov;*.m4v;*.webm;*.avi;*.mkv|所有文件|*.*"
         };
         if (dialog.ShowDialog(this) != true) return;
 
@@ -130,16 +112,11 @@ public partial class MaterialEditorWindow : Window
 
     private void InferTypeFromLinks()
     {
-        if (_settingType || TypeCombo is null || MediaLinksBox is null) return;
+        if (MediaLinksBox is null) return;
         var links = ParseMediaLinks();
-        if (links.Count == 0) return;
         var inferred = MaterialMediaValidator.InferType(links);
-        var desired = inferred switch { "video" => 2, "image" => 1, _ => TypeCombo.SelectedIndex };
-        if (desired == TypeCombo.SelectedIndex) return;
-        _settingType = true;
-        TypeCombo.SelectedIndex = desired;
-        _settingType = false;
         UpdateMediaSelectionHint();
+        UpdateTypeDetectionHint(inferred, links.Count > 0);
     }
 
     private void ScheduleEnabledCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -157,13 +134,20 @@ public partial class MaterialEditorWindow : Window
     {
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
-        var type = SelectedType;
         var links = ParseMediaLinks();
         if (title.Length == 0 || content.Length == 0)
         {
             FormMessage.Text = "标题和正文均为必填项。";
             return;
         }
+        var detectedType = MaterialMediaValidator.InferType(links);
+        if (detectedType is null)
+        {
+            FormMessage.Text = "无法根据媒体文件或链接自动判断类型，请使用带图片或视频扩展名的文件或链接。";
+            return;
+        }
+
+        var type = detectedType;
         var mediaError = MaterialMediaValidator.Validate(type, title, links);
         if (mediaError.Length > 0) { FormMessage.Text = mediaError; return; }
 
@@ -219,8 +203,6 @@ public partial class MaterialEditorWindow : Window
         return publishAt is null && existingStatus == "published" ? "published" : "waitsend";
     }
 
-    private string SelectedType => (TypeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "text";
-
     private IReadOnlyList<string> ParseMediaLinks() => MediaLinksBox.Text
         .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -229,11 +211,25 @@ public partial class MaterialEditorWindow : Window
     private void UpdateMediaSelectionHint()
     {
         if (MediaSelectionHint is null) return;
-        MediaSelectionHint.Text = SelectedType switch
+        MediaSelectionHint.Text = MaterialMediaValidator.InferType(ParseMediaLinks()) switch
         {
             "image" => "图片可多选；也可在下方粘贴公开图片链接。",
             "video" => "视频单选；也可在下方粘贴公开视频链接。",
-            _ => "文本素材不需要媒体文件。"
+            "text" => "文本素材不需要媒体文件。",
+            _ => "可添加图片或视频媒体，但不能混合使用。"
         };
+    }
+
+    private void UpdateTypeDetectionHint(string? inferredType, bool hasMedia)
+    {
+        if (TypeDetectionHint is null) return;
+        TypeDetectionHint.Text = !hasMedia
+            ? "未添加媒体，素材类型为文本。"
+            : inferredType switch
+            {
+                "image" => "已根据媒体自动识别为图片。",
+                "video" => "已根据媒体自动识别为视频。",
+                _ => "媒体类型无法自动判断，请使用带图片或视频扩展名的文件或链接。"
+            };
     }
 }

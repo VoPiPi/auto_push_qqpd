@@ -3,6 +3,7 @@ using Xunit;
 
 namespace QqChannelDesk.Tests;
 
+[Collection("Process environment")]
 public sealed class FfmpegManagerTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"QqChannelFfmpegTests-{Guid.NewGuid():N}");
@@ -10,7 +11,7 @@ public sealed class FfmpegManagerTests : IDisposable
     [Fact]
     public async Task CheckAsync_ReportsMissingExecutable()
     {
-        var manager = new FfmpegManager(Path.Combine(_directory, "bin"), includePath: false);
+        var manager = CreateManager(includePath: false);
 
         var result = await manager.CheckAsync();
 
@@ -38,12 +39,12 @@ public sealed class FfmpegManagerTests : IDisposable
     [Fact]
     public void FindExecutableDirectory_PrefersBundledExecutable()
     {
-        var binDirectory = Path.Combine(_directory, "bin");
+        var binDirectory = ProjectBinDirectory;
         Directory.CreateDirectory(binDirectory);
         var executable = Path.Combine(binDirectory, "ffmpeg.exe");
         File.WriteAllBytes(executable, []);
 
-        var manager = new FfmpegManager(binDirectory, includePath: false);
+        var manager = CreateManager(includePath: false);
 
         Assert.Equal(binDirectory, manager.FindExecutableDirectory());
     }
@@ -54,11 +55,13 @@ public sealed class FfmpegManagerTests : IDisposable
         var binDirectory = Path.Combine(_directory, "path-bin");
         Directory.CreateDirectory(binDirectory);
         File.WriteAllBytes(Path.Combine(binDirectory, "ffmpeg.exe"), []);
+        Directory.CreateDirectory(ProjectBinDirectory);
+        File.WriteAllBytes(Path.Combine(ProjectBinDirectory, "ffmpeg.exe"), []);
         var originalPath = Environment.GetEnvironmentVariable("PATH");
         try
         {
             Environment.SetEnvironmentVariable("PATH", binDirectory);
-            var manager = new FfmpegManager(Path.Combine(_directory, "app-bin"));
+            var manager = CreateManager();
 
             Assert.Equal(binDirectory, manager.FindExecutableDirectory());
         }
@@ -66,6 +69,63 @@ public sealed class FfmpegManagerTests : IDisposable
         {
             Environment.SetEnvironmentVariable("PATH", originalPath);
         }
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PrefersConfiguredPathOverSystemPath()
+    {
+        var configuredDirectory = Path.Combine(_directory, "configured");
+        Directory.CreateDirectory(configuredDirectory);
+        var configuredPath = Path.Combine(configuredDirectory, "ffmpeg.exe");
+        File.WriteAllBytes(configuredPath, []);
+        var settings = new SystemSettingsStore(Path.Combine(_directory, "configured.db"));
+        await settings.SaveAsync(new AppSettings(FfmpegPath: configuredPath));
+
+        var manager = CreateManager(settingsStore: settings);
+        var resolution = await manager.ResolveAsync();
+
+        Assert.Equal(Path.GetFullPath(configuredPath), resolution.ExecutablePath);
+        Assert.Equal(FfmpegSource.ConfiguredPath, resolution.Source);
+        Assert.False(resolution.ConfiguredPathInvalid);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_FallsBackToProjectToolsWhenConfiguredPathIsMissing()
+    {
+        Directory.CreateDirectory(ProjectBinDirectory);
+        var projectPath = Path.Combine(ProjectBinDirectory, "ffmpeg.exe");
+        File.WriteAllBytes(projectPath, []);
+        var settings = new SystemSettingsStore(Path.Combine(_directory, "invalid-config.db"));
+        await settings.SaveAsync(new AppSettings(FfmpegPath: Path.Combine(_directory, "missing", "ffmpeg.exe")));
+
+        var resolution = await CreateManager(includePath: false, settingsStore: settings).ResolveAsync();
+
+        Assert.Equal(Path.GetFullPath(projectPath), resolution.ExecutablePath);
+        Assert.Equal(FfmpegSource.ProjectTools, resolution.Source);
+        Assert.True(resolution.ConfiguredPathInvalid);
+    }
+
+    [Fact]
+    public async Task BuildCliPath_PutsSelectedDirectoryFirstAndRemovesDuplicate()
+    {
+        Directory.CreateDirectory(ProjectBinDirectory);
+        File.WriteAllBytes(Path.Combine(ProjectBinDirectory, "ffmpeg.exe"), []);
+        var inherited = string.Join(Path.PathSeparator, ["C:\\Windows", ProjectBinDirectory, "C:\\Tools", ProjectBinDirectory]);
+
+        var path = await CreateManager(includePath: false).BuildCliPathAsync(inherited);
+        var entries = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal(Path.GetFullPath(ProjectBinDirectory), Path.GetFullPath(entries[0]));
+        Assert.Equal(1, entries.Count(entry => string.Equals(Path.GetFullPath(entry), Path.GetFullPath(ProjectBinDirectory), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public void Constructor_RejectsInstallDirectoryOutsideTools()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new FfmpegManager(Path.Combine(_directory, "outside"), baseDirectory: ApplicationDirectory));
+
+        Assert.Contains("tools", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -107,17 +167,19 @@ public sealed class FfmpegManagerTests : IDisposable
         File.WriteAllBytes(latestArchive, []);
         File.WriteAllBytes(gitArchive, []);
 
-        var manager = new FfmpegManager(installDirectory: Path.Combine(_directory, "install"), baseDirectory: Path.Combine(_directory, "app"));
+        var manager = CreateManager(installDirectory: Path.Combine(ApplicationDirectory, "tools", "ffmpeg", "bin"));
 
         Assert.Equal(latestArchive, manager.FindLatestArchive());
     }
 
     public void Dispose()
     {
-        var executable = Path.Combine(_directory, "bin", "ffmpeg.exe");
+        var executable = Path.Combine(ProjectBinDirectory, "ffmpeg.exe");
         if (File.Exists(executable)) File.Delete(executable);
         var pathExecutable = Path.Combine(_directory, "path-bin", "ffmpeg.exe");
         if (File.Exists(pathExecutable)) File.Delete(pathExecutable);
+        var configuredExecutable = Path.Combine(_directory, "configured", "ffmpeg.exe");
+        if (File.Exists(configuredExecutable)) File.Delete(configuredExecutable);
 
         var toolsDirectory = Path.Combine(_directory, "app", "tools");
         foreach (var archive in new[] { "ffmpeg-8.1.2-essentials_build.7z", "ffmpeg-9.0.2-essentials_build.7z", "ffmpeg-git-essentials.7z" })
@@ -130,6 +192,17 @@ public sealed class FfmpegManagerTests : IDisposable
         var projectFile = Path.Combine(projectDirectory, "QqChannelDesk.csproj");
         if (File.Exists(projectFile)) File.Delete(projectFile);
         RemoveDirectoryIfEmpty(projectDirectory);
+
+        foreach (var database in new[] { "configured.db", "invalid-config.db" })
+        {
+            var databasePath = Path.Combine(_directory, database);
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+
+        RemoveDirectoryIfEmpty(Path.Combine(_directory, "configured"));
+        RemoveDirectoryIfEmpty(Path.Combine(_directory, "missing"));
+        RemoveDirectoryIfEmpty(Path.Combine(_directory, "app", "tools", "ffmpeg", "bin"));
+        RemoveDirectoryIfEmpty(Path.Combine(_directory, "app", "tools", "ffmpeg"));
 
         RemoveDirectoryIfEmpty(Path.Combine(projectDirectory, "bin", "Debug", "net8.0-windows"));
         RemoveDirectoryIfEmpty(Path.Combine(projectDirectory, "bin", "Debug"));
@@ -147,9 +220,27 @@ public sealed class FfmpegManagerTests : IDisposable
         RemoveDirectoryIfEmpty(_directory);
     }
 
+    private string ApplicationDirectory => Path.Combine(_directory, "app");
+    private string ProjectBinDirectory => Path.Combine(ApplicationDirectory, "tools", "ffmpeg", "bin");
+
+    private FfmpegManager CreateManager(
+        bool includePath = true,
+        SystemSettingsStore? settingsStore = null,
+        string? installDirectory = null) =>
+        new(
+            installDirectory ?? ProjectBinDirectory,
+            includePath,
+            ApplicationDirectory,
+            settingsStore);
+
     private static void RemoveDirectoryIfEmpty(string path)
     {
         if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
             Directory.Delete(path);
     }
+}
+
+[CollectionDefinition("Process environment", DisableParallelization = true)]
+public sealed class ProcessEnvironmentCollectionDefinition
+{
 }
