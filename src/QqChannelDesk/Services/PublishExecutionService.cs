@@ -31,7 +31,7 @@ public sealed class PublishExecutionService
         string channelName,
         CancellationToken cancellationToken = default)
     {
-        var sourceValidation = CliWorkflow.ValidatePublishRequestSources(sourceRequest);
+        var sourceValidation = CliWorkflow.ValidatePublishRequestSources(sourceRequest, allowUnknownSources: true);
         var recordId = await _historyStore.CreateAsync(new PublishRecordDraft(
             sourceRequest.Type,
             sourceRequest.GuildId,
@@ -66,7 +66,8 @@ public sealed class PublishExecutionService
                     var copied = await _mediaStorage.CreateJobCopyAsync(
                         source,
                         sourceRequest.Type == FeedType.Image ? "image" : "video",
-                        cancellationToken);
+                        cancellationToken,
+                        allowUnknownSources: true);
                     jobPaths.Add(copied);
                     publishPaths.Add(copied);
                 }
@@ -83,7 +84,7 @@ public sealed class PublishExecutionService
             }
 
             var request = sourceRequest with { Files = publishPaths };
-            var validation = CliWorkflow.ValidatePublishRequest(request);
+            var validation = CliWorkflow.ValidatePublishRequest(request, allowUnknownSources: true);
             var result = validation.Length > 0
                 ? new PublishResult(false, PublishErrorCategory.Validation, validation, null, null)
                 : await _workflow.PublishAsync(request, cancellationToken);

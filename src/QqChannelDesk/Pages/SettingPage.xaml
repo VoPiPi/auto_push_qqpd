@@ -77,15 +77,17 @@
             <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="18,16">
                 <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <TextBlock Text="素材文件" Style="{StaticResource SectionTitle}" />
                     <TextBlock Grid.Row="1" Text="新导入和新下载的媒体会使用此目录。" Foreground="{StaticResource Muted}" FontSize="11" />
                     <Grid Grid.Row="2" Margin="0,14,0,0">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -111,8 +113,21 @@
                             <ComboBoxItem Content="永久保留" Tag="KeepForever" />
                         </ComboBox>
                         <TextBlock x:Name="StorageStatus" Grid.Row="2" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        <TextBlock Grid.Row="3" Text="FFmpeg 路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,12,0,0" />
+                        <Grid Grid.Row="3" Grid.Column="1" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="FfmpegPathBox" IsReadOnly="True" TextWrapping="NoWrap"
+                                     ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <Button Grid.Column="1" Content="更改路径" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ChangeFfmpegPathButton_Click" />
+                            <Button Grid.Column="2" Content="自动选择" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ResetFfmpegPathButton_Click" />
+                        </Grid>
+                        <TextBlock x:Name="FfmpegPathStatus" Grid.Row="4" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </Grid>
-                    <TextBlock Grid.Row="3" Text="素材仓库原件不会因任务清理被删除；失败或超时任务副本会保留，便于排查。更换目录不会自动迁移已有文件。"
+                    <TextBlock Grid.Row="3" Text="素材仓库原件不会因任务清理被删除；失败或超时任务副本会保留，便于排查。更换目录不会自动迁移已有文件。FFmpeg 优先使用此处指定路径，其次使用系统 FFmpeg，最后使用项目 tools 目录版本。"
                                Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,12,0,0" />
                 </Grid>
             </Border>

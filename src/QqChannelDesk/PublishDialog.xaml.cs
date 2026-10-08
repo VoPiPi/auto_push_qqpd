@@ -203,7 +203,7 @@ public partial class PublishDialog : Window
         var channel = ChannelCombo.SelectedItem as ChannelChoice;
         var sourceMedia = _sourceMaterial?.MediaLinks ?? _mediaPaths;
         var previewRequest = new PublishRequest(guild?.Id ?? "", channel?.Id ?? "", ContentBox.Text, TitleBox.Text, _feedType, sourceMedia);
-        var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest);
+        var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest, allowUnknownSources: true);
         if (validation.Length > 0)
         {
             MessageBox.Show(this, validation, "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);

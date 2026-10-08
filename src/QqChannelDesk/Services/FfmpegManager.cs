@@ -14,16 +14,48 @@ public sealed class FfmpegManager
     private readonly string _installDirectory;
     private readonly string _applicationDirectory;
     private readonly bool _includePath;
+    private readonly SystemSettingsStore? _settingsStore;
 
-    public FfmpegManager(string? installDirectory = null, bool includePath = true, string? baseDirectory = null)
+    public FfmpegManager(
+        string? installDirectory = null,
+        bool includePath = true,
+        string? baseDirectory = null,
+        SystemSettingsStore? settingsStore = null)
     {
         _applicationDirectory = ResolveApplicationDirectory(baseDirectory ?? AppContext.BaseDirectory);
-        _installDirectory = installDirectory ?? Path.Combine(_applicationDirectory, "tools", "ffmpeg", "bin");
+        var toolsDirectory = Path.Combine(_applicationDirectory, "tools");
+        _installDirectory = installDirectory is null
+            ? Path.Combine(toolsDirectory, "ffmpeg", "bin")
+            : ValidateInstallDirectory(installDirectory, toolsDirectory);
         _includePath = includePath;
+        _settingsStore = settingsStore;
     }
 
     public string InstallDirectory => _installDirectory;
     public string ArchiveDirectory => Path.Combine(_applicationDirectory, "tools");
+
+    private static string ValidateInstallDirectory(string installDirectory, string toolsDirectory)
+    {
+        var fullInstallDirectory = Path.GetFullPath(installDirectory);
+        var fullToolsDirectory = Path.GetFullPath(toolsDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var toolsPrefix = fullToolsDirectory + Path.DirectorySeparatorChar;
+        if (!fullInstallDirectory.StartsWith(toolsPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("FFmpeg 部署目录必须位于应用目录的 tools 文件夹内。", nameof(installDirectory));
+        return fullInstallDirectory;
+    }
+
+    private const string ExecutableName = "ffmpeg.exe";
+
+    public static string ValidateExecutablePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("FFmpeg 路径不能为空。", nameof(path));
+        var fullPath = Path.GetFullPath(path.Trim());
+        if (!File.Exists(fullPath)) throw new FileNotFoundException("指定的 FFmpeg 文件不存在。", fullPath);
+        if (!string.Equals(Path.GetFileName(fullPath), ExecutableName, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("请选择 ffmpeg.exe 文件。", nameof(path));
+        return fullPath;
+    }
 
     public string? FindLatestArchive()
     {
@@ -64,15 +96,110 @@ public sealed class FfmpegManager
 
     public string? FindExecutableDirectory()
     {
-        var localExecutable = Path.Combine(InstallDirectory, "ffmpeg.exe");
-        if (File.Exists(localExecutable)) return InstallDirectory;
+        var systemExecutable = _includePath ? FindSystemExecutablePath() : null;
+        if (systemExecutable is not null) return Path.GetDirectoryName(systemExecutable);
 
-        if (!_includePath) return null;
+        var localExecutable = Path.Combine(InstallDirectory, ExecutableName);
+        return File.Exists(localExecutable) ? InstallDirectory : null;
+    }
+
+    public async Task<FfmpegResolution> ResolveAsync(CancellationToken cancellationToken = default)
+    {
+        var configuredPathInvalid = false;
+        if (_settingsStore is not null)
+        {
+            var settings = await _settingsStore.GetAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(settings.FfmpegPath))
+            {
+                var configuredPath = TryGetConfiguredExecutablePath(settings.FfmpegPath);
+                if (configuredPath is not null)
+                {
+                    return new FfmpegResolution(configuredPath, FfmpegSource.ConfiguredPath, false);
+                }
+
+                configuredPathInvalid = true;
+            }
+        }
+
+        if (_includePath)
+        {
+            var systemPath = FindSystemExecutablePath(cancellationToken);
+            if (systemPath is not null)
+            {
+                return new FfmpegResolution(systemPath, FfmpegSource.SystemPath, configuredPathInvalid);
+            }
+        }
+
+        var localExecutable = Path.Combine(InstallDirectory, ExecutableName);
+        return new FfmpegResolution(
+            File.Exists(localExecutable) ? localExecutable : null,
+            File.Exists(localExecutable) ? FfmpegSource.ProjectTools : null,
+            configuredPathInvalid);
+    }
+
+    public async Task<string?> FindExecutableDirectoryAsync(CancellationToken cancellationToken = default)
+    {
+        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+        return resolution.ExecutableDirectory;
+    }
+
+    public async Task<string?> FindExecutablePathAsync(CancellationToken cancellationToken = default)
+    {
+        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+        return resolution.ExecutablePath;
+    }
+
+    public async Task<string> BuildCliPathAsync(string? inheritedPath, CancellationToken cancellationToken = default)
+    {
+        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+        var selectedDirectory = resolution.ExecutableDirectory;
+        var entries = (inheritedPath ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Trim().Trim('"'))
+            .Where(entry => entry.Length > 0)
+            .ToList();
+
+        if (selectedDirectory is not null)
+        {
+            entries.RemoveAll(entry => PathsEqual(entry, selectedDirectory));
+            entries.Insert(0, selectedDirectory);
+        }
+
+        return string.Join(Path.PathSeparator, entries);
+    }
+
+    private static bool PathsEqual(string first, string second)
+    {
+        try { return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+    }
+
+    private static string? TryGetConfiguredExecutablePath(string? configuredPath)
+    {
+        if (string.IsNullOrWhiteSpace(configuredPath)) return null;
+        try
+        {
+            var fullPath = Path.GetFullPath(configuredPath.Trim());
+            if (Directory.Exists(fullPath)) fullPath = Path.Combine(fullPath, ExecutableName);
+            return File.Exists(fullPath) && string.Equals(Path.GetFileName(fullPath), ExecutableName, StringComparison.OrdinalIgnoreCase)
+                ? fullPath
+                : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    private static string? FindSystemExecutablePath(CancellationToken cancellationToken = default)
+    {
         foreach (var directory in GetPathDirectories())
         {
-            if (File.Exists(Path.Combine(directory, OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg")))
-                return directory;
+            cancellationToken.ThrowIfCancellationRequested();
+            var executable = Path.Combine(directory, ExecutableName);
+            if (File.Exists(executable)) return executable;
         }
+
         return null;
     }
 
@@ -112,10 +239,28 @@ public sealed class FfmpegManager
 
     public async Task<FfmpegStatus> CheckAsync(CancellationToken cancellationToken = default)
     {
-        var directory = FindExecutableDirectory();
-        if (directory is null) return new(false, "未检测到", "未找到 ffmpeg，可点击部署", null);
+        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+        if (resolution.ExecutablePath is null)
+        {
+            var detail = resolution.ConfiguredPathInvalid
+                ? "已保存的 FFmpeg 路径不可用，且系统 PATH 和项目 tools 目录中均未找到 ffmpeg"
+                : "未找到 ffmpeg，可在系统设置中指定路径或点击部署";
+            return new(false, "未检测到", detail, null, null, resolution.ConfiguredPathInvalid);
+        }
 
-        var executable = Path.Combine(directory, OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg");
+        return await CheckExecutableAsync(
+            resolution.ExecutablePath,
+            resolution.Source,
+            resolution.ConfiguredPathInvalid,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<FfmpegStatus> CheckExecutableAsync(
+        string executable,
+        FfmpegSource? source,
+        bool configuredPathInvalid,
+        CancellationToken cancellationToken)
+    {
         try
         {
             using var process = new Process
@@ -132,16 +277,19 @@ public sealed class FfmpegManager
                     CreateNoWindow = true
                 }
             };
-            if (!process.Start()) return new(false, "异常", "ffmpeg 无法启动", directory);
+            if (!process.Start())
+            {
+                return new(false, "异常", "ffmpeg 无法启动", Path.GetDirectoryName(executable), source, configuredPathInvalid);
+            }
             var output = await process.StandardOutput.ReadLineAsync(cancellationToken);
             await process.WaitForExitAsync(cancellationToken);
             return process.ExitCode == 0
-                ? new(true, "可用", FormatVersionOutput(output), directory)
-                : new(false, "异常", "ffmpeg 版本检查失败", directory);
+                ? new(true, "可用", FormatVersionOutput(output), Path.GetDirectoryName(executable), source, configuredPathInvalid)
+                : new(false, "异常", "ffmpeg 版本检查失败", Path.GetDirectoryName(executable), source, configuredPathInvalid);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return new(false, "异常", $"ffmpeg 启动失败：{ex.Message}", directory);
+            return new(false, "异常", $"ffmpeg 启动失败：{ex.Message}", Path.GetDirectoryName(executable), source, configuredPathInvalid);
         }
     }
 
@@ -182,10 +330,14 @@ public sealed class FfmpegManager
             if (!extracted.Contains("ffmpeg.exe"))
                 return new CliInstallResult(false, $"压缩包 {Path.GetFileName(archivePath)} 的 bin 目录中未找到 ffmpeg.exe，未完成部署。", null);
 
-            var status = await CheckAsync(cancellationToken);
+            var status = await CheckExecutableAsync(
+                Path.Combine(InstallDirectory, ExecutableName),
+                FfmpegSource.ProjectTools,
+                false,
+                cancellationToken);
             return status.Available
-                ? new CliInstallResult(true, status.Detail, null)
-                : new CliInstallResult(false, status.Detail, null);
+                ? new CliInstallResult(true, $"项目 tools 中的 FFmpeg 已部署：{status.Detail}", null)
+                : new CliInstallResult(false, $"项目 tools 中的 FFmpeg 部署后检查失败：{status.Detail}", null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -198,4 +350,33 @@ public sealed class FfmpegManager
     }
 }
 
-public sealed record FfmpegStatus(bool Available, string StateLabel, string Detail, string? ExecutableDirectory);
+public enum FfmpegSource
+{
+    ConfiguredPath,
+    SystemPath,
+    ProjectTools
+}
+
+public sealed record FfmpegResolution(
+    string? ExecutablePath,
+    FfmpegSource? Source,
+    bool ConfiguredPathInvalid)
+{
+    public string? ExecutableDirectory => ExecutablePath is null ? null : Path.GetDirectoryName(ExecutablePath);
+
+    public string SourceLabel => Source switch
+    {
+        FfmpegSource.ConfiguredPath => "手动设置",
+        FfmpegSource.SystemPath => "系统 PATH",
+        FfmpegSource.ProjectTools => "项目 tools 后备",
+        _ => "未找到"
+    };
+}
+
+public sealed record FfmpegStatus(
+    bool Available,
+    string StateLabel,
+    string Detail,
+    string? ExecutableDirectory,
+    FfmpegSource? Source = null,
+    bool ConfiguredPathInvalid = false);

@@ -45,6 +45,7 @@ public sealed class AppDatabaseInitializerTests : IDisposable
             "CollectedItems",
             "ContentDrafts",
             "Guilds",
+            "MaterialImports",
             "Materials",
             "PublishRecords",
             "ScheduleExecutions"

@@ -27,6 +27,7 @@ public sealed class SystemSettingsTests : IDisposable
         Assert.False(defaults.StartWithWindows);
         Assert.Equal(CloseWindowBehavior.ExitApplication, defaults.CloseWindowBehavior);
         Assert.Equal(MaterialRetentionPolicy.DeleteAfterSuccessfulPublish, defaults.MaterialRetentionPolicy);
+        Assert.Null(defaults.FfmpegPath);
         Assert.Equal(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "temp")), defaults.EffectiveMaterialStoragePath);
 
         await store.SaveAsync(new AppSettings(true, true, AutoExecuteSchedules: true, MaxScheduleConcurrency: 3,
@@ -87,6 +88,21 @@ public sealed class SystemSettingsTests : IDisposable
 
         File.Delete(_databasePath);
         Assert.False(File.Exists(_databasePath));
+    }
+
+    [Fact]
+    public async Task FfmpegPathPersistsAsNormalizedAbsolutePath()
+    {
+        var relativePath = Path.Combine("ffmpeg", "ffmpeg.exe");
+        var store = new SystemSettingsStore(_databasePath);
+
+        await store.SaveAsync(new AppSettings(FfmpegPath: relativePath));
+
+        var persisted = await new SystemSettingsStore(_databasePath).GetAsync();
+        Assert.Equal(Path.GetFullPath(relativePath), persisted.FfmpegPath);
+
+        await store.SaveAsync(new AppSettings());
+        Assert.Null((await new SystemSettingsStore(_databasePath).GetAsync()).FfmpegPath);
     }
 
     [Fact]

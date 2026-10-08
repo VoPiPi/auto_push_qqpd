@@ -291,6 +291,11 @@ public sealed class ContentLibraryTests
             Assert.True(MaterialMediaValidator.IsValidSource("https://example.com/photo.jpg?token=abc", "image"));
             Assert.Equal("image", MaterialMediaValidator.InferType([localImage]));
             Assert.Equal("video", MaterialMediaValidator.InferType(["https://example.com/movie.mp4"]));
+            Assert.Equal("text", MaterialMediaValidator.InferType([]));
+            Assert.Equal("image", MaterialMediaValidator.InferType(["https://example.com/a.jpg?token=abc", "https://example.com/b.PNG"]));
+            Assert.Null(MaterialMediaValidator.InferType(["https://example.com/without-extension"]));
+            Assert.Null(MaterialMediaValidator.InferType(["https://example.com/a.jpg", "https://example.com/b.mp4"]));
+            Assert.True(MaterialMediaValidator.IsValidSource("https://example.com/without-extension", "image", allowUnknownExtension: true));
 
             var localMaterial = new MaterialRecord(1, "title", "image", "body", "1", "guild", "2", "channel", null,
                 "waitsend", "", [localImage], DateTimeOffset.Now, DateTimeOffset.Now);
@@ -301,6 +306,15 @@ public sealed class ContentLibraryTests
             File.Delete(localImage);
             File.Delete(wrongType);
         }
+    }
+
+    [Fact]
+    public void MaterialMediaValidator_UnknownSourceCanBeAcceptedAfterManualTypeConfirmation()
+    {
+        Assert.False(MaterialMediaValidator.IsValidSource("https://example.com/media", "video"));
+        Assert.True(MaterialMediaValidator.IsValidSource("https://example.com/media", "video", allowUnknownExtension: true));
+        Assert.Contains("无效链接或文件", MaterialMediaValidator.Validate("image", "title", ["https://example.com/media"]));
+        Assert.Empty(MaterialMediaValidator.Validate("image", "title", ["https://example.com/media"], allowUnknownSources: true));
     }
 
     [Fact]

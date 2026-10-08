@@ -56,6 +56,16 @@ public sealed class AccountSessionStore
         return profile;
     }
 
+    public async Task<AccountProfile> SaveLoginAsync(
+        CurrentAccountIdentity identity,
+        DateTimeOffset loginAt,
+        CancellationToken cancellationToken = default)
+    {
+        var profile = new AccountProfile(identity.Nickname, loginAt, identity.GlobalNickname, identity.AccountKey);
+        await WriteAsync(profile, cancellationToken);
+        return profile;
+    }
+
     public async Task<AccountProfile> SaveDetectedAsync(
         string nickname,
         CancellationToken cancellationToken = default)
@@ -66,6 +76,19 @@ public sealed class AccountSessionStore
             ? existing?.LoginAt
             : null;
         var profile = new AccountProfile(normalizedNickname, loginAt);
+        await WriteAsync(profile, cancellationToken);
+        return profile;
+    }
+
+    public async Task<AccountProfile> SaveDetectedAsync(
+        CurrentAccountIdentity identity,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await GetAsync(cancellationToken);
+        var loginAt = string.Equals(existing?.AccountKey, identity.AccountKey, StringComparison.Ordinal)
+            ? existing?.LoginAt
+            : null;
+        var profile = new AccountProfile(identity.Nickname, loginAt, identity.GlobalNickname, identity.AccountKey);
         await WriteAsync(profile, cancellationToken);
         return profile;
     }
@@ -108,4 +131,8 @@ public sealed class AccountSessionStore
         string.IsNullOrWhiteSpace(nickname) ? "未知账号" : nickname.Trim();
 }
 
-public sealed record AccountProfile(string Nickname, DateTimeOffset? LoginAt);
+public sealed record AccountProfile(
+    string Nickname,
+    DateTimeOffset? LoginAt,
+    string? GlobalNickname = null,
+    string? AccountKey = null);
