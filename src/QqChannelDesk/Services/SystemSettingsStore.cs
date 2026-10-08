@@ -8,6 +8,7 @@ public sealed class SystemSettingsStore
     private const string NotifyUpgradeKey = "notify_upgrade";
     private const string RunTasksOnStartupKey = "run_tasks_on_startup";
     private const string MaterialStoragePathKey = "material_storage_path";
+    private const string FfmpegPathKey = "ffmpeg_path";
     private const string MaterialRetentionPolicyKey = "material_retention_policy";
     private const string AutoExecuteSchedulesKey = "auto_execute_schedules";
     private const string MaxScheduleConcurrencyKey = "max_schedule_concurrency";
@@ -47,6 +48,7 @@ public sealed class SystemSettingsStore
                 [NotifyUpgradeKey] = "false",
                 [RunTasksOnStartupKey] = "false",
                 [MaterialStoragePathKey] = new AppSettings().EffectiveMaterialStoragePath,
+                [FfmpegPathKey] = string.Empty,
                 [MaterialRetentionPolicyKey] = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish.ToString(),
                 [AutoExecuteSchedulesKey] = "true",
                 [MaxScheduleConcurrencyKey] = "1",
@@ -78,14 +80,15 @@ public sealed class SystemSettingsStore
             values[reader.GetString(0)] = reader.GetString(1);
 
         return new AppSettings(
-            ReadBoolean(values, NotifyUpgradeKey),
-            ReadBoolean(values, RunTasksOnStartupKey),
-            ReadString(values, MaterialStoragePathKey),
-            ReadRetentionPolicy(values, MaterialRetentionPolicyKey),
-            ReadBoolean(values, AutoExecuteSchedulesKey),
-            ReadConcurrency(values, MaxScheduleConcurrencyKey),
-            ReadBoolean(values, StartWithWindowsKey),
-            ReadCloseWindowBehavior(values, CloseWindowBehaviorKey));
+            NotifyUpgrade: ReadBoolean(values, NotifyUpgradeKey),
+            RunTasksOnStartup: ReadBoolean(values, RunTasksOnStartupKey),
+            MaterialStoragePath: ReadString(values, MaterialStoragePathKey),
+            MaterialRetentionPolicy: ReadRetentionPolicy(values, MaterialRetentionPolicyKey),
+            AutoExecuteSchedules: ReadBoolean(values, AutoExecuteSchedulesKey),
+            MaxScheduleConcurrency: ReadConcurrency(values, MaxScheduleConcurrencyKey),
+            StartWithWindows: ReadBoolean(values, StartWithWindowsKey),
+            CloseWindowBehavior: ReadCloseWindowBehavior(values, CloseWindowBehaviorKey),
+            FfmpegPath: ReadString(values, FfmpegPathKey));
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
@@ -100,6 +103,8 @@ public sealed class SystemSettingsStore
             await UpsertAsync(connection, transaction, RunTasksOnStartupKey, settings.RunTasksOnStartup, cancellationToken);
             await UpsertAsync(connection, transaction, MaterialStoragePathKey,
                 NormalizeStoragePath(settings.MaterialStoragePath), cancellationToken);
+            await UpsertAsync(connection, transaction, FfmpegPathKey,
+                NormalizeFfmpegPath(settings.FfmpegPath), cancellationToken);
             await UpsertAsync(connection, transaction, MaterialRetentionPolicyKey,
                 settings.MaterialRetentionPolicy.ToString(), cancellationToken);
             await UpsertAsync(connection, transaction, AutoExecuteSchedulesKey, settings.AutoExecuteSchedules, cancellationToken);
@@ -205,6 +210,9 @@ public sealed class SystemSettingsStore
     private static string NormalizeStoragePath(string? path) =>
         string.IsNullOrWhiteSpace(path) ? string.Empty : Path.GetFullPath(path.Trim());
 
+    private static string NormalizeFfmpegPath(string? path) =>
+        string.IsNullOrWhiteSpace(path) ? string.Empty : Path.GetFullPath(path.Trim());
+
     private static MaterialRetentionPolicy ReadRetentionPolicy(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) && Enum.TryParse<MaterialRetentionPolicy>(value, out var policy)
             ? policy
@@ -234,7 +242,8 @@ public sealed record AppSettings(
     bool AutoExecuteSchedules = true,
     int MaxScheduleConcurrency = 1,
     bool StartWithWindows = false,
-    CloseWindowBehavior CloseWindowBehavior = CloseWindowBehavior.ExitApplication)
+    CloseWindowBehavior CloseWindowBehavior = CloseWindowBehavior.ExitApplication,
+    string? FfmpegPath = null)
 {
     public string EffectiveMaterialStoragePath =>
         Path.GetFullPath(string.IsNullOrWhiteSpace(MaterialStoragePath)

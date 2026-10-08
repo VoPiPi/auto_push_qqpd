@@ -6,12 +6,14 @@ namespace QqChannelDesk.Services;
 public sealed class PublishHistoryStore
 {
     private readonly string _databasePath;
+    private readonly AccountContext? _accountContext;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private bool _initialized;
 
-    public PublishHistoryStore(string? databasePath = null)
+    public PublishHistoryStore(string? databasePath = null, AccountContext? accountContext = null)
     {
         _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "channels.db");
+        _accountContext = accountContext;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -41,11 +43,13 @@ public sealed class PublishHistoryStore
                     ErrorCategory TEXT NOT NULL DEFAULT '',
                     Summary TEXT NOT NULL DEFAULT '',
                     PostUrl TEXT NULL,
-                    PostId TEXT NULL
+                    PostId TEXT NULL,
+                    AccountKey TEXT NULL
                 );
                 CREATE INDEX IF NOT EXISTS IX_PublishRecords_StartedAt ON PublishRecords (StartedAt DESC);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
+            await EnsureAccountKeyColumnAsync(connection, cancellationToken);
             _initialized = true;
         }
         finally
@@ -56,14 +60,15 @@ public sealed class PublishHistoryStore
 
     public async Task<long> CreateAsync(PublishRecordDraft draft, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO PublishRecords
-                (StartedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName, Title, MediaNames, Status)
+                (StartedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName, Title, MediaNames, Status, AccountKey)
             VALUES
-                ($startedAt, $feedType, $guildId, $guildName, $channelId, $channelName, $title, $mediaNames, $status);
+                ($startedAt, $feedType, $guildId, $guildName, $channelId, $channelName, $title, $mediaNames, $status, $accountKey);
             SELECT last_insert_rowid();
             """;
         command.Parameters.AddWithValue("$startedAt", DateTimeOffset.Now.ToString("O"));
@@ -75,19 +80,21 @@ public sealed class PublishHistoryStore
         command.Parameters.AddWithValue("$title", draft.Title);
         command.Parameters.AddWithValue("$mediaNames", string.Join("\n", draft.MediaNames));
         command.Parameters.AddWithValue("$status", PublishRecordStatus.Processing.ToString());
+        AddAccountParameter(command, accountKey);
         return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
     }
 
     public async Task CompleteAsync(long id, PublishResult result, CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             UPDATE PublishRecords
             SET CompletedAt = $completedAt, Status = $status, ErrorCategory = $category,
                 Summary = $summary, PostUrl = $url, PostId = $postId
-            WHERE Id = $id;
+            WHERE Id = $id AND {AccountScope("AccountKey")};
             """;
         command.Parameters.AddWithValue("$completedAt", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$status", result.Succeeded ? PublishRecordStatus.Succeeded.ToString() :
@@ -97,66 +104,102 @@ public sealed class PublishHistoryStore
         command.Parameters.AddWithValue("$url", (object?)result.Url ?? DBNull.Value);
         command.Parameters.AddWithValue("$postId", (object?)result.PostId ?? DBNull.Value);
         command.Parameters.AddWithValue("$id", id);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task MarkInterruptedAsUnverifiedAsync(CancellationToken cancellationToken = default)
     {
+        var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             UPDATE PublishRecords
             SET Status = $status, CompletedAt = $completedAt,
                 Summary = '应用上次未能确认发布结果，请检查目标频道后再判断。'
-            WHERE Status = $processing;
+            WHERE Status = $processing AND {AccountScope("AccountKey")};
             """;
         command.Parameters.AddWithValue("$status", PublishRecordStatus.NeedsVerification.ToString());
         command.Parameters.AddWithValue("$processing", PublishRecordStatus.Processing.ToString());
         command.Parameters.AddWithValue("$completedAt", DateTimeOffset.Now.ToString("O"));
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<PublishRecord>> GetRecentAsync(int limit = 100, CancellationToken cancellationToken = default)
     {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
                    Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
-            FROM PublishRecords ORDER BY Id DESC LIMIT $limit;
+            FROM PublishRecords WHERE {AccountScope("AccountKey")} ORDER BY Id DESC LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 5000));
-        var records = new List<PublishRecord>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            records.Add(ReadRecord(reader));
-        }
-        return records;
-    }
-
-    public async Task<IReadOnlyList<PublishRecord>> GetSinceAsync(DateTimeOffset start, CancellationToken cancellationToken = default)
-    {
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
-                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
-            FROM PublishRecords
-            WHERE COALESCE(CompletedAt, StartedAt) >= $start
-            ORDER BY COALESCE(CompletedAt, StartedAt) DESC, Id DESC;
-            """;
-        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        AddAccountParameter(command, accountKey);
         var records = new List<PublishRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) records.Add(ReadRecord(reader));
         return records;
     }
 
-    private static PublishRecord ReadRecord(Microsoft.Data.Sqlite.SqliteDataReader reader) => new(
+    public async Task<IReadOnlyList<PublishRecord>> GetSinceAsync(DateTimeOffset start, CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
+                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
+            FROM PublishRecords
+            WHERE {AccountScope("AccountKey")} AND COALESCE(CompletedAt, StartedAt) >= $start
+            ORDER BY COALESCE(CompletedAt, StartedAt) DESC, Id DESC;
+            """;
+        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        AddAccountParameter(command, accountKey);
+        var records = new List<PublishRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) records.Add(ReadRecord(reader));
+        return records;
+    }
+
+    private string AccountScope(string column) => _accountContext is null ? "1=1" : $"{column} = $accountKey";
+    private string? ReadAccountKey() => _accountContext?.CurrentAccountKey;
+    private string RequireAccountKey() => _accountContext?.RequireAccountKey() ?? "";
+
+    private static void AddAccountParameter(SqliteCommand command, string? accountKey)
+    {
+        if (accountKey is not null) command.Parameters.AddWithValue("$accountKey", accountKey);
+    }
+
+    private static async Task EnsureAccountKeyColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(PublishRecords)";
+        var found = false;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (string.Equals(reader.GetString(1), "AccountKey", StringComparison.OrdinalIgnoreCase))
+            {
+                found = true;
+                break;
+            }
+        }
+        if (found) return;
+        await reader.DisposeAsync();
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = "ALTER TABLE PublishRecords ADD COLUMN AccountKey TEXT NULL";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static PublishRecord ReadRecord(SqliteDataReader reader) => new(
         reader.GetInt64(0), DateTimeOffset.Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : DateTimeOffset.Parse(reader.GetString(2)),
         Enum.Parse<FeedType>(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
         reader.GetString(8), reader.GetString(9).Split('\n', StringSplitOptions.RemoveEmptyEntries),

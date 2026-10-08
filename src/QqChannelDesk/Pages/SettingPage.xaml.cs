@@ -10,6 +10,7 @@ public partial class SettingPage : UserControl
 {
     private readonly SystemSettingsStore _settingsStore;
     private readonly MediaStorageService _mediaStorage;
+    private readonly FfmpegManager _ffmpegManager;
     private AppSettings _currentSettings = new();
     private bool _loading;
 
@@ -17,11 +18,15 @@ public partial class SettingPage : UserControl
     public event EventHandler? UpdateCheckRequested;
     public event EventHandler? OpenReleasesRequested;
 
-    public SettingPage(SystemSettingsStore settingsStore, MediaStorageService? mediaStorage = null)
+    public SettingPage(
+        SystemSettingsStore settingsStore,
+        MediaStorageService? mediaStorage = null,
+        FfmpegManager? ffmpegManager = null)
     {
         InitializeComponent();
         _settingsStore = settingsStore;
         _mediaStorage = mediaStorage ?? new MediaStorageService(settingsStore);
+        _ffmpegManager = ffmpegManager ?? new FfmpegManager(settingsStore: settingsStore);
         Loaded += async (_, _) => await LoadAsync();
         MachineCodeBox.Text = MachineCodeProvider.GetMachineCode();
         VersionText.Text = ApplicationVersionInfo.CurrentVersion;
@@ -42,6 +47,7 @@ public partial class SettingPage : UserControl
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => item.Tag?.ToString() == _currentSettings.MaxScheduleConcurrency.ToString());
             StoragePathBox.Text = _currentSettings.EffectiveMaterialStoragePath;
+            await RefreshFfmpegPathAsync();
             RetentionPolicyCombo.SelectedItem = RetentionPolicyCombo.Items
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), _currentSettings.MaterialRetentionPolicy.ToString(), StringComparison.Ordinal));
@@ -159,6 +165,63 @@ public partial class SettingPage : UserControl
         {
             SettingsStatus.Text = $"保存储存路径失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
+    }
+
+    private async void ChangeFfmpegPathButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择 FFmpeg 可执行文件",
+            Filter = "FFmpeg (ffmpeg.exe)|ffmpeg.exe|所有文件|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            FileName = "ffmpeg.exe"
+        };
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FileName)) return;
+
+        try
+        {
+            var path = FfmpegManager.ValidateExecutablePath(dialog.FileName);
+            await SaveSettingsAsync(_currentSettings with { FfmpegPath = path });
+            await RefreshFfmpegPathAsync();
+            SettingsStatus.Text = "FFmpeg 路径已保存，后续 CLI 操作将使用此路径。";
+        }
+        catch (Exception ex)
+        {
+            SettingsStatus.Text = $"保存 FFmpeg 路径失败：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+    }
+
+    private async void ResetFfmpegPathButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await SaveSettingsAsync(_currentSettings with { FfmpegPath = null });
+            await RefreshFfmpegPathAsync();
+            SettingsStatus.Text = "FFmpeg 已恢复自动选择：系统路径优先，项目 tools 版本后备。";
+        }
+        catch (Exception ex)
+        {
+            SettingsStatus.Text = $"恢复 FFmpeg 自动选择失败：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+    }
+
+    private async Task RefreshFfmpegPathAsync()
+    {
+        var resolution = await _ffmpegManager.ResolveAsync();
+        FfmpegPathBox.Text = resolution.ExecutablePath ?? "未检测到 ffmpeg.exe";
+        if (resolution.ExecutablePath is null)
+        {
+            FfmpegPathStatus.Text = resolution.ConfiguredPathInvalid
+                ? "已保存的路径当前不可用，系统 PATH 和项目 tools 目录也未找到 FFmpeg。"
+                : "自动选择未找到可用 FFmpeg。";
+            return;
+        }
+
+        var fallbackNotice = resolution.ConfiguredPathInvalid
+            ? "；已保存的路径不可用，当前已回退"
+            : string.Empty;
+        FfmpegPathStatus.Text = $"当前使用：{resolution.SourceLabel}{fallbackNotice}。";
     }
 
     private async Task SaveSettingsAsync(AppSettings settings)

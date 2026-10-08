@@ -42,6 +42,8 @@ public sealed class PublishScheduler
     public void Start(bool runOverdueAtStartup)
     {
         if (_loopTask is { IsCompleted: false }) return;
+        RemoveCompletedTasks();
+        if (RunningCount() > 0) return;
 
         _startedAt = DateTimeOffset.Now;
         _runOverdueAtStartup = runOverdueAtStartup;
@@ -95,18 +97,21 @@ public sealed class PublishScheduler
         }
     }
 
-    public async Task StopAsync(TimeSpan? waitTimeout = null)
+    public async Task<bool> StopAsync(TimeSpan? waitTimeout = null)
     {
         var source = _stopSource;
         var loop = _loopTask;
-        if (source is null || loop is null) return;
-
-        source.Cancel();
         var timeout = waitTimeout ?? TimeSpan.FromSeconds(10);
         var deadline = DateTime.UtcNow + timeout;
+        var stopped = true;
+
+        if (source is not null && loop is not null)
+            source.Cancel();
+
         try
         {
-            await WaitWithDeadlineAsync(loop, deadline).ConfigureAwait(false);
+            if (loop is not null)
+                await WaitWithDeadlineAsync(loop, deadline).ConfigureAwait(false);
             Task[] running;
             lock (_taskGate) running = _runningTasks.ToArray();
             if (running.Length > 0)
@@ -114,6 +119,7 @@ public sealed class PublishScheduler
         }
         catch (TimeoutException)
         {
+            stopped = false;
             try
             {
                 await _store.MarkRunningExecutionsAsNeedsVerificationAsync(
@@ -126,10 +132,19 @@ public sealed class PublishScheduler
         }
         finally
         {
-            SetStatus(new PublishSchedulerStatus(false, false, "计划执行器已停止", 0, DateTimeOffset.Now));
-            _loopTask = null;
-            _stopSource = null;
+            if (stopped)
+            {
+                SetStatus(new PublishSchedulerStatus(false, false, "计划执行器已停止", 0, DateTimeOffset.Now));
+                _loopTask = null;
+                _stopSource = null;
+                RemoveCompletedTasks();
+            }
+            else
+            {
+                SetStatus(new PublishSchedulerStatus(true, true, "计划执行器正在等待在途任务结束", RunningCount(), DateTimeOffset.Now));
+            }
         }
+        return stopped;
     }
 
     private async Task RunLoopAsync(CancellationToken cancellationToken)
