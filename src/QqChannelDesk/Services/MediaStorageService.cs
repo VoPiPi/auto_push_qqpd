@@ -88,24 +88,28 @@ public sealed class MediaStorageService
         {
             var settings = await _settingsStore.GetAsync(cancellationToken);
             var jobsDirectory = await GetJobsDirectoryAsync(cancellationToken);
-            switch (settings.MaterialRetentionPolicy)
+            var successDirectory = settings.MaterialRetentionPolicy == MaterialRetentionPolicy.DeleteAfterSuccessfulPublish
+                ? null
+                : await GetSuccessfulDirectoryAsync(cancellationToken);
+            await Task.Run(() =>
             {
-                case MaterialRetentionPolicy.DeleteAfterSuccessfulPublish:
-                    foreach (var path in jobPaths)
-                        DeleteOneFile(path, jobsDirectory);
-                    break;
-                case MaterialRetentionPolicy.KeepSevenDays:
-                    var successDirectory = await GetSuccessfulDirectoryAsync(cancellationToken);
-                    foreach (var path in jobPaths)
-                        MoveOneFile(path, jobsDirectory, successDirectory);
-                    CleanupExpiredSuccessfulFiles(successDirectory, DateTime.UtcNow.AddDays(-7));
-                    break;
-                case MaterialRetentionPolicy.KeepForever:
-                    var permanentDirectory = await GetSuccessfulDirectoryAsync(cancellationToken);
-                    foreach (var path in jobPaths)
-                        MoveOneFile(path, jobsDirectory, permanentDirectory);
-                    break;
-            }
+                switch (settings.MaterialRetentionPolicy)
+                {
+                    case MaterialRetentionPolicy.DeleteAfterSuccessfulPublish:
+                        foreach (var path in jobPaths)
+                            DeleteOneFile(path, jobsDirectory);
+                        break;
+                    case MaterialRetentionPolicy.KeepSevenDays:
+                        foreach (var path in jobPaths)
+                            MoveOneFile(path, jobsDirectory, successDirectory!);
+                        CleanupExpiredSuccessfulFiles(successDirectory!, DateTime.UtcNow.AddDays(-7));
+                        break;
+                    case MaterialRetentionPolicy.KeepForever:
+                        foreach (var path in jobPaths)
+                            MoveOneFile(path, jobsDirectory, successDirectory!);
+                        break;
+                }
+            }, cancellationToken);
         }
         catch (OperationCanceledException)
         {

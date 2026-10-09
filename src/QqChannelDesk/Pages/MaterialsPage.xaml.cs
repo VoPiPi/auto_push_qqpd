@@ -121,7 +121,7 @@ public partial class MaterialsPage : UserControl
                 OverwritePrompt = true
             };
             if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
-            var bytes = MaterialTemplateService.CreateWorkbook(targets);
+            var bytes = await Task.Run(() => MaterialTemplateService.CreateWorkbook(targets));
             await File.WriteAllBytesAsync(dialog.FileName, bytes);
             MaterialsStatus.Text = $"模板已保存：{Path.GetFileName(dialog.FileName)}";
         }
@@ -150,14 +150,14 @@ public partial class MaterialsPage : UserControl
                 return;
             }
 
-            var fileHash = MaterialTemplateService.ComputeFileHash(dialog.FileName);
+            var fileHash = await Task.Run(() => MaterialTemplateService.ComputeFileHash(dialog.FileName));
             if (await _store.HasImportedFileAsync(fileHash))
             {
                 MessageBox.Show(Window.GetWindow(this), "该导入文件已经处理过，不能重复导入。请修改后另存为新文件，或使用预览中的错误行导出文件。", "重复导入", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var result = MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now);
+            var result = await Task.Run(() => MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now));
             var preview = new MaterialImportPreviewWindow(result, targets) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) return;
 

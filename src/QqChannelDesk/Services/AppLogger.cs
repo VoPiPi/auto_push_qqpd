@@ -17,6 +17,8 @@ public sealed class AppLogger
         RegexOptions.Compiled);
     private const int MaxSessionEntries = 2000;
     private readonly List<(LogLevel Level, string Entry)> _sessionEntries = [];
+    private Task _lastFileWrite = Task.CompletedTask;
+    private Task _lastSettingsWrite = Task.CompletedTask;
     private readonly string _logDirectory;
     private readonly string _settingsPath;
 
@@ -50,15 +52,41 @@ public sealed class AppLogger
     public void SetDebugEnabled(bool enabled)
     {
         DebugEnabled = enabled;
-        try
+        var settingsPath = _settingsPath;
+        _lastSettingsWrite = Task.Run(() =>
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            File.WriteAllText(_settingsPath, JsonSerializer.Serialize(new { debugEnabled = enabled }));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+                File.WriteAllText(settingsPath, JsonSerializer.Serialize(new { debugEnabled = enabled }));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Write("无法保存调试模式设置。", LogLevel.Warning, detail: false);
+            }
+        });
+    }
+
+    private void WriteLogFile(string entry)
+    {
+        var logDirectory = _logDirectory;
+        var fileName = $"{DateTime.Now:yyyy-MM-dd}.log";
+        var previousWrite = _lastFileWrite;
+        _lastFileWrite = Task.Run(async () =>
         {
-            Write("无法保存调试模式设置。", LogLevel.Warning, detail: false);
-        }
+            try
+            {
+                await previousWrite;
+                Directory.CreateDirectory(logDirectory);
+                lock (FileLock)
+                {
+                    File.AppendAllText(Path.Combine(logDirectory, fileName), entry + Environment.NewLine);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        });
     }
 
     public void Info(string message) => Write(message, LogLevel.Info, detail: false);
@@ -79,17 +107,7 @@ public sealed class AppLogger
     {
         var safe = Redact(message ?? string.Empty);
         var entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {safe}";
-        try
-        {
-            Directory.CreateDirectory(_logDirectory);
-            lock (FileLock)
-            {
-                File.AppendAllText(Path.Combine(_logDirectory, $"{DateTime.Now:yyyy-MM-dd}.log"), entry + Environment.NewLine);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
+        WriteLogFile(entry);
 
         AddSessionEntry(level, entry);
 
@@ -115,6 +133,12 @@ public sealed class AppLogger
                 .Select(item => RedactErrorCodes(item.Entry))
                 .ToArray();
         }
+    }
+
+    public async Task FlushAsync()
+    {
+        await _lastSettingsWrite;
+        await _lastFileWrite;
     }
 
     public static string Redact(string text)

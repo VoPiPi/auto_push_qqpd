@@ -72,7 +72,7 @@
 
 - Windows 10 或更高版本
 - .NET 8 SDK（源码运行和编译）
-- .NET 8 Desktop Runtime（运行已构建程序）
+- 运行发布的程序无需安装 .NET 运行时（Release 包为自包含发布，已内置运行时）
 - Node.js
 - `tencent-channel-cli`
 
@@ -107,15 +107,15 @@ dotnet build .\src\QqChannelDesk\QqChannelDesk.csproj -c Release
 dotnet test .\tests\QqChannelDesk.Tests\QqChannelDesk.Tests.csproj -c Release
 ```
 
-### 5. 制作更新包
+### 5. 制作完整分发包
 
-更新包由发布者在干净的 `dotnet publish` 输出上制作，不从正在运行的用户目录打包：
+完整分发包由发布者在干净的 `dotnet publish` 输出上制作，不从正在运行的用户目录打包。发布为自包含模式，ZIP 内含 .NET 运行时和 FFmpeg 本地工具包，用户解压后双击 `QqChannelDesk.exe` 即可运行，无需安装 .NET 运行时或任何其他组件：
 
 ```powershell
 .\scripts\Build-UpdateZip.ps1 -Version 1.0.1
 ```
 
-脚本生成的 ZIP 只包含应用运行文件，明确排除 `channels.db`、`account.session.json`、`channels.sync.json`、`settings.json`、日志、`temp`、媒体缓存和 `tools`。上传到 [Gitee Releases](https://gitee.com/vopipi/auto_push_qqpd/releases) 后，用户关闭程序并将 ZIP 内容覆盖到原程序目录即可。覆盖前请保留用户目录中的数据库、登录授权文件、日志、素材和本地工具。
+脚本生成的 ZIP 包含应用运行所需的全部文件，并明确排除 `channels.db`、`account.session.json`、`channels.sync.json`、`settings.json`、日志、`temp` 和媒体缓存等用户数据。上传到 [Gitee Releases](https://gitee.com/vopipi/auto_push_qqpd/releases) 后，新用户解压即可使用；老用户如需升级，先关闭程序，将 ZIP 内容解压到新目录，再把原目录中的数据库、登录授权文件、日志、素材复制过去即可（数据库等文件会在首次运行时自动在程序目录创建）。
 
 发布标签建议使用 `v主版本.次版本.修订版本`，例如 `v1.0.1` 或 `v1.0.1-release`。程序只比较其中的数字版本，不执行 Release 资产中的任何脚本。
 

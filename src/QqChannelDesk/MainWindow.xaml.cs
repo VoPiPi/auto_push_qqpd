@@ -41,7 +41,6 @@ public partial class MainWindow : Window
     private readonly IReadOnlyDictionary<string, UserControl> _pages;
     private bool _isChecking;
     private bool _isInstalling;
-    private bool _startupInstallPromptShown;
     private bool _isClosing;
     private int _updateCheckActive;
     private bool _exitRequested;
@@ -543,7 +542,7 @@ public partial class MainWindow : Window
     private async Task InstallNodeAsync()
     {
         var confirmation = MessageBox.Show(this,
-            "将通过 Windows 包管理器 winget 从 OpenJS 安装 Node.js LTS。若 winget 不可用，可打开 nodejs.org 手动下载安装。继续吗？",
+            "将从 nodejs.org 下载官方 Node.js LTS 安装包并启动安装，不依赖 winget。安装过程中可能弹出“用户账户控制”授权提示。也可以取消后从 nodejs.org 手动安装。继续吗？",
             "安装 Node.js", MessageBoxButton.YesNoCancel, MessageBoxImage.Information);
         if (confirmation == MessageBoxResult.Cancel)
         {
@@ -552,15 +551,42 @@ public partial class MainWindow : Window
         }
         if (confirmation != MessageBoxResult.Yes) return;
 
-        await RunInstallOperationAsync("正在安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
+        var progressDialog = new NodeInstallProgressDialog { Owner = this };
+        var progress = new Progress<NodeInstallProgress>(progressDialog.Update);
+        SetInstalling(true);
+        _operationsCenterPage.SetFooter("正在安装 Node.js LTS…");
+        progressDialog.Show();
+        CliInstallResult result;
+        try
+        {
+            result = await Task.Run(
+                () => _diagnostics.InstallNodeAsync(progress, progressDialog.CancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            result = new CliInstallResult(false, "已取消安装", null);
+        }
+        catch (Exception ex)
+        {
+            result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null);
+        }
+        finally
+        {
+            progressDialog.Complete();
+            SetInstalling(false);
+        }
+
+        _logger.Info($"{(result.Succeeded ? "Node.js 安装完成" : "Node.js 安装失败")}：{result.Message}");
+        if (!string.IsNullOrWhiteSpace(result.Output)) _logger.Debug($"Node.js 安装输出：\n{result.Output}");
         await RefreshDiagnosticsAsync();
+        _operationsCenterPage.SetFooter(result.Message);
         if (_operationsCenterPage.NodeState == "可用" && _operationsCenterPage.CliState != "可用")
             await InstallCliAsync(confirm: false);
     }
 
     private async Task InstallFfmpegAsync()
     {
-        var archivePath = _ffmpegManager.FindLatestArchive();
+        var archivePath = await Task.Run(() => _ffmpegManager.FindLatestArchive());
         if (archivePath is null)
         {
             MessageBox.Show(this,
@@ -629,7 +655,6 @@ public partial class MainWindow : Window
     {
         if (_isChecking) return;
 
-        var promptForAutomaticInstall = false;
         _isChecking = true;
         _operationsCenterPage.SetRefreshEnabled(false);
         _operationsCenterPage.SetFooter("正在检查运行环境…");
@@ -650,11 +675,6 @@ public partial class MainWindow : Window
             foreach (var line in report.LogLines) _logger.Info(line);
             _logger.Info($"运行环境：{report.OverallMessage}");
             _operationsCenterPage.SetFooter(report.OverallMessage);
-            if (!_startupInstallPromptShown && (report.Node.State != DiagnosticState.Ready || report.Cli.State != DiagnosticState.Ready))
-            {
-                _startupInstallPromptShown = true;
-                promptForAutomaticInstall = true;
-            }
         }
         catch (Exception ex)
         {
@@ -676,25 +696,6 @@ public partial class MainWindow : Window
             _isChecking = false;
         }
 
-        if (!promptForAutomaticInstall) return;
-        var confirmation = MessageBox.Show(this,
-            "首次启动需要准备运行环境。是否自动安装缺失的 Node.js LTS 和/或腾讯频道 CLI？\n\n安装仅在你确认后开始；自动安装失败或取消后，可在运行环境中手动点击对应按钮重试。",
-            "首次运行需要安装环境", MessageBoxButton.YesNo, MessageBoxImage.Information);
-        if (confirmation != MessageBoxResult.Yes) return;
-
-        if (_operationsCenterPage.NodeState != "可用")
-        {
-            var nodeInstall = await RunInstallOperationAsync("正在自动安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
-            await RefreshDiagnosticsAsync();
-            if (!nodeInstall.Succeeded || _operationsCenterPage.NodeState != "可用")
-            {
-                if (!nodeInstall.Succeeded)
-                    MessageBox.Show(this, $"Node.js 自动安装失败：{nodeInstall.Message}\n\n可点击“安装 Node.js”重试，或选择手动下载。",
-                        "自动安装未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-        }
-        if (_operationsCenterPage.CliState != "可用") await InstallCliAsync(confirm: false);
     }
 
     private async Task<bool> RefreshAccountSessionDisplayAsync(string loginState)
@@ -781,12 +782,13 @@ public partial class MainWindow : Window
 
     private async Task RefreshAccountScopedViewsAsync()
     {
-        await _contentCollectionPage.LoadItemsAsync();
-        await _contentCollectionPage.LoadDraftsAsync();
-        await _materialsPage.LoadMaterialsAsync();
-        await _schedulePage.LoadSchedulesAsync();
-        await _historyPage.LoadRecordsAsync();
-        await _operationsCenterPage.RefreshDashboardAsync();
+        await Task.WhenAll(
+            _contentCollectionPage.LoadItemsAsync(),
+            _contentCollectionPage.LoadDraftsAsync(),
+            _materialsPage.LoadMaterialsAsync(),
+            _schedulePage.LoadSchedulesAsync(),
+            _historyPage.LoadRecordsAsync(),
+            _operationsCenterPage.RefreshDashboardAsync());
     }
 
     private async Task<bool> StopSchedulerForContextChangeAsync(string failureMessage)

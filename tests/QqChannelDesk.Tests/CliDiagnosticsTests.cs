@@ -1,5 +1,8 @@
 using QqChannelDesk.Services;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Reflection;
 using Xunit;
 
 namespace QqChannelDesk.Tests;
@@ -72,6 +75,31 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
+    public async Task GetStringWithTimeoutAsyncCancelsWhenHttpClientIgnoresToken()
+    {
+        using var cts = new CancellationTokenSource(100);
+        using var handler = new NeverCompletingHandler();
+        using var http = new HttpClient(handler);
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://ignored.example/", TimeSpan.FromSeconds(5), cts.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+    }
+
+    private sealed class NeverCompletingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = cancellationToken;
+            var completion = new TaskCompletionSource<HttpResponseMessage>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            return completion.Task;
+        }
+    }
+
+    [Fact]
     public async Task CheckAsyncUsesResolvedFfmpegPathForCliCommands()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -130,7 +158,7 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerDefaultsToSummaryOnlyAndUsesDailyLogName()
+    public async Task AppLoggerDefaultsToSummaryOnlyAndUsesDailyLogName()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -140,6 +168,7 @@ public sealed class CliDiagnosticsTests
             logger.EntryWritten += displayedEntries.Add;
             logger.Info("普通操作摘要");
             logger.Debug("详细调试数据");
+            await logger.FlushAsync();
 
             Assert.False(logger.DebugEnabled);
             Assert.Contains(displayedEntries, entry => entry.Contains("普通操作摘要", StringComparison.Ordinal));
@@ -177,12 +206,14 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerPersistsDebugSetting()
+    public async Task AppLoggerPersistsDebugSetting()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
-            new AppLogger(directory).SetDebugEnabled(true);
+            var logger = new AppLogger(directory);
+            logger.SetDebugEnabled(true);
+            await logger.FlushAsync();
 
             Assert.True(new AppLogger(directory).DebugEnabled);
         }
@@ -193,7 +224,7 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerShowsSummaryByDefaultAndDebugEntriesOnlyWhenRequested()
+    public async Task AppLoggerShowsSummaryByDefaultAndDebugEntriesOnlyWhenRequested()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -201,6 +232,7 @@ public sealed class CliDiagnosticsTests
             var logger = new AppLogger(directory);
             logger.Info("环境检查完成");
             logger.Debug("CLI JSON 详细响应：{\"success\":false,\"error\":{\"code\":12345}}");
+            await logger.FlushAsync();
 
             var normalEntries = logger.ReadEntries(includeDebug: false);
             var debugEntries = logger.ReadEntries(includeDebug: true);
@@ -247,7 +279,7 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerHidesErrorCodesInDisplayButKeepsThemInFile()
+    public async Task AppLoggerHidesErrorCodesInDisplayButKeepsThemInFile()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -257,6 +289,7 @@ public sealed class CliDiagnosticsTests
             logger.SetDebugEnabled(true);
             logger.EntryWritten += displayed.Add;
             logger.Debug("CLI result: {\"success\":false,\"error\":{\"code\":12345,\"message\":\"forbidden\"}}");
+            await logger.FlushAsync();
 
             Assert.Contains(displayed, entry => entry.Contains("forbidden", StringComparison.Ordinal));
             Assert.DoesNotContain(displayed, entry => entry.Contains("12345", StringComparison.Ordinal));
@@ -418,6 +451,7 @@ public sealed class CliWorkflowTests
         try
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => new CliWorkflow(scriptPath, logger: logger).StartLoginAsync());
+            await logger.FlushAsync();
 
             var logFile = File.ReadAllText(Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log"));
             Assert.Contains("already logged in", logFile, StringComparison.Ordinal);

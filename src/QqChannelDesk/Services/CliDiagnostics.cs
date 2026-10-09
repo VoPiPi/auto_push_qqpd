@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -14,6 +15,8 @@ public sealed class CliDiagnostics
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NodeInstallTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan VersionIndexTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DownloadHeadersTimeout = TimeSpan.FromSeconds(30);
 
     public CliDiagnostics(FfmpegManager? ffmpegManager = null, string? cliEntryPoint = null)
     {
@@ -24,14 +27,18 @@ public sealed class CliDiagnostics
     public async Task<DiagnosticReport> CheckAsync(CancellationToken cancellationToken = default)
     {
         var log = new List<string>();
-        var node = await CheckIndependentlyAsync(
+        var nodeLog = new List<string>();
+        var cliLog = new List<string>();
+        var ffmpegLog = new List<string>();
+
+        string? cliPath = null;
+        var nodeTask = CheckIndependentlyAsync(
             "Node.js",
             () => CheckNodeAsync(cancellationToken),
             new DiagnosticItem(DiagnosticState.Error, "检查失败", "Node.js 检查失败"),
-            log);
+            nodeLog);
 
-        string? cliPath = null;
-        var cli = await CheckIndependentlyAsync(
+        var cliTask = CheckIndependentlyAsync(
             "CLI",
             async () =>
             {
@@ -52,9 +59,9 @@ public sealed class CliDiagnostics
                     string.IsNullOrWhiteSpace(version) ? "版本命令没有返回可识别信息" : $"版本 {version}（最低要求 {MinimumCliVersion}）");
             },
             new DiagnosticItem(DiagnosticState.Error, "检查失败", "CLI 检查失败"),
-            log);
+            cliLog);
 
-        var ffmpeg = await CheckIndependentlyAsync(
+        var ffmpegTask = CheckIndependentlyAsync(
             "FFmpeg",
             async () =>
             {
@@ -65,7 +72,15 @@ public sealed class CliDiagnostics
                     result.Detail);
             },
             new DiagnosticItem(DiagnosticState.Error, "检查失败", "FFmpeg 检查失败"),
-            log);
+            ffmpegLog);
+
+        await Task.WhenAll(nodeTask, cliTask, ffmpegTask);
+        var node = await nodeTask;
+        var cli = await cliTask;
+        var ffmpeg = await ffmpegTask;
+        log.AddRange(nodeLog);
+        log.AddRange(cliLog);
+        log.AddRange(ffmpegLog);
 
         var login = await CheckIndependentlyAsync(
             "登录状态",
@@ -137,32 +152,205 @@ public sealed class CliDiagnostics
         return new CliInstallResult(true, "npm 安装命令已成功完成。", result.CombinedOutput);
     }
 
-    public async Task<CliInstallResult> InstallNodeAsync(CancellationToken cancellationToken = default)
+    public Task<CliInstallResult> InstallNodeAsync(CancellationToken cancellationToken = default) =>
+        InstallNodeAsync(progress: null, cancellationToken);
+
+    public async Task<CliInstallResult> InstallNodeAsync(
+        IProgress<NodeInstallProgress>? progress,
+        CancellationToken cancellationToken = default)
     {
-        var result = await RunCommandAsync("winget", [
-            "install", "--id", "OpenJS.NodeJS.LTS", "--exact", "--silent",
-            "--accept-package-agreements", "--accept-source-agreements"
-        ], cancellationToken, timeoutDuration: NodeInstallTimeout);
+        ReportNodeProgress(progress, 8, "正在准备 Node.js 官方安装包…",
+            "将从 nodejs.org 获取 LTS 安装包，不依赖 winget。");
+        return await InstallNodeFromOfficialMsiAsync(progress, cancellationToken);
+    }
 
-        if (!result.Started)
+    private async Task<CliInstallResult> InstallNodeFromOfficialMsiAsync(
+        IProgress<NodeInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        string? msiPath = null;
+        try
         {
-            return new CliInstallResult(false,
-                "无法启动 winget。请从 nodejs.org 下载并安装 Node.js LTS，然后重新检查。", null);
-        }
+            using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("QqChannelDesk");
 
-        RefreshNodePath();
-        if (result.ExitCode != 0)
+            // 官方源优先；国内网络下索引可能长时间不结束，超时后自动使用 npmmirror 镜像。
+            var sources = new[]
+            {
+                new NodeDownloadSource("Node.js 官方源", "https://nodejs.org/dist/index.json", "https://nodejs.org/dist/"),
+                new NodeDownloadSource("npmmirror 国内镜像", "https://npmmirror.com/mirrors/node/index.json", "https://npmmirror.com/mirrors/node/")
+            };
+            string? ltsVersion = null;
+            string? lastVersionError = null;
+            for (var sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
+            {
+                var source = sources[sourceIndex];
+                ReportNodeProgress(progress, sourceIndex == 0 ? 22 : 24, "正在读取 Node.js LTS 版本…",
+                    $"正在连接 {source.Name}；若官方源无响应，将在 30 秒后自动切换镜像。");
+                try
+                {
+                    var indexJson = await GetStringWithTimeoutAsync(
+                        http, source.IndexUrl, VersionIndexTimeout, cancellationToken);
+                    using var document = JsonDocument.Parse(indexJson);
+                    foreach (var entry in document.RootElement.EnumerateArray())
+                    {
+                        if (entry.TryGetProperty("lts", out var lts) && lts.ValueKind != JsonValueKind.False &&
+                            entry.TryGetProperty("version", out var version))
+                        {
+                            ltsVersion = version.GetString();
+                            break;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(ltsVersion))
+                        break;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    lastVersionError = ex.Message;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(ltsVersion))
+            {
+                return new CliInstallResult(false,
+                    string.IsNullOrWhiteSpace(lastVersionError)
+                        ? "未能获取 Node.js LTS 版本信息。请检查网络后重试，或从 nodejs.org 手动下载安装。"
+                        : $"未能获取 Node.js LTS 版本信息（{Sanitize(lastVersionError)}）。请检查网络后重试，或从 nodejs.org 手动下载安装。", null);
+            }
+
+            msiPath = Path.Combine(Path.GetTempPath(), $"node-{ltsVersion}-x64.msi");
+            Exception? lastDownloadError = null;
+            for (var sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
+            {
+                var source = sources[sourceIndex];
+                var downloadUrl = $"{source.DistBaseUrl.TrimEnd('/')}/{ltsVersion}/node-{ltsVersion}-x64.msi";
+                ReportNodeProgress(progress, sourceIndex == 0 ? 25 : 26, $"已找到 Node.js {ltsVersion}，正在连接下载源…",
+                    $"来源：{source.Name}。");
+                try
+                {
+                    using var headersCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    headersCts.CancelAfter(DownloadHeadersTimeout);
+                    using var response = await http
+                        .GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, headersCts.Token)
+                        .WaitAsync(headersCts.Token);
+                    response.EnsureSuccessStatusCode();
+                    var totalBytes = response.Content.Headers.ContentLength;
+                    await using (var stream = await response.Content
+                        .ReadAsStreamAsync(cancellationToken)
+                        .WaitAsync(cancellationToken))
+                    await using (var target = new FileStream(msiPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        var buffer = new byte[81920];
+                        long downloadedBytes = 0;
+                        int read;
+                        while ((read = await stream
+                            .ReadAsync(buffer, cancellationToken)
+                            .AsTask()
+                            .WaitAsync(cancellationToken)) > 0)
+                        {
+                            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
+                                .AsTask()
+                                .WaitAsync(cancellationToken);
+                            downloadedBytes += read;
+                            var percent = totalBytes is > 0
+                                ? 26 + Math.Min(58, 58d * downloadedBytes / totalBytes.Value)
+                                : 55;
+                            ReportNodeProgress(progress, percent,
+                                $"正在下载 Node.js 安装包… {FormatBytes(downloadedBytes)} / {(totalBytes is > 0 ? FormatBytes(totalBytes.Value) : "未知大小")}",
+                                $"Node.js {ltsVersion} · 来源：{source.Name}");
+                        }
+                    }
+
+                    lastDownloadError = null;
+                    break;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    lastDownloadError = ex;
+                }
+            }
+
+            if (lastDownloadError is not null)
+            {
+                return new CliInstallResult(false,
+                    $"Node.js 安装包下载失败：{Sanitize(lastDownloadError.Message)}。请检查网络后重试，或从 nodejs.org 手动下载安装。", null);
+            }
+
+            ReportNodeProgress(progress, 86, "下载完成，正在启动 Windows 安装器…",
+                "如果出现“用户账户控制”或安装向导窗口，请按提示完成授权或安装。",
+                canCancel: false);
+            cancellationToken.ThrowIfCancellationRequested();
+            // /passive 只显示进度条；按机器安装时 Windows 会自动弹出 UAC 授权提示。
+            // 该启动过程在等待 UAC 授权时会阻塞调用线程，必须放到后台线程执行，
+            // 否则界面在此处会停止响应（表现为程序"未响应"）。
+            using var installer = await Task.Run(() => Process.Start(new ProcessStartInfo("msiexec.exe", $"/i \"{msiPath}\" /passive")
+            {
+                UseShellExecute = true
+            }), cancellationToken);
+            if (installer is null)
+            {
+                return new CliInstallResult(false, "无法启动 Node.js 安装程序（msiexec）。请从 nodejs.org 手动下载安装。", null);
+            }
+
+            ReportNodeProgress(progress, 90, "Windows 安装器正在安装 Node.js…",
+                "安装期间请不要关闭进度窗口。", canCancel: false);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(NodeInstallTimeout);
+            try
+            {
+                await installer.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new CliInstallResult(false, "等待 Node.js 安装程序超时。若安装仍在进行，请完成安装后重新检查。", null);
+            }
+
+            RefreshNodePath();
+            ReportNodeProgress(progress, 95, "Windows 安装器已结束，正在验证 Node.js…",
+                "正在检查 node --version。", canCancel: false);
+            var check = await RunCommandAsync("node", ["--version"], cancellationToken);
+            ReportNodeProgress(progress, 100, check.Started && check.ExitCode == 0
+                ? "Node.js 安装完成"
+                : "Windows 安装器已结束，但 Node.js 验证未通过",
+                canCancel: false);
+            if (check.Started && check.ExitCode == 0)
+            {
+                return new CliInstallResult(true, $"Node.js {FirstUsefulLine(check.CombinedOutput)} 已通过官方安装包安装并可用。", null);
+            }
+
+            return installer.ExitCode == 0
+                ? new CliInstallResult(false, "Node.js 安装程序已完成，但当前进程尚未检测到 Node.js；请关闭并重新启动程序后再检查。", null)
+                : new CliInstallResult(false, $"Node.js 安装程序已退出（代码 {installer.ExitCode}）。可能取消了授权或安装被拒绝，可重试或从 nodejs.org 手动安装。", null);
+        }
+        catch (OperationCanceledException)
         {
-            var detail = result.ErrorMessage.Length > 0
-                ? result.ErrorMessage
-                : FirstUsefulLine(result.CombinedOutput, "Node.js 自动安装失败，请使用手动安装入口");
-            return new CliInstallResult(false, Sanitize(detail), result.CombinedOutput);
+            throw;
         }
-
-        var check = await RunCommandAsync("node", ["--version"], cancellationToken);
-        return check.Started && check.ExitCode == 0
-            ? new CliInstallResult(true, $"Node.js {FirstUsefulLine(check.CombinedOutput)} 已安装并可用。", result.CombinedOutput)
-            : new CliInstallResult(false, "winget 安装命令已完成，但当前进程尚未检测到 Node.js；请关闭并重新启动程序后再检查。", result.CombinedOutput);
+        catch (Exception ex)
+        {
+            return new CliInstallResult(false, $"Node.js 官方安装包下载或启动失败：{Sanitize(ex.Message)}。请从 nodejs.org 手动下载安装。", null);
+        }
+        finally
+        {
+            try
+            {
+                if (msiPath is not null && File.Exists(msiPath))
+                    File.Delete(msiPath);
+            }
+            catch
+            {
+                // 临时安装包清理失败不影响安装结果。
+            }
+        }
     }
 
     public static void OpenNodeDownloadPage()
@@ -341,6 +529,7 @@ public sealed class CliDiagnostics
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            if (cancellationToken.IsCancellationRequested) throw;
             var timeoutMessage = timeoutDuration is null
                 ? "命令超时"
                 : fileName.Equals("winget", StringComparison.OrdinalIgnoreCase)
@@ -403,6 +592,43 @@ public sealed class CliDiagnostics
             !entries.Any(entry => string.Equals(entry.Trim('"'), path, StringComparison.OrdinalIgnoreCase))).ToArray();
         if (missing.Length > 0)
             Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator, missing.Append(currentPath)), EnvironmentVariableTarget.Process);
+    }
+
+    private static void ReportNodeProgress(
+        IProgress<NodeInstallProgress>? progress,
+        double percent,
+        string message,
+        string? detail = null,
+        bool canCancel = true)
+    {
+        progress?.Report(new NodeInstallProgress(Math.Clamp(percent, 0, 100), message, detail, canCancel));
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / 1024d / 1024d:0.0} MB",
+        >= 1024 => $"{bytes / 1024d:0} KB",
+        _ => $"{bytes} B"
+    };
+
+    internal static async Task<string> GetStringWithTimeoutAsync(
+        HttpClient http,
+        string url,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+        try
+        {
+            return await http.GetStringAsync(url, timeoutCts.Token).WaitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw;
+            throw new TimeoutException($"下载源请求超过 {timeout.TotalSeconds:0} 秒未响应。");
+        }
     }
 
     private static Version? ParseVersion(string text)
@@ -477,6 +703,14 @@ public sealed class CliDiagnostics
     {
         public string CombinedOutput => $"{StandardOutput}\n{StandardError}".Trim();
     }
+
+    private sealed record NodeDownloadSource(string Name, string IndexUrl, string DistBaseUrl);
 }
 
 public sealed record CliInstallResult(bool Succeeded, string Message, string? Output);
+
+public sealed record NodeInstallProgress(
+    double Percent,
+    string Message,
+    string? Detail = null,
+    bool CanCancel = true);

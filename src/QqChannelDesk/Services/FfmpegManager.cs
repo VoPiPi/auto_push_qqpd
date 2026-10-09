@@ -121,19 +121,23 @@ public sealed class FfmpegManager
             }
         }
 
-        if (_includePath)
+        var localExecutable = Path.Combine(InstallDirectory, ExecutableName);
+        string? systemPath;
+        bool localExecutableExists;
+        (systemPath, localExecutableExists) = await Task.Run(() =>
         {
-            var systemPath = FindSystemExecutablePath(cancellationToken);
-            if (systemPath is not null)
-            {
-                return new FfmpegResolution(systemPath, FfmpegSource.SystemPath, configuredPathInvalid);
-            }
+            var path = _includePath ? FindSystemExecutablePath(cancellationToken) : null;
+            return (path, File.Exists(localExecutable));
+        }, cancellationToken).ConfigureAwait(false);
+
+        if (systemPath is not null)
+        {
+            return new FfmpegResolution(systemPath, FfmpegSource.SystemPath, configuredPathInvalid);
         }
 
-        var localExecutable = Path.Combine(InstallDirectory, ExecutableName);
         return new FfmpegResolution(
-            File.Exists(localExecutable) ? localExecutable : null,
-            File.Exists(localExecutable) ? FfmpegSource.ProjectTools : null,
+            localExecutableExists ? localExecutable : null,
+            localExecutableExists ? FfmpegSource.ProjectTools : null,
             configuredPathInvalid);
     }
 

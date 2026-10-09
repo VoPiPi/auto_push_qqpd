@@ -24,4 +24,7 @@
     <Content Include="tools\*.7z;tools\*.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="min_logo.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="QqChannelDesk.Tests" />
+  </ItemGroup>
 </Project>
