@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -171,8 +172,8 @@ public sealed class CliDiagnostics
         string? msiPath = null;
         try
         {
-            using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("QqChannelDesk");
+            using var systemHttp = CreateNodeHttpClient(useProxy: true);
+            using var directHttp = CreateNodeHttpClient(useProxy: false);
 
             // 官方源优先；国内网络下索引可能长时间不结束，超时后自动使用 npmmirror 镜像。
             var sources = new[]
@@ -180,17 +181,24 @@ public sealed class CliDiagnostics
                 new NodeDownloadSource("Node.js 官方源", "https://nodejs.org/dist/index.json", "https://nodejs.org/dist/"),
                 new NodeDownloadSource("npmmirror 国内镜像", "https://npmmirror.com/mirrors/node/index.json", "https://npmmirror.com/mirrors/node/")
             };
-            string? ltsVersion = null;
-            string? lastVersionError = null;
-            for (var sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
+            var routes = sources.SelectMany(source => new[]
             {
-                var source = sources[sourceIndex];
-                ReportNodeProgress(progress, sourceIndex == 0 ? 22 : 24, "正在读取 Node.js LTS 版本…",
-                    $"正在连接 {source.Name}；若官方源无响应，将在 30 秒后自动切换镜像。");
+                new NodeDownloadRoute(source, systemHttp, "Windows 系统网络设置"),
+                new NodeDownloadRoute(source, directHttp, "直接连接")
+            }).ToArray();
+            string? ltsVersion = null;
+            NodeDownloadRoute? selectedRoute = null;
+            string? lastVersionError = null;
+            for (var routeIndex = 0; routeIndex < routes.Length; routeIndex++)
+            {
+                var route = routes[routeIndex];
+                var source = route.Source;
+                ReportNodeProgress(progress, routeIndex == 0 ? 22 : 24, "正在读取 Node.js LTS 版本…",
+                    $"连接方式：{route.ConnectionName}\n请求地址：{source.IndexUrl}\n若该连接无响应，将在 {VersionIndexTimeout.TotalSeconds:0} 秒后自动尝试下一种方式。");
                 try
                 {
                     var indexJson = await GetStringWithTimeoutAsync(
-                        http, source.IndexUrl, VersionIndexTimeout, cancellationToken);
+                        route.Client, source.IndexUrl, VersionIndexTimeout, cancellationToken);
                     using var document = JsonDocument.Parse(indexJson);
                     foreach (var entry in document.RootElement.EnumerateArray())
                     {
@@ -203,7 +211,10 @@ public sealed class CliDiagnostics
                     }
 
                     if (!string.IsNullOrWhiteSpace(ltsVersion))
+                    {
+                        selectedRoute = route;
                         break;
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -212,6 +223,9 @@ public sealed class CliDiagnostics
                 catch (Exception ex)
                 {
                     lastVersionError = ex.Message;
+                    ReportNodeProgress(progress, routeIndex == 0 ? 23 : 24,
+                        $"{source.Name}请求失败，正在尝试下一种连接方式…",
+                        $"连接方式：{route.ConnectionName}\n请求地址：{source.IndexUrl}\n失败原因：{Sanitize(ex.Message)}");
                 }
             }
 
@@ -225,19 +239,20 @@ public sealed class CliDiagnostics
 
             msiPath = Path.Combine(Path.GetTempPath(), $"node-{ltsVersion}-x64.msi");
             Exception? lastDownloadError = null;
-            for (var sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
+            var downloadRoutes = new[] { selectedRoute! }
+                .Concat(routes.Where(route => route != selectedRoute))
+                .ToArray();
+            for (var routeIndex = 0; routeIndex < downloadRoutes.Length; routeIndex++)
             {
-                var source = sources[sourceIndex];
+                var route = downloadRoutes[routeIndex];
+                var source = route.Source;
                 var downloadUrl = $"{source.DistBaseUrl.TrimEnd('/')}/{ltsVersion}/node-{ltsVersion}-x64.msi";
-                ReportNodeProgress(progress, sourceIndex == 0 ? 25 : 26, $"已找到 Node.js {ltsVersion}，正在连接下载源…",
-                    $"来源：{source.Name}。");
+                ReportNodeProgress(progress, routeIndex == 0 ? 25 : 26, $"已找到 Node.js {ltsVersion}，正在连接下载源…",
+                    $"来源：{source.Name} · {route.ConnectionName}\n请求地址：{downloadUrl}");
                 try
                 {
-                    using var headersCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    headersCts.CancelAfter(DownloadHeadersTimeout);
-                    using var response = await http
-                        .GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, headersCts.Token)
-                        .WaitAsync(headersCts.Token);
+                    using var response = await GetResponseWithTimeoutAsync(
+                        route.Client, downloadUrl, DownloadHeadersTimeout, cancellationToken);
                     response.EnsureSuccessStatusCode();
                     var totalBytes = response.Content.Headers.ContentLength;
                     await using (var stream = await response.Content
@@ -247,12 +262,28 @@ public sealed class CliDiagnostics
                     {
                         var buffer = new byte[81920];
                         long downloadedBytes = 0;
+                        var lastReportedPercent = -1;
                         int read;
-                        while ((read = await stream
-                            .ReadAsync(buffer, cancellationToken)
-                            .AsTask()
-                            .WaitAsync(cancellationToken)) > 0)
+                        while (true)
                         {
+                            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            readCts.CancelAfter(DownloadHeadersTimeout);
+                            try
+                            {
+                                read = await stream
+                                    .ReadAsync(buffer, readCts.Token)
+                                    .AsTask()
+                                    .WaitAsync(readCts.Token);
+                            }
+                            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                            {
+                                throw new TimeoutException(
+                                    $"下载连接连续 {DownloadHeadersTimeout.TotalSeconds:0} 秒没有收到数据。");
+                            }
+
+                            if (read == 0)
+                                break;
+
                             await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
                                 .AsTask()
                                 .WaitAsync(cancellationToken);
@@ -260,9 +291,14 @@ public sealed class CliDiagnostics
                             var percent = totalBytes is > 0
                                 ? 26 + Math.Min(58, 58d * downloadedBytes / totalBytes.Value)
                                 : 55;
-                            ReportNodeProgress(progress, percent,
-                                $"正在下载 Node.js 安装包… {FormatBytes(downloadedBytes)} / {(totalBytes is > 0 ? FormatBytes(totalBytes.Value) : "未知大小")}",
-                                $"Node.js {ltsVersion} · 来源：{source.Name}");
+                            var roundedPercent = (int)Math.Floor(percent);
+                            if (roundedPercent != lastReportedPercent)
+                            {
+                                lastReportedPercent = roundedPercent;
+                                ReportNodeProgress(progress, percent,
+                                    $"正在下载 Node.js 安装包… {FormatBytes(downloadedBytes)} / {(totalBytes is > 0 ? FormatBytes(totalBytes.Value) : "未知大小")}",
+                                    $"Node.js {ltsVersion} · 来源：{source.Name} · {route.ConnectionName}\n请求地址：{downloadUrl}");
+                            }
                         }
                     }
 
@@ -276,6 +312,9 @@ public sealed class CliDiagnostics
                 catch (Exception ex)
                 {
                     lastDownloadError = ex;
+                    ReportNodeProgress(progress, routeIndex == 0 ? 25 : 26,
+                        $"{source.Name}下载失败，正在尝试下一种连接方式…",
+                        $"连接方式：{route.ConnectionName}\n请求地址：{downloadUrl}\n失败原因：{Sanitize(ex.Message)}");
                 }
             }
 
@@ -617,18 +656,67 @@ public sealed class CliDiagnostics
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
+        return await RunHttpOperationWithHardTimeoutAsync(
+            token => http.GetStringAsync(url, token), url, timeout, cancellationToken);
+    }
+
+    private static Task<HttpResponseMessage> GetResponseWithTimeoutAsync(
+        HttpClient http,
+        string url,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) =>
+        RunHttpOperationWithHardTimeoutAsync(
+            token => http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token),
+            url,
+            timeout,
+            cancellationToken);
+
+    private static async Task<T> RunHttpOperationWithHardTimeoutAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        string url,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var requestTask = Task.Run(() => operation(requestCts.Token), CancellationToken.None);
         try
         {
-            return await http.GetStringAsync(url, timeoutCts.Token).WaitAsync(timeoutCts.Token);
+            return await requestTask.WaitAsync(timeout, cancellationToken);
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
-            if (cancellationToken.IsCancellationRequested)
-                throw;
-            throw new TimeoutException($"下载源请求超过 {timeout.TotalSeconds:0} 秒未响应。");
+            requestCts.Cancel();
+            ObserveFault(requestTask);
+            throw new TimeoutException($"请求 {url} 超过 {timeout.TotalSeconds:0} 秒未响应。");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            requestCts.Cancel();
+            ObserveFault(requestTask);
+            throw;
+        }
+    }
+
+    private static void ObserveFault(Task task) =>
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private static HttpClient CreateNodeHttpClient(bool useProxy)
+    {
+        var handler = new HttpClientHandler
+        {
+            UseProxy = useProxy,
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+        };
+        if (useProxy)
+            handler.DefaultProxyCredentials = CredentialCache.DefaultCredentials;
+
+        var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("QqChannelDesk/1.0");
+        return http;
     }
 
     private static Version? ParseVersion(string text)
@@ -705,6 +793,10 @@ public sealed class CliDiagnostics
     }
 
     private sealed record NodeDownloadSource(string Name, string IndexUrl, string DistBaseUrl);
+    private sealed record NodeDownloadRoute(
+        NodeDownloadSource Source,
+        HttpClient Client,
+        string ConnectionName);
 }
 
 public sealed record CliInstallResult(bool Succeeded, string Message, string? Output);

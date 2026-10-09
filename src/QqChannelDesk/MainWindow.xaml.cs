@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 using Button = System.Windows.Controls.Button;
@@ -552,10 +553,19 @@ public partial class MainWindow : Window
         if (confirmation != MessageBoxResult.Yes) return;
 
         var progressDialog = new NodeInstallProgressDialog { Owner = this };
-        var progress = new Progress<NodeInstallProgress>(progressDialog.Update);
+        var progress = new Progress<NodeInstallProgress>(item =>
+        {
+            progressDialog.Update(item);
+            var detail = string.IsNullOrWhiteSpace(item.Detail)
+                ? string.Empty
+                : $" | {item.Detail.Replace(Environment.NewLine, " | ")}";
+            _logger.Info($"Node.js 安装 [{item.Percent:0}%] {item.Message}{detail}");
+            _operationsCenterPage.SetFooter($"Node.js 安装 {item.Percent:0}%：{item.Message}");
+        });
         SetInstalling(true);
         _operationsCenterPage.SetFooter("正在安装 Node.js LTS…");
         progressDialog.Show();
+        await Dispatcher.Yield(DispatcherPriority.Background);
         CliInstallResult result;
         try
         {

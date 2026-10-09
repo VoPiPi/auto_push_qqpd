@@ -86,6 +86,31 @@ public sealed class CliDiagnosticsTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
     }
 
+    [Fact]
+    public async Task GetStringWithTimeoutAsyncReportsTimeoutWhenCallerDidNotCancel()
+    {
+        using var handler = new NeverCompletingHandler();
+        using var http = new HttpClient(handler);
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://ignored.example/", TimeSpan.FromMilliseconds(100), CancellationToken.None);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => task);
+    }
+
+    [Fact]
+    public async Task GetStringWithTimeoutAsyncTimesOutWhenHandlerBlocksSynchronously()
+    {
+        using var handler = new SynchronouslyBlockingHandler();
+        using var http = new HttpClient(handler);
+        var startedAt = DateTime.UtcNow;
+
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://blocked.example/", TimeSpan.FromMilliseconds(100), CancellationToken.None);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => task);
+        Assert.True(DateTime.UtcNow - startedAt < TimeSpan.FromSeconds(1));
+    }
+
     private sealed class NeverCompletingHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
@@ -96,6 +121,22 @@ public sealed class CliDiagnosticsTests
             var completion = new TaskCompletionSource<HttpResponseMessage>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             return completion.Task;
+        }
+    }
+
+    private sealed class SynchronouslyBlockingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            _ = cancellationToken;
+            Thread.Sleep(TimeSpan.FromSeconds(2));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]")
+            });
         }
     }
 
