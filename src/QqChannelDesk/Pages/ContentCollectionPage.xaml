@@ -9,7 +9,7 @@
     </DockPanel>
     <TabControl Grid.Row="1" x:Name="WorkspaceTabs">
       <TabItem Header="内容收件箱">
-        <Grid Margin="12">
+        <Grid Margin="12,4,12,12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <Border Grid.ColumnSpan="2" Style="{StaticResource Card}" Margin="0,0,0,12">
@@ -73,11 +73,11 @@
         </Grid>
       </TabItem>
       <TabItem Header="发布草稿箱">
-        <Grid Margin="12">
+        <Grid Margin="12,4,12,12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
-            <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource QuietButton}" Click="SearchDraftsButton_Click"/>
+            <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource QuietButton}" Click="SearchDraftsButton_Click" VerticalAlignment="Center"/>
             <TextBox x:Name="DraftSearchBox" Width="260" ToolTip="搜索草稿标题、正文或来源" KeyDown="SearchBox_KeyDown"/>
             <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchDraftsButton_Click"/>
           </DockPanel>

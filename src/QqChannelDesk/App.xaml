@@ -176,7 +176,6 @@
       <Setter Property="Foreground" Value="{StaticResource Ink}" />
     </Style>
     <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{StaticResource Ink}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style x:Key="AppButton" TargetType="Button" BasedOn="{StaticResource ButtonDefault}">
@@ -278,6 +277,7 @@
       <Setter Property="BorderBrush" Value="{StaticResource Line}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="8,4" />
+      <Setter Property="MinHeight" Value="32" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style TargetType="ComboBox" BasedOn="{StaticResource ComboBoxBaseStyle}">
@@ -409,7 +409,7 @@
           <ControlTemplate TargetType="TabControl">
             <Grid>
               <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-              <Border Grid.Row="0" HorizontalAlignment="Left" Background="#E7EDE9" CornerRadius="7" Padding="3" Margin="0,0,0,14">
+              <Border Grid.Row="0" HorizontalAlignment="Left" Background="#E7EDE9" CornerRadius="7" Padding="3" Margin="0,0,0,8">
                 <TabPanel IsItemsHost="True" />
               </Border>
               <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />

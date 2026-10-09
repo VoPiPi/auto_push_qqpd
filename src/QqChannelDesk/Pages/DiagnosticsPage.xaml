@@ -4,7 +4,7 @@
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
-            <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
+            <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Style="{StaticResource QuietButton}" Click="RefreshButton_Click"  VerticalAlignment="Center"/>
       <StackPanel><TextBlock Text="环境检查" Style="{StaticResource PageTitle}"/><TextBlock Text="检查本机运行依赖；扫码登录与真实发帖均由你手动触发并确认。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/></StackPanel>
     </DockPanel>
     <Border Grid.Row="1" Background="{StaticResource WarnSoft}" BorderBrush="#F0D3A7" BorderThickness="1" CornerRadius="5" Padding="14,11" Margin="0,0,0,16">

@@ -10,7 +10,7 @@
     </Grid.RowDefinitions>
 
     <DockPanel Grid.Row="0" Margin="0,0,0,16">
-      <Button x:Name="RefreshDashboardButton" DockPanel.Dock="Right" Content="刷新看板" Style="{StaticResource QuietButton}" Click="RefreshDashboardButton_Click" />
+      <Button x:Name="RefreshDashboardButton" DockPanel.Dock="Right" Content="刷新看板" Style="{StaticResource QuietButton}" Click="RefreshDashboardButton_Click"  VerticalAlignment="Center"/>
       <StackPanel>
         <TextBlock Text="运行中台" Style="{StaticResource PageTitle}" />
         <TextBlock Text="从一个页面掌握发布任务、运行环境、手工验证和诊断日志。" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
@@ -19,7 +19,7 @@
 
     <TabControl x:Name="CenterTabs" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectionChanged="CenterTabs_SelectionChanged">
       <TabItem Header="总览看板">
-        <Grid Margin="0,14,0,0">
+        <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -152,7 +152,7 @@
       </TabItem>
 
       <TabItem Header="手工发布">
-        <Grid Margin="0,16,0,0">
+        <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <Border Grid.Row="0" Background="{StaticResource InfoSoft}" BorderBrush="#C9DEE8" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14"><TextBlock Text="手工发布始终需要在弹窗中预览并二次确认。自动计划不会经过这里。" Foreground="{StaticResource Info}"/></Border>
           <Grid Grid.Row="1"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -167,9 +167,9 @@
       </TabItem>
 
       <TabItem Header="环境检查">
-        <Grid Margin="0,16,0,0">
+        <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <DockPanel Grid.Row="0" Margin="0,0,0,14"><Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Style="{StaticResource QuietButton}" Click="RefreshButton_Click"/><StackPanel><TextBlock Text="运行环境" Style="{StaticResource SectionTitle}"/><TextBlock Text="依赖安装和官方扫码授权都由你手动触发。" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel></DockPanel>
+          <DockPanel Grid.Row="0" Margin="0,0,0,14"><Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" VerticalAlignment="Center"/><StackPanel><TextBlock Text="运行环境" Style="{StaticResource SectionTitle}"/><TextBlock Text="依赖安装和官方扫码授权都由你手动触发。" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel></DockPanel>
           <Border Grid.Row="1" Background="{StaticResource WarnSoft}" BorderBrush="#F0D3A7" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14"><TextBlock Text="安全提示：请使用 CLI 自带的官方扫码流程登录。此工具不会读取浏览器 Cookie，也不会要求你粘贴 Token。" Foreground="#75440E"/></Border>
           <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,8,8" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="#61B28B" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="Node.js" FontWeight="SemiBold"/><TextBlock x:Name="NodeValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="NodeBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallNodeButton" Content="安装" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallNodeButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
