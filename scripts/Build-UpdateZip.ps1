@@ -17,6 +17,8 @@ $packageName = "QqChannelDesk-$Version-$Runtime"
 $stageDirectory = Join-Path $artifactRoot "stage-$Version-$Runtime-$buildId"
 $stageAppDirectory = Join-Path $stageDirectory $packageName
 $zipPath = Join-Path $artifactRoot "$packageName.zip"
+# Use the stricter decimal upload limit (100,000,000 bytes), not PowerShell's 100 MiB literal.
+$maximumPackageBytes = 100000000
 
 if (Test-Path $zipPath) {
     throw "该版本的 ZIP 已存在，为避免覆盖发布物，脚本停止：$zipPath"
@@ -26,9 +28,20 @@ New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $publishDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $stageAppDirectory | Out-Null
 
-# 自包含发布：.NET 运行时随包分发，用户机器无需安装任何运行时。
+# 自包含单文件发布：.NET/WPF 运行时压缩进主程序，用户机器无需安装 .NET。
+# 不启用 PublishTrimmed：WPF、ClosedXML 等组件包含反射场景，裁剪可能导致运行时故障。
 Write-Host "发布自包含应用文件到 $publishDirectory"
-dotnet publish $project -c $Configuration -r $Runtime --self-contained true -p:Version=$Version -o $publishDirectory
+dotnet publish $project -c $Configuration -r $Runtime --self-contained true `
+    -p:Version=$Version `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true `
+    -p:PublishTrimmed=false `
+    -p:SatelliteResourceLanguages=zh-Hans `
+    -p:SlimUpdatePackage=true `
+    -p:DebugType=None `
+    -p:DebugSymbols=false `
+    -o $publishDirectory
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish 失败，退出码：$LASTEXITCODE"
 }
@@ -38,7 +51,7 @@ if ($LASTEXITCODE -ne 0) {
 # 只排除用户数据和缓存（干净的 publish 输出中本不应存在，防御性排除）；
 # robocopy 只复制，不删除目标目录中的任何文件。
 robocopy $publishDirectory $stageAppDirectory /E /XD "temp" "logs" "media-cache" /XF `
-    "*.db" "*.db-*" "channels.sync.json" "account.session.json" "settings.json" "*.log" | Out-Null
+    "*.db" "*.db-*" "channels.sync.json" "account.session.json" "settings.json" "*.log" "*.pdb" | Out-Null
 if ($LASTEXITCODE -gt 7) {
     throw "复制打包文件失败，robocopy 退出码：$LASTEXITCODE"
 }
@@ -58,10 +71,14 @@ try {
         throw "ZIP 中缺少 QqChannelDesk.exe：$zipPath"
     }
 
-    # 自包含运行时的关键文件必须存在，确保用户机器无需安装 .NET。
-    foreach ($required in @('coreclr\.dll$', 'hostfxr\.dll$', 'PresentationFramework\.dll$')) {
-        if (-not ($entryNames | Where-Object { $_ -match $required })) {
-            throw "ZIP 中缺少自包含运行时文件（$required）：$zipPath"
+    # 单文件发布会把 coreclr、hostfxr 和 WPF 程序集压缩进主 EXE，不再以独立 DLL 出现。
+    $appEntry = $archive.Entries | Where-Object { $_.FullName -match "(^|/)$packageName/QqChannelDesk\.exe$" } | Select-Object -First 1
+    if ($null -eq $appEntry -or $appEntry.Length -lt 20MB) {
+        throw "QqChannelDesk.exe 不像完整的自包含单文件（小于 20 MiB）：$zipPath"
+    }
+    foreach ($externalRuntimeFile in @('coreclr.dll', 'hostfxr.dll', 'PresentationFramework.dll')) {
+        if ($entryNames | Where-Object { $_ -match "(^|/)$([Regex]::Escape($externalRuntimeFile))$" }) {
+            throw "ZIP 仍包含未封装的运行时文件（$externalRuntimeFile），单文件发布未生效：$zipPath"
         }
     }
 
@@ -80,25 +97,20 @@ finally {
     $archive.Dispose()
 }
 
-# 清理本次构建的中间目录（publish 输出和打包暂存目录），只保留最终 ZIP。
-# 安全校验：仅当解析后的绝对路径位于 artifacts\updates 内、且目录名符合
-# 本次构建的 publish-/stage- 前缀时才删除，避免误删其他内容。
-$artifactRootResolved = [System.IO.Path]::GetFullPath($artifactRoot)
-foreach ($dir in @($publishDirectory, $stageDirectory)) {
-    $resolved = [System.IO.Path]::GetFullPath($dir)
-    $name = Split-Path -Leaf $resolved
-    $isExpected = ($name -match '^(publish|stage)-' -and $name.EndsWith("-$buildId"))
-    $isUnderArtifactRoot = $resolved.StartsWith($artifactRootResolved, [System.StringComparison]::OrdinalIgnoreCase)
-    if ($isExpected -and $isUnderArtifactRoot -and (Test-Path -LiteralPath $resolved)) {
-        Remove-Item -LiteralPath $resolved -Recurse -Force
-        Write-Host "已清理中间目录：$resolved"
-    }
-    else {
-        Write-Warning "跳过清理（路径校验未通过）：$resolved"
-    }
+$packageSize = (Get-Item -LiteralPath $zipPath).Length
+if ($packageSize -gt $maximumPackageBytes) {
+    Remove-Item -LiteralPath $zipPath -Force
+    throw "ZIP 大小为 $([Math]::Round($packageSize / 1000000, 2)) MB，超过 100 MB 限制，已删除不合格发布包。"
 }
 
+# 项目安全规则禁止脚本递归删除目录。构建中间目录保留并打印明确路径，
+# 确认发布包可用后请手动清理；脚本不会触碰其他构建或用户文件。
+Write-Warning "项目规则禁止自动递归删除目录，请在确认 ZIP 可用后手动删除中间目录："
+Write-Warning "  $publishDirectory"
+Write-Warning "  $stageDirectory"
+
 Write-Host "完整分发包已生成：$zipPath"
+Write-Host "ZIP 大小：$([Math]::Round($packageSize / 1000000, 2)) MB / $([Math]::Round($packageSize / 1MB, 2)) MiB（限制：100 MB）"
 Write-Host "用户解压后进入 $packageName 目录，双击 QqChannelDesk.exe 即可运行，无需安装 .NET 运行时。"
 Write-Host "请手动检查 ZIP 内容后上传到："
 Write-Host "https://gitee.com/vopipi/auto_push_qqpd/releases"
