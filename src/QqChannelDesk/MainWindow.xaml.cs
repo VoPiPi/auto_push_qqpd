@@ -50,7 +50,7 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _trayIcon;
     private Button? _selectedNavigationButton;
 
-    private const string FeedbackChannelUrl = "https://pd.qq.com/g/pd97255833";
+    private const string FeedbackChannelUrl = "https://pd.qq.com/s/7m3414vbj";
 
     public MainWindow()
     {

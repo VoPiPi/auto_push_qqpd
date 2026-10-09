@@ -16,14 +16,14 @@
       </Border>
       <StackPanel Grid.Column="1" Margin="20,4,0,0" VerticalAlignment="Center">
         <TextBlock x:Name="LoginStatus" Text="正在请求二维码…" FontWeight="SemiBold" />
-        <Button x:Name="OpenLinkButton" Content="在浏览器打开授权页" Margin="0,14,0,0" Padding="12,7" Style="{StaticResource QuietButton}"
+        <Button x:Name="OpenLinkButton" Content="在浏览器打开授权页" Margin="0,14,0,0" Style="{StaticResource QuietButton}"
                 HorizontalAlignment="Left" Click="OpenLinkButton_Click" IsEnabled="False" />
         <TextBlock Text="扫码后本窗口会等待授权完成。不要分享二维码或授权链接。" Foreground="{StaticResource Warn}" FontSize="12" Margin="0,16,0,0" />
       </StackPanel>
     </Grid>
     <DockPanel Grid.Row="2">
       <TextBlock x:Name="TimeRemaining" Text="授权有效期最长约 10 分钟" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-      <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="取消" Padding="16,7" Click="CancelButton_Click" />
+      <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="取消" Click="CancelButton_Click" />
     </DockPanel>
   </Grid>
 </Window>

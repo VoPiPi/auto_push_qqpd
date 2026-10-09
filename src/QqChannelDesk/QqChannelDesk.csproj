@@ -8,10 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QqChannelDesk</AssemblyName>
     <RootNamespace>QqChannelDesk</RootNamespace>
-    <ApplicationIcon>Assets\min_logo.ico</ApplicationIcon>
+    <ApplicationIcon>min_logo.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="HandyControl" Version="3.5.1" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.71" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
     <PackageReference Include="SharpCompress" Version="0.39.0" />
@@ -23,6 +22,6 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="tools\*.7z;tools\*.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="Assets\min_logo.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="min_logo.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -10,7 +10,7 @@
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Grid.Row="0" Margin="0,0,0,16">
-      <Button DockPanel.Dock="Right" Content="刷新记录" Style="{StaticResource QuietButton}" Click="HistoryRefreshButton_Click"/>
+      <Button DockPanel.Dock="Right" Content="刷新记录" Style="{StaticResource QuietButton}" Click="HistoryRefreshButton_Click" VerticalAlignment="Center"/>
       <StackPanel><TextBlock Text="发布记录" Style="{StaticResource PageTitle}"/><TextBlock Text="默认显示最近 7 天、最多 100 条发布操作；标题/内容筛选匹配标题和结果摘要。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/></StackPanel>
     </DockPanel>
     <Border Grid.Row="1" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14" KeyDown="HistoryFilter_KeyDown">
@@ -19,7 +19,7 @@
         <StackPanel Orientation="Horizontal" Margin="0,0,14,6"><TextBlock Text="类型" Style="{StaticResource FilterLabel}"/><ComboBox x:Name="TypeFilterComboBox" Width="100" SelectedIndex="0"><ComboBoxItem Tag="全部" Content="全部"/><ComboBoxItem Tag="文本" Content="文本"/><ComboBoxItem Tag="图片" Content="图片"/><ComboBoxItem Tag="视频" Content="视频"/></ComboBox></StackPanel>
         <StackPanel Orientation="Horizontal" Margin="0,0,14,6"><TextBlock Text="标题/内容" Style="{StaticResource FilterLabel}"/><TextBox x:Name="KeywordFilterTextBox" Width="220" ToolTip="模糊匹配标题或结果摘要"/></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Button Content="筛选" Style="{StaticResource QuietButton}" Padding="18,7" Click="HistoryFilterButton_Click"/><Button Content="重置" Style="{StaticResource QuietButton}" Padding="18,7" Margin="8,0,0,0" Click="HistoryResetButton_Click"/></StackPanel>
+                    <Button Content="筛选" Style="{StaticResource QuietButton}" Click="HistoryFilterButton_Click"/><Button Content="重置" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="HistoryResetButton_Click"/></StackPanel>
       </WrapPanel>
     </Border>
     <Grid Grid.Row="2">
@@ -29,7 +29,25 @@
           <DataGridTemplateColumn Header="标题" Width="220"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Title}" ToolTip="{Binding Title}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
           <DataGridTemplateColumn Header="类型" Width="50"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding TypeName}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
           <DataGridTemplateColumn Header="频道/板块" Width="145"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Target}" ToolTip="{Binding Target}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="状态" Width="50"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding StatusName}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+          <DataGridTemplateColumn Header="状态" Width="74">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <Border x:Name="pill" Style="{StaticResource StatusPill}"><TextBlock x:Name="pillText" Text="{Binding StatusName}" FontSize="11" /></Border>
+                <DataTemplate.Triggers>
+            <DataTrigger Binding="{Binding StatusName}" Value="成功"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="已发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="失败"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="已逾期"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="待核实"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="处理中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="执行中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="发布中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="待发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusName}" Value="等待执行"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
           <DataGridTextColumn Header="发帖时间" Binding="{Binding StartedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="125" ElementStyle="{StaticResource HistoryCellText}"/>
           <DataGridTemplateColumn Header="结果" Width="275"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Summary}" ToolTip="{Binding Summary}" Style="{StaticResource HistoryCellText}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
           <DataGridTemplateColumn Header="跳转链接" Width="98"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"><Hyperlink Click="OpenPostUrl_Click" Tag="{Binding PostUrl}"><Hyperlink.Style><Style TargetType="Hyperlink"><Setter Property="TextDecorations" Value="Underline"/><Setter Property="Foreground" Value="{StaticResource TableLink}"/><Setter Property="Cursor" Value="Hand"/><Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource TableLinkHover}"/></Trigger><DataTrigger Binding="{Binding PostUrl}" Value=""><Setter Property="TextDecorations" Value="None"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Arrow"/></DataTrigger><DataTrigger Binding="{Binding PostUrl}" Value="{x:Null}"><Setter Property="TextDecorations" Value="None"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Arrow"/></DataTrigger></Style.Triggers></Style></Hyperlink.Style><Run Text="查看帖子"/></Hyperlink></TextBlock></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>

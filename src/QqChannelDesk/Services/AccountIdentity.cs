@@ -34,9 +34,15 @@ public sealed record CurrentAccountIdentity(string Nickname, string GlobalNickna
 /// </summary>
 public sealed class AccountContext
 {
-    public string? CurrentAccountKey { get; private set; }
-    public string? Nickname { get; private set; }
-    public string? GlobalNickname { get; private set; }
+    // Swapped atomically so background scheduler threads never observe a
+    // half-updated identity while the UI thread switches accounts. Callers that
+    // need several fields consistently must read Identity once.
+    private volatile CurrentAccountIdentity? _current;
+
+    public CurrentAccountIdentity? Identity => _current;
+    public string? CurrentAccountKey => _current?.AccountKey;
+    public string? Nickname => _current?.Nickname;
+    public string? GlobalNickname => _current?.GlobalNickname;
     public bool IsAuthenticated => !string.IsNullOrWhiteSpace(CurrentAccountKey);
 
     public string RequireAccountKey()
@@ -47,15 +53,11 @@ public sealed class AccountContext
     public void Set(CurrentAccountIdentity identity)
     {
         ArgumentNullException.ThrowIfNull(identity);
-        CurrentAccountKey = identity.AccountKey;
-        Nickname = identity.Nickname;
-        GlobalNickname = identity.GlobalNickname;
+        _current = identity;
     }
 
     public void Clear()
     {
-        CurrentAccountKey = null;
-        Nickname = null;
-        GlobalNickname = null;
+        _current = null;
     }
 }

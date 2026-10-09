@@ -296,11 +296,12 @@ public sealed class ChannelCacheStore
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
-            Pooling = false
+            Pooling = false,
+            DefaultTimeout = 3
         }.ToString());
         await connection.OpenAsync(cancellationToken);
         await using var pragma = connection.CreateCommand();
-        pragma.CommandText = "PRAGMA foreign_keys = ON";
+        pragma.CommandText = "PRAGMA foreign_keys = ON; PRAGMA journal_mode=WAL";
         await pragma.ExecuteNonQueryAsync(cancellationToken);
         return connection;
     }
