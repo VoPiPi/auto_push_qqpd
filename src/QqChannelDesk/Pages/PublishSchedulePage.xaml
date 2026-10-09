@@ -35,7 +35,25 @@
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="计划时间" Binding="{Binding ScheduledAtDisplay}" Width="135" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTextColumn Header="状态" Binding="{Binding StatusLabel}" Width="70" ElementStyle="{StaticResource DataGridCellText}" />
+          <DataGridTemplateColumn Header="状态" Width="86">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <Border x:Name="pill" Style="{StaticResource StatusPill}"><TextBlock x:Name="pillText" Text="{Binding StatusLabel}" FontSize="11" /></Border>
+                <DataTemplate.Triggers>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="成功"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="已发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="失败"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="已逾期"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="待核实"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="处理中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="执行中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="发布中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="待发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
+            <DataTrigger Binding="{Binding StatusLabel}" Value="等待执行"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
           <DataGridTemplateColumn Header="结果" Width="190">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
               <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />

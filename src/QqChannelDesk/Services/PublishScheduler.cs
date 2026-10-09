@@ -8,7 +8,7 @@ namespace QqChannelDesk.Services;
 public sealed class PublishScheduler
 {
     private readonly ContentLibraryStore _store;
-    private readonly PublishExecutionService _publisher;
+    private readonly IPublishExecutor _publisher;
     private readonly SystemSettingsStore _settingsStore;
     private readonly Func<Task<ScheduleEnvironment>> _environment;
     private readonly AppLogger _logger;
@@ -23,7 +23,7 @@ public sealed class PublishScheduler
 
     public PublishScheduler(
         ContentLibraryStore store,
-        PublishExecutionService publisher,
+        IPublishExecutor publisher,
         SystemSettingsStore settingsStore,
         Func<Task<ScheduleEnvironment>> environment,
         AppLogger? logger = null)
@@ -277,7 +277,7 @@ public sealed class PublishScheduler
             if (material is null)
             {
                 var missing = new PublishResult(false, PublishErrorCategory.Validation, "素材不存在或已删除，未执行发布。", null, null);
-                await _store.CompleteScheduleExecutionAsync(execution.Id, null, missing, cancellationToken).ConfigureAwait(false);
+                await CompleteExecutionSafelyAsync(execution.Id, null, missing).ConfigureAwait(false);
                 return;
             }
 
@@ -289,7 +289,8 @@ public sealed class PublishScheduler
                 material.Type switch { "image" => FeedType.Image, "video" => FeedType.Video, _ => FeedType.Text },
                 material.MediaLinks);
             var outcome = await _publisher.ExecuteAsync(request, material.GuildName, material.ChannelName, cancellationToken).ConfigureAwait(false);
-            await _store.CompleteScheduleExecutionAsync(execution.Id, outcome.PublishRecordId, outcome.Result, cancellationToken).ConfigureAwait(false);
+            // Result writes must survive scheduler shutdown; never use the cancellable token here.
+            await CompleteExecutionSafelyAsync(execution.Id, outcome.PublishRecordId, outcome.Result).ConfigureAwait(false);
             _logger.Info(outcome.Result.Succeeded
                 ? $"计划发布成功：素材 {execution.MaterialId}"
                 : $"计划发布未成功：素材 {execution.MaterialId}，{outcome.Result.Category}");

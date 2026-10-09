@@ -117,11 +117,6 @@ public sealed class MediaStorageService
         }
     }
 
-    public bool IsManagedLibraryPath(string path)
-    {
-        var root = _settingsStore.GetAsync().GetAwaiter().GetResult().EffectiveMaterialStoragePath;
-        return IsManagedLibraryPath(path, root);
-    }
 
     public async Task<bool> IsManagedLibraryPathAsync(string path, CancellationToken cancellationToken = default)
     {

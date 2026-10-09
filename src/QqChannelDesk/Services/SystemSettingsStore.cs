@@ -195,9 +195,13 @@ public sealed class SystemSettingsStore
         {
             DataSource = _databasePath,
             ForeignKeys = true,
-            Pooling = false
+            Pooling = false,
+            DefaultTimeout = 3
         }.ToString());
         await connection.OpenAsync(cancellationToken);
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = "PRAGMA journal_mode=WAL";
+        await pragma.ExecuteNonQueryAsync(cancellationToken);
         return connection;
     }
 

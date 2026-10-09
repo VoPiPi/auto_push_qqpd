@@ -6,7 +6,16 @@ namespace QqChannelDesk.Services;
 /// Contains the non-visual part of a publish operation so manual and scheduled
 /// publishing use the same media, history, CLI and cleanup behavior.
 /// </summary>
-public sealed class PublishExecutionService
+public interface IPublishExecutor
+{
+    Task<PublishExecutionOutcome> ExecuteAsync(
+        PublishRequest request,
+        string guildName,
+        string channelName,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class PublishExecutionService : IPublishExecutor
 {
     private readonly CliWorkflow _workflow;
     private readonly PublishHistoryStore _historyStore;

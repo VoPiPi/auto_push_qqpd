@@ -15,6 +15,7 @@ public sealed class AppLogger
     private static readonly Regex SensitiveText = new(
         "(?i)([\"']?(?:QQ_AI_CONNECT_TOKEN|access_token|refresh_token|authorization|cookie|qr_code|verification_uri|token|secret|password|session|ticket)[\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s,;}]+)",
         RegexOptions.Compiled);
+    private const int MaxSessionEntries = 2000;
     private readonly List<(LogLevel Level, string Entry)> _sessionEntries = [];
     private readonly string _logDirectory;
     private readonly string _settingsPath;
@@ -84,15 +85,25 @@ public sealed class AppLogger
             lock (FileLock)
             {
                 File.AppendAllText(Path.Combine(_logDirectory, $"{DateTime.Now:yyyy-MM-dd}.log"), entry + Environment.NewLine);
-                _sessionEntries.Add((level, entry));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            lock (FileLock) _sessionEntries.Add((level, entry));
         }
 
+        AddSessionEntry(level, entry);
+
         if (DebugEnabled || level != LogLevel.Debug) EntryWritten?.Invoke(RedactErrorCodes(entry));
+    }
+
+    private void AddSessionEntry(LogLevel level, string entry)
+    {
+        lock (FileLock)
+        {
+            _sessionEntries.Add((level, entry));
+            if (_sessionEntries.Count > MaxSessionEntries)
+                _sessionEntries.RemoveRange(0, _sessionEntries.Count - MaxSessionEntries);
+        }
     }
 
     public IReadOnlyList<string> ReadEntries(bool includeDebug)

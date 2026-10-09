@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="腾讯频道发帖助手 -by微社区" Height="820" Width="1240" MinHeight="680" MinWidth="960"
         Background="{StaticResource Canvas}" WindowStartupLocation="CenterScreen"
-        Icon="/QqChannelDesk;component/Assets/min_logo.ico">
+        Icon="/QqChannelDesk;component/min_logo.ico">
   <Window.Resources>
     <Style x:Key="NavigationButton" TargetType="Button">
       <Setter Property="Height" Value="42" />
@@ -56,7 +56,7 @@
     </Style>
   </Window.Resources>
   <Grid>
-    <Grid.ColumnDefinitions><ColumnDefinition Width="148" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
     <Border Grid.Column="0" Background="{StaticResource Sidebar}">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -67,26 +67,57 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,12">
           <StackPanel Margin="8,0,6,0">
             <TextBlock Text="工作区" Foreground="#91A29A" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,9" />
-            <Button x:Name="OperationsNavButton" Style="{StaticResource ActiveNavigationButton}" Tag="运行中台" Click="NavigationButton_Click" ToolTip="打开运行中台"><TextBlock Text="运行中台" Style="{StaticResource NavigationLabel}" /></Button>
+            <Button x:Name="OperationsNavButton" Style="{StaticResource ActiveNavigationButton}" Tag="运行中台" Click="NavigationButton_Click" ToolTip="打开运行中台">
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M3,3 h7 v9 h-7 z M14,3 h7 v5 h-7 z M14,12 h7 v9 h-7 z M3,16 h7 v5 h-7 z" />
+                <TextBlock Text="运行中台" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
+            </Button>
             <Button x:Name="ContentCollectionNavButton" Style="{StaticResource NavigationButton}" Tag="内容采集" Click="NavigationButton_Click" ToolTip="打开内容收件箱">
-              <TextBlock Text="内容采集" Style="{StaticResource NavigationLabel}" />
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M22,12 h-6 l-2,3 h-4 l-2,-3 h-6 M5,5 h14 l3,7 v6 a2,2 0 0 1 -2,2 h-16 a2,2 0 0 1 -2,-2 v-6 z" />
+                <TextBlock Grid.Column="1" Text="内容采集" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+                <Border Grid.Column="2" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
+              </Grid>
             </Button>
             <Button x:Name="MaterialsNavButton" Style="{StaticResource NavigationButton}" Tag="素材仓库" Click="NavigationButton_Click" ToolTip="管理待发布和已发布素材">
-              <TextBlock Text="素材仓库" Style="{StaticResource NavigationLabel}" />
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M3,4 h18 v4 h-18 z M5,8 v10 a2,2 0 0 0 2,2 h10 a2,2 0 0 0 2,-2 v-10 M10,12 h4" />
+                <TextBlock Text="素材仓库" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
             </Button>
             <Button x:Name="ScheduleNavButton" Style="{StaticResource NavigationButton}" Tag="发布计划" Click="NavigationButton_Click" ToolTip="打开发布计划页面">
-              <TextBlock Text="发布计划" Style="{StaticResource NavigationLabel}" />
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M8,2 v4 M16,2 v4 M5,4 h14 a2,2 0 0 1 2,2 v14 a2,2 0 0 1 -2,2 h-14 a2,2 0 0 1 -2,-2 v-14 a2,2 0 0 1 2,-2 z M3,10 h18 M12,14 v3 l2,1.5" />
+                <TextBlock Text="发布计划" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
             </Button>
-            <Button x:Name="HistoryNavButton" Style="{StaticResource NavigationButton}" Tag="发布记录" Click="NavigationButton_Click" ToolTip="查看已保存的发布历史"><TextBlock Text="发布记录" Style="{StaticResource NavigationLabel}" /></Button>
-            <Button x:Name="LogNavButton" Style="{StaticResource NavigationButton}" Tag="日志中心" Click="NavigationButton_Click" ToolTip="查看本次启动后的操作日志"><TextBlock Text="日志中心" Style="{StaticResource NavigationLabel}" /></Button>
+            <Button x:Name="HistoryNavButton" Style="{StaticResource NavigationButton}" Tag="发布记录" Click="NavigationButton_Click" ToolTip="查看已保存的发布历史">
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M3,12 a9,9 0 1 0 9,-9 9.75,9.75 0 0 0 -6.74,2.74 L3,8 M3,3 v5 h5 M12,7 v5 l4,2" />
+                <TextBlock Text="发布记录" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="LogNavButton" Style="{StaticResource NavigationButton}" Tag="日志中心" Click="NavigationButton_Click" ToolTip="查看本次启动后的操作日志">
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M8,6 h13 M8,12 h13 M8,18 h13 M3,6 l0.01,0 M3,12 l0.01,0 M3,18 l0.01,0" />
+                <TextBlock Text="日志中心" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
+            </Button>
             <Button x:Name="AccountsNavButton" Style="{StaticResource NavigationButton}" Tag="账号管理" Click="NavigationButton_Click" ToolTip="打开账号管理页面">
-              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="账号管理" Style="{StaticResource NavigationLabel}"/><Border Grid.Column="1" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}"/></Border></Grid>
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M19,21 v-2 a4,4 0 0 0 -4,-4 h-6 a4,4 0 0 0 -4,4 v2 M12,3 a4,4 0 1 1 -0.01,0 z" />
+                <TextBlock Grid.Column="1" Text="账号管理" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+                <Border Grid.Column="2" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
+              </Grid>
             </Button>
             <Button x:Name="SettingNavButton" Style="{StaticResource NavigationButton}" Tag="系统设置" Click="NavigationButton_Click" ToolTip="打开系统设置页面">
-              <TextBlock Text="系统设置" Style="{StaticResource NavigationLabel}" />
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M4,21 v-7 M4,10 v-3 M12,21 v-9 M12,8 v-6 M20,21 v-5 M20,12 v-10 M1.5,14 h5 M9.5,8 h5 M17.5,16 h5" />
+                <TextBlock Text="系统设置" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
             </Button>
-          </StackPanel>
-        </ScrollViewer>
+          </StackPanel>        </ScrollViewer>
         <StackPanel Grid.Row="2">
           <Border BorderBrush="#3C4842" BorderThickness="0,1,0,0" Padding="8,5">
             <Button x:Name="FeedbackNavButton" Style="{StaticResource NavigationButton}" Tag="交流反馈" Click="FeedbackNavButton_Click" ToolTip="打开交流和问题反馈频道" Height="30" Margin="0" Padding="8,0">
