@@ -120,7 +120,7 @@ public partial class MainWindow : Window
             {
                 await _databaseInitializer.InitializeAsync();
                 //_logger.Info("本地数据库初始化完成，默认配置已检查。\n数据库位置：程序目录\\channels.db");
-                _logger.Info("本地数据库初始化完成，默认配置已检查。");
+                _logger.Debug("本地数据库初始化完成，默认配置已检查。");
             }
             catch (Exception ex)
             {
@@ -189,7 +189,7 @@ public partial class MainWindow : Window
         Topmost = false;
         Focus();
         if (_trayIcon is not null) _trayIcon.Visible = false;
-        _logger.Info("已从系统托盘恢复主界面。");
+        _logger.Debug("已从系统托盘恢复主界面。");
     }
 
     private void ExitFromTray()
@@ -559,7 +559,7 @@ public partial class MainWindow : Window
             var detail = string.IsNullOrWhiteSpace(item.Detail)
                 ? string.Empty
                 : $" | {item.Detail.Replace(Environment.NewLine, " | ")}";
-            _logger.Info($"Node.js 安装 [{item.Percent:0}%] {item.Message}{detail}");
+            _logger.Debug($"Node.js 安装 [{item.Percent:0}%] {item.Message}{detail}");
             _operationsCenterPage.SetFooter($"Node.js 安装 {item.Percent:0}%：{item.Message}");
         });
         SetInstalling(true);
@@ -586,7 +586,10 @@ public partial class MainWindow : Window
             SetInstalling(false);
         }
 
-        _logger.Info($"{(result.Succeeded ? "Node.js 安装完成" : "Node.js 安装失败")}：{result.Message}");
+        if (result.Succeeded)
+            _logger.Info($"Node.js 安装完成：{result.Message}");
+        else
+            _logger.Warning($"Node.js 安装失败：{result.Message}");
         if (!string.IsNullOrWhiteSpace(result.Output)) _logger.Debug($"Node.js 安装输出：\n{result.Output}");
         await RefreshDiagnosticsAsync();
         _operationsCenterPage.SetFooter(result.Message);
@@ -611,7 +614,7 @@ public partial class MainWindow : Window
             var source = string.IsNullOrWhiteSpace(item.SourceUrl)
                 ? string.Empty
                 : $" | 来源：{item.SourceUrl}";
-            _logger.Info($"FFmpeg 安装 [{item.Percent:0}%] {item.Message}{detail}{source}");
+            _logger.Debug($"FFmpeg 安装 [{item.Percent:0}%] {item.Message}{detail}{source}");
             _operationsCenterPage.SetFooter($"FFmpeg 安装 {item.Percent:0}%：{item.Message}");
         });
         SetInstalling(true);
@@ -638,7 +641,10 @@ public partial class MainWindow : Window
             SetInstalling(false);
         }
 
-        _logger.Info($"{(result.Succeeded ? "FFmpeg 安装成功" : "FFmpeg 安装失败")}：{result.Message}");
+        if (result.Succeeded)
+            _logger.Info($"FFmpeg 安装成功：{result.Message}");
+        else
+            _logger.Warning($"FFmpeg 安装失败：{result.Message}");
         if (!string.IsNullOrWhiteSpace(result.Output))
             _logger.Debug($"FFmpeg 安装来源：{result.Output}");
         await RefreshDiagnosticsAsync();
@@ -671,7 +677,10 @@ public partial class MainWindow : Window
         catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
         finally { SetInstalling(false); }
 
-        _logger.Info($"{(result.Succeeded ? "依赖安装命令完成" : "依赖安装失败")}：{result.Message}");
+        if (result.Succeeded)
+            _logger.Info($"依赖安装完成：{result.Message}");
+        else
+            _logger.Warning($"依赖安装失败：{result.Message}");
         if (!string.IsNullOrWhiteSpace(result.Output)) _logger.Debug($"依赖安装输出：\n{result.Output}");
         return result;
     }
@@ -705,8 +714,15 @@ public partial class MainWindow : Window
             if (schedulerWasActive && _accountContext.IsAuthenticated &&
                 !_scheduler.Status.Running && !_scheduler.Status.Paused)
                 await RestartSchedulerAsync();
-            foreach (var line in report.LogLines) _logger.Info(line);
-            _logger.Info($"运行环境：{report.OverallMessage}");
+            foreach (var line in report.LogLines) _logger.Debug(line);
+            var environmentReady = loggedIn
+                && report.Node.State != DiagnosticState.Error
+                && report.Cli.State != DiagnosticState.Error
+                && report.Ffmpeg.State != DiagnosticState.Error;
+            if (environmentReady)
+                _logger.Debug($"运行环境：{report.OverallMessage}");
+            else
+                _logger.Warning($"运行环境：{report.OverallMessage}");
             _operationsCenterPage.SetFooter(report.OverallMessage);
         }
         catch (Exception ex)
@@ -908,7 +924,7 @@ public partial class MainWindow : Window
             Hide();
             ShowInTaskbar = false;
             if (_trayIcon is not null) _trayIcon.Visible = true;
-            _logger.Info("主界面已最小化到系统托盘，计划执行器保持运行。自动发布仍受系统设置开关控制。");
+            _logger.Debug("主界面已最小化到系统托盘，计划执行器保持运行。自动发布仍受系统设置开关控制。");
             return;
         }
 

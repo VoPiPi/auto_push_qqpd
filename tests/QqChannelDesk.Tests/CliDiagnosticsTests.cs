@@ -320,6 +320,36 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
+    public async Task AppLoggerCliResultKeepsDetailsOutOfSummaryButPersistsThem()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var logger = new AppLogger(directory);
+            var displayedEntries = new List<string>();
+            logger.EntryWritten += displayedEntries.Add;
+            logger.CliResult("发布帖子", 1, "{\"success\":false,\"error\":{\"code\":12345,\"message\":\"发布失败\"}}", "stderr-detail");
+            await logger.FlushAsync();
+
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("发布帖子", StringComparison.Ordinal));
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("stderr-detail", StringComparison.Ordinal));
+            Assert.Empty(logger.ReadEntries(includeDebug: false));
+
+            var debugEntries = logger.ReadEntries(includeDebug: true);
+            Assert.Contains(debugEntries, entry => entry.Contains("发布帖子", StringComparison.Ordinal));
+            Assert.Contains(debugEntries, entry => entry.Contains("stderr-detail", StringComparison.Ordinal));
+
+            var logFile = File.ReadAllText(Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log"));
+            Assert.Contains("stderr-detail", logFile, StringComparison.Ordinal);
+            Assert.Contains("12345", logFile, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteLoggerTestFiles(directory);
+        }
+    }
+
+    [Fact]
     public async Task AppLoggerHidesErrorCodesInDisplayButKeepsThemInFile()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -530,6 +560,39 @@ public sealed class CliWorkflowTests
         finally
         {
             File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public async Task LogoutFailureLogsWarningWithReason()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"fake-channel-cli-{Guid.NewGuid():N}.js");
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        const string script = "console.log(JSON.stringify({success:false,error:{message:'退出被拒绝'}}));process.exit(1);";
+        await File.WriteAllTextAsync(scriptPath, script);
+        try
+        {
+            var logger = new AppLogger(directory);
+            var displayedEntries = new List<string>();
+            logger.EntryWritten += displayedEntries.Add;
+
+            var result = await new CliWorkflow(scriptPath, logger: logger).LogoutAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("退出被拒绝", result.Message, StringComparison.Ordinal);
+            Assert.Contains(displayedEntries, entry => entry.Contains("退出登录失败：退出被拒绝", StringComparison.Ordinal));
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("退出 CLI 登录", StringComparison.Ordinal));
+            await logger.FlushAsync();
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+            var logFile = Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log");
+            if (File.Exists(logFile)) File.Delete(logFile);
+            if (File.Exists(Path.Combine(directory, "settings.json"))) File.Delete(Path.Combine(directory, "settings.json"));
+            if (Directory.Exists(Path.Combine(directory, "logs"))) Directory.Delete(Path.Combine(directory, "logs"));
+            if (Directory.Exists(directory)) Directory.Delete(directory);
         }
     }
 

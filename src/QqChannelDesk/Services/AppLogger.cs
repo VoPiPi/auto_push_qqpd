@@ -53,10 +53,12 @@ public sealed class AppLogger
     {
         DebugEnabled = enabled;
         var settingsPath = _settingsPath;
-        _lastSettingsWrite = Task.Run(() =>
+        var previousWrite = _lastSettingsWrite;
+        _lastSettingsWrite = Task.Run(async () =>
         {
             try
             {
+                await previousWrite;
                 Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
                 File.WriteAllText(settingsPath, JsonSerializer.Serialize(new { debugEnabled = enabled }));
             }
@@ -99,7 +101,6 @@ public sealed class AppLogger
         var details = $"CLI {operation}，退出码：{exitCode?.ToString() ?? "无"}";
         if (!string.IsNullOrWhiteSpace(standardOutput)) details += $"\nstdout:\n{Redact(standardOutput)}";
         if (!string.IsNullOrWhiteSpace(standardError)) details += $"\nstderr:\n{Redact(standardError)}";
-        Write($"{operation}{(exitCode == 0 ? "完成" : "未成功")}", exitCode == 0 ? LogLevel.Info : LogLevel.Warning);
         Write(details, LogLevel.Debug, detail: true);
     }
 

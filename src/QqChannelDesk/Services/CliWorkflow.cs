@@ -30,7 +30,7 @@ public sealed class CliWorkflow
 
     public async Task<LoginChallenge> StartLoginAsync(CancellationToken cancellationToken = default)
     {
-        _logger.Info("开始 CLI 官方扫码授权；调试日志会保留脱敏后的 CLI 响应，不记录二维码、授权链接或凭证。");
+        _logger.Debug("开始 CLI 官方扫码授权；调试日志会保留脱敏后的 CLI 响应，不记录二维码、授权链接或凭证。");
         var result = await RunCliAsync(["login", "--json", "--yes"], ShortTimeout, cancellationToken);
         _logger.CliResult("启动扫码授权", result.ExitCode, result.StandardOutput, result.StandardError);
         if (result.ExitCode != 0)
@@ -57,7 +57,7 @@ public sealed class CliWorkflow
         var result = await RunCliAsync(["login", "poll-token", "--json"], LoginTimeout, cancellationToken);
         if (cancellationToken.IsCancellationRequested)
         {
-            _logger.Info("用户取消 CLI 扫码授权轮询。");
+            _logger.Debug("用户取消 CLI 扫码授权轮询。");
             return new LoginResult(false, "已取消扫码授权。", true);
         }
         if (result.TimedOut)
@@ -82,9 +82,14 @@ public sealed class CliWorkflow
         var result = await RunCliAsync(["login", "logout", "--json", "--yes"], ShortTimeout, cancellationToken);
         _logger.CliResult("退出 CLI 登录", result.ExitCode, result.StandardOutput, result.StandardError);
         if (result.ExitCode == 0 && TryReadSuccess(result.StandardOutput))
+        {
+            _logger.Info("已退出登录。");
             return new CliActionResult(true, "已退出登录。");
+        }
 
-        return new CliActionResult(false, ParseCliError(result.StandardOutput, result.StandardError, "退出登录失败"));
+        var message = ParseCliError(result.StandardOutput, result.StandardError, "退出登录失败");
+        _logger.Warning($"退出登录失败：{message}");
+        return new CliActionResult(false, message);
     }
 
     public async Task<IReadOnlyList<ChannelChoice>> GetGuildsAsync(CancellationToken cancellationToken = default)
@@ -239,7 +244,7 @@ public sealed class CliWorkflow
         }
         args.Add("--json");
         args.Add("--yes");
-        _logger.Info($"开始发布 {request.Type} 到频道 {request.GuildId} / 版块 {request.ChannelId}。");
+        _logger.Debug($"开始发布 {request.Type} 到频道 {request.GuildId} / 版块 {request.ChannelId}。");
         var result = await RunCliAsync(args, PublishTimeout, cancellationToken);
         var safeOutput = RedactMediaPaths(result.StandardOutput, request.MediaPaths);
         var safeError = RedactMediaPaths(result.StandardError, request.MediaPaths);

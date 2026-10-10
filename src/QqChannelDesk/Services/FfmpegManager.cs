@@ -955,8 +955,9 @@ public sealed class FfmpegManager
             File.Move(backupPath, installedPath);
     }
 
-    private void LogInfo(string message) => _logger?.Info(message);
-    private void LogWarning(string message) => _logger?.Warning(message);
+    // 下载/校验/连接细节只在调试模式下展示，安装结论由 MainWindow 依据 CliInstallResult 另行输出。
+    private void LogInfo(string message) => _logger?.Debug(message);
+    private void LogWarning(string message) => _logger?.Debug(message);
 
     private sealed record FfmpegDownloadSource(string Url, string? ExpectedSha256);
     private sealed record FfmpegDownloadRoute(HttpClient Client, string ConnectionName);
