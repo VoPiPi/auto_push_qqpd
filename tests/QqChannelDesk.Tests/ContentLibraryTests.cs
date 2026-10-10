@@ -338,4 +338,27 @@ public sealed class ContentLibraryTests
         Assert.Equal("queue", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(1), null, now));
         Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(null, "published", now));
     }
+
+    [Fact]
+    public void MaterialEditorChoice_UsesNameWhenCachedIdHasChanged()
+    {
+        ChannelChoice[] choices =
+        [
+            new("new-guild-id", "鲸鱼落", "管理员"),
+            new("another-id", "其他频道", "")
+        ];
+
+        var selected = MaterialEditorWindow.ResolveChoice(choices, "old-guild-id", " 鲸鱼落 ");
+
+        Assert.Same(choices[0], selected);
+    }
+
+    [Fact]
+    public void MaterialEditorChoice_DoesNotSilentlySelectWrongTargetForExistingMaterial()
+    {
+        ChannelChoice[] choices = [new("channel-1", "默认版块", "")];
+
+        Assert.Null(MaterialEditorWindow.ResolveChoice(choices, "missing", "已删除版块"));
+        Assert.Same(choices[0], MaterialEditorWindow.ResolveChoice(choices, null, null, selectFirstWhenMissing: true));
+    }
 }

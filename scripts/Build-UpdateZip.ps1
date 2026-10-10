@@ -46,8 +46,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish 失败，退出码：$LASTEXITCODE"
 }
 
-# 完整分发包：包含运行时、应用文件和本地工具包（如 FFmpeg），
-# 用户解压后双击 QqChannelDesk.exe 即可运行，不需要安装或额外配置。
+# 完整分发包包含 .NET/WPF 运行时和应用文件；FFmpeg 在用户需要时在线安装，
+# 用户解压后双击 QqChannelDesk.exe 即可运行，不需要安装 .NET 运行时。
 # 只排除用户数据和缓存（干净的 publish 输出中本不应存在，防御性排除）；
 # robocopy 只复制，不删除目标目录中的任何文件。
 robocopy $publishDirectory $stageAppDirectory /E /XD "temp" "logs" "media-cache" /XF `
@@ -82,9 +82,9 @@ try {
         }
     }
 
-    # 本地工具包（FFmpeg）必须随包分发，保证首次使用的用户可以手动部署。
-    if (-not ($entryNames | Where-Object { $_ -match '(^|/)tools/ffmpeg-[^/]*\.(7z|zip)$' })) {
-        throw "ZIP 中缺少 FFmpeg 本地工具包（tools/ffmpeg-*.7z|.zip）：$zipPath"
+    # FFmpeg 改为按需在线安装，发布 ZIP 不应再携带 30+ MB 的本地压缩包。
+    if ($entryNames | Where-Object { $_ -match '(^|/)tools/ffmpeg-[^/]*\.(7z|zip)$' }) {
+        throw "ZIP 意外包含 FFmpeg 本地工具包（tools/ffmpeg-*.7z|.zip）：$zipPath"
     }
 
     $forbiddenPattern = '(^|/)(temp|logs|media-cache)/|(^|/)[^/]*\.db(-[^/]*)?$|(^|/)(channels\.sync\.json|account\.session\.json|settings\.json)$|\.log$'
@@ -112,5 +112,7 @@ Write-Warning "  $stageDirectory"
 Write-Host "完整分发包已生成：$zipPath"
 Write-Host "ZIP 大小：$([Math]::Round($packageSize / 1000000, 2)) MB / $([Math]::Round($packageSize / 1MB, 2)) MiB（限制：100 MB）"
 Write-Host "用户解压后进入 $packageName 目录，双击 QqChannelDesk.exe 即可运行，无需安装 .NET 运行时。"
+Write-Host "FFmpeg 不包含在 ZIP 中，用户可进入程序后按需在线安装。"
+Write-Host "最终发布文件：$zipPath（脚本未生成其他发布文件；上述目录仅为构建中间目录）"
 Write-Host "请手动检查 ZIP 内容后上传到："
 Write-Host "https://gitee.com/vopipi/auto_push_qqpd/releases"

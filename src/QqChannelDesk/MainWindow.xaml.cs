@@ -101,7 +101,7 @@ public partial class MainWindow : Window
         PageHost.Content = _operationsCenterPage;
         _selectedNavigationButton = OperationsNavButton;
         _logger.EntryWritten += Logger_EntryWritten;
-        _operationsCenterPage.RefreshRequested += async (_, _) => await RefreshDiagnosticsAsync();
+        _operationsCenterPage.RefreshRequested += RefreshDiagnosticsAsync;
         _operationsCenterPage.InstallNodeRequested += async (_, _) => await InstallNodeAsync();
         _operationsCenterPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
         _operationsCenterPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
@@ -596,32 +596,55 @@ public partial class MainWindow : Window
 
     private async Task InstallFfmpegAsync()
     {
-        var archivePath = await Task.Run(() => _ffmpegManager.FindLatestArchive());
-        if (archivePath is null)
-        {
-            MessageBox.Show(this,
-                $"在本地工具目录中没有找到 FFmpeg 压缩包：\n{_ffmpegManager.ArchiveDirectory}\n\n请放入名称形如 ffmpeg-版本号-描述.7z 或 .zip 的压缩包。",
-                "找不到 FFmpeg 安装包", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
         var confirmation = MessageBox.Show(this,
-            $"将从本地压缩包解压 FFmpeg：\n{archivePath}\n\n部署目录：\n{_ffmpegManager.InstallDirectory}\n\n不会联网下载，也不会修改系统 PATH。此构建受 GPL 许可证约束。继续吗？",
-            "手动部署 FFmpeg", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            $"将从 Gyan.dev 在线下载 FFmpeg 9.0.2 Essentials 便携构建。\n\n安装目录（相对程序目录）：\n{_ffmpegManager.RelativeInstallDirectory}\n\n不会修改系统 PATH，通常不需要管理员权限。此构建受 GPL 许可证约束。继续吗？",
+            "在线安装 FFmpeg", MessageBoxButton.YesNo, MessageBoxImage.Information);
         if (confirmation != MessageBoxResult.Yes) return;
 
+        var progressDialog = new FfmpegInstallProgressDialog { Owner = this };
+        var progress = new Progress<FfmpegInstallProgress>(item =>
+        {
+            progressDialog.Update(item);
+            var detail = string.IsNullOrWhiteSpace(item.Detail)
+                ? string.Empty
+                : $" | {item.Detail.Replace(Environment.NewLine, " | ")}";
+            var source = string.IsNullOrWhiteSpace(item.SourceUrl)
+                ? string.Empty
+                : $" | 来源：{item.SourceUrl}";
+            _logger.Info($"FFmpeg 安装 [{item.Percent:0}%] {item.Message}{detail}{source}");
+            _operationsCenterPage.SetFooter($"FFmpeg 安装 {item.Percent:0}%：{item.Message}");
+        });
         SetInstalling(true);
-        _operationsCenterPage.SetFooter("正在从本地压缩包部署 FFmpeg…");
+        _operationsCenterPage.SetFooter("正在在线安装 FFmpeg…");
+        progressDialog.Show();
+        await Dispatcher.Yield(DispatcherPriority.Background);
         CliInstallResult result;
-        try { result = await _ffmpegManager.InstallAsync(); }
-        catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
-        finally { SetInstalling(false); }
+        try
+        {
+            result = await Task.Run(
+                () => _ffmpegManager.InstallOnlineAsync(progress, progressDialog.CancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            result = new CliInstallResult(false, "FFmpeg 在线安装已取消。", null);
+        }
+        catch (Exception ex)
+        {
+            result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null);
+        }
+        finally
+        {
+            progressDialog.Complete();
+            SetInstalling(false);
+        }
 
-        _logger.Info($"{(result.Succeeded ? "FFmpeg 部署成功" : "FFmpeg 部署失败")}：{result.Message}");
+        _logger.Info($"{(result.Succeeded ? "FFmpeg 安装成功" : "FFmpeg 安装失败")}：{result.Message}");
+        if (!string.IsNullOrWhiteSpace(result.Output))
+            _logger.Debug($"FFmpeg 安装来源：{result.Output}");
         await RefreshDiagnosticsAsync();
         _operationsCenterPage.SetFooter(result.Message);
-        if (!result.Succeeded)
-            MessageBox.Show(this, result.Message, "FFmpeg 部署未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!result.Succeeded && !result.Message.Contains("取消", StringComparison.Ordinal))
+            MessageBox.Show(this, result.Message, "FFmpeg 安装未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private async Task<bool> InstallCliAsync(bool confirm)

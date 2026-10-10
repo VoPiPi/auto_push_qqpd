@@ -15,7 +15,7 @@ public partial class OperationsCenterPage : UserControl
     private bool _dashboardRefreshing;
     private PublishSchedulerStatus _schedulerStatus = PublishSchedulerStatus.Stopped;
 
-    public event EventHandler? RefreshRequested;
+    public event Func<Task>? RefreshRequested;
     public event EventHandler? InstallNodeRequested;
     public event EventHandler? InstallCliRequested;
     public event EventHandler? InstallFfmpegRequested;
@@ -181,8 +181,37 @@ public partial class OperationsCenterPage : UserControl
         if (e.Source == CenterTabs && CenterTabs.SelectedIndex == 0) _ = RefreshDashboardAsync();
     }
 
-    private void RefreshDashboardButton_Click(object sender, RoutedEventArgs e) => _ = RefreshDashboardAsync();
-    private void RefreshButton_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+    private async void RefreshDashboardButton_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshDashboardButton.IsEnabled = false;
+        CenterFooter.Text = "正在刷新看板和运行环境…";
+        try
+        {
+            await Task.WhenAll(RefreshDashboardAsync(), RequestDiagnosticsRefreshAsync());
+        }
+        catch (Exception ex)
+        {
+            CenterFooter.Text = $"刷新失败：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+        finally
+        {
+            RefreshDashboardButton.IsEnabled = !Installing;
+        }
+    }
+
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+    {
+        try { await RequestDiagnosticsRefreshAsync(); }
+        catch (Exception ex) { FooterStatus.Text = $"检查失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+    }
+
+    private async Task RequestDiagnosticsRefreshAsync()
+    {
+        var handlers = RefreshRequested;
+        if (handlers is null) return;
+        foreach (Func<Task> handler in handlers.GetInvocationList())
+            await handler();
+    }
     private void InstallNodeButton_Click(object sender, RoutedEventArgs e) => InstallNodeRequested?.Invoke(this, EventArgs.Empty);
     private void InstallCliButton_Click(object sender, RoutedEventArgs e) => InstallCliRequested?.Invoke(this, EventArgs.Empty);
     private void InstallFfmpegButton_Click(object sender, RoutedEventArgs e) => InstallFfmpegRequested?.Invoke(this, EventArgs.Empty);

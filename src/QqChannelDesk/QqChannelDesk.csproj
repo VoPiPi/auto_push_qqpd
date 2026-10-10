@@ -21,9 +21,6 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="tools\*.7z;tools\*.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-  </ItemGroup>
-  <ItemGroup>
     <InternalsVisibleTo Include="QqChannelDesk.Tests" />
   </ItemGroup>
   <Target Name="RemoveWinFormsDesignerFromUpdatePackage"

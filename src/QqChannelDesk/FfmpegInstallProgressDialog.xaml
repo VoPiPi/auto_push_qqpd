@@ -1,0 +1,87 @@
+<Window x:Class="QqChannelDesk.FfmpegInstallProgressDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="在线安装 FFmpeg"
+        Width="580"
+        MinWidth="580"
+        SizeToContent="Height"
+        MaxHeight="560"
+        ResizeMode="CanMinimize"
+        ShowInTaskbar="True"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Canvas}">
+  <Border Style="{StaticResource Card}" Margin="18" Padding="22,20">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <DockPanel Grid.Row="0">
+        <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right"
+                   Text="已用时 00:00"
+                   Foreground="{StaticResource Muted}"
+                   VerticalAlignment="Center" />
+        <TextBlock Text="正在安装 FFmpeg"
+                   FontSize="20"
+                   FontWeight="SemiBold" />
+      </DockPanel>
+
+      <StackPanel Grid.Row="1" Margin="0,14,0,0">
+        <TextBlock x:Name="StatusText"
+                   Text="正在准备在线安装…"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap"
+                   MinHeight="38" />
+        <DockPanel Margin="0,8,0,0">
+          <TextBlock x:Name="PercentText"
+                     DockPanel.Dock="Right"
+                     Text="0%"
+                     Foreground="{StaticResource Accent}"
+                     FontWeight="SemiBold" />
+          <ProgressBar x:Name="InstallProgress"
+                       Height="12"
+                       Minimum="0"
+                       Maximum="100"
+                       Value="0"
+                       Margin="0,0,12,0" />
+        </DockPanel>
+      </StackPanel>
+
+      <StackPanel Grid.Row="2" Margin="0,14,0,0">
+        <TextBlock Text="当前下载地址" Foreground="{StaticResource Muted}" FontSize="11" />
+        <TextBox x:Name="SourceUrlText"
+                 Margin="0,5,0,0"
+                 IsReadOnly="True"
+                 BorderThickness="0"
+                 Background="Transparent"
+                 Foreground="{StaticResource Info}"
+                 TextWrapping="Wrap"
+                 Text="等待连接下载源…" />
+      </StackPanel>
+
+      <TextBlock Grid.Row="3"
+                 x:Name="DetailText"
+                 Margin="0,14,0,0"
+                 Foreground="{StaticResource Muted}"
+                 FontSize="12"
+                 TextWrapping="Wrap"
+                 TextTrimming="CharacterEllipsis"
+                 ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
+                 Text="将下载便携版 FFmpeg，并安装到程序的 tools 目录。" />
+
+      <DockPanel Grid.Row="4" Margin="0,18,0,0">
+        <Button x:Name="CancelButton"
+                DockPanel.Dock="Right"
+                Content="取消安装"
+                MinWidth="96"
+                Style="{StaticResource QuietButton}"
+                Click="CancelButton_Click" />
+      </DockPanel>
+    </Grid>
+  </Border>
+</Window>
