@@ -276,7 +276,7 @@
       <Setter Property="Background" Value="{StaticResource Surface}" />
       <Setter Property="BorderBrush" Value="{StaticResource Line}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Padding" Value="8,3" />
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -491,6 +491,7 @@
       <Setter Property="Background" Value="{StaticResource Surface}" />
       <Setter Property="BorderBrush" Value="{StaticResource Line}" />
       <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Height" Value="32" />
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="Template">
         <Setter.Value>
@@ -498,7 +499,7 @@
             <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" SnapsToDevicePixels="True">
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0" BorderThickness="0" Background="Transparent" Padding="8,4" VerticalContentAlignment="Center" Foreground="{StaticResource Ink}" />
+                <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0" BorderThickness="0" Background="Transparent" Padding="8,0" MinHeight="0" VerticalContentAlignment="Center" Foreground="{StaticResource Ink}" />
                 <Button x:Name="PART_Button" Grid.Column="1" Width="28" Padding="0" MinWidth="0" MinHeight="0" Background="Transparent" BorderThickness="0" Focusable="False" Cursor="Hand">
                   <Path Width="14" Height="14" Stretch="Uniform" Stroke="{StaticResource Muted}" StrokeThickness="1.8"
                         Data="M8,2.5 v3 M16,2.5 v3 M4,6 a2,2 0 0 1 2,-2 h12 a2,2 0 0 1 2,2 v12 a2,2 0 0 1 -2,2 h-12 a2,2 0 0 1 -2,-2 z M4,10.5 h16" />

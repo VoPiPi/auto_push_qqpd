@@ -21,7 +21,7 @@
               HorizontalScrollBarVisibility="Auto" BeginningEdit="PreviewGrid_BeginningEdit">
       <DataGrid.Columns>
         <DataGridTextColumn Header="行" Binding="{Binding RowNumber}" IsReadOnly="True" Width="48"/>
-        <DataGridTextColumn Header="标题" Binding="{Binding Title}" IsReadOnly="True" Width="170"/>
+        <DataGridTextColumn Header="标题（选填）" Binding="{Binding Title}" IsReadOnly="True" Width="170"/>
         <DataGridTextColumn Header="正文" Binding="{Binding Content}" IsReadOnly="True" Width="230"/>
         <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="82"/>
         <DataGridTemplateColumn Header="频道" Width="170">

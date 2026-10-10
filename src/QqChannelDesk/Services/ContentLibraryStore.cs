@@ -450,8 +450,6 @@ public sealed class ContentLibraryStore
         foreach (var material in materials)
         {
             ValidateMaterial(material);
-            if (string.IsNullOrWhiteSpace(material.Title))
-                throw new ArgumentException("素材标题不能为空。", nameof(materials));
             if (string.IsNullOrWhiteSpace(material.Content))
                 throw new ArgumentException("素材正文不能为空。", nameof(materials));
             if (material.Status == "published")

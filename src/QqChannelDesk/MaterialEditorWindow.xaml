@@ -8,7 +8,7 @@
     <TextBlock x:Name="Heading" Text="新增素材" Style="{StaticResource PageTitle}" Margin="0,0,0,16"/>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel>
-        <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/><TextBox x:Name="TitleBox"/>
+        <TextBlock Text="标题（选填）" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/><TextBox x:Name="TitleBox"/>
         <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><TextBox x:Name="ContentBox" MinHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
         <TextBlock Text="媒体文件或链接" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
         <TextBlock Text="可选择本地文件，也可粘贴公开 HTTP/HTTPS 链接；每行一个。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6"/>

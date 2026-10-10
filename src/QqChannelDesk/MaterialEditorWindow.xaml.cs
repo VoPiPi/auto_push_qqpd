@@ -157,9 +157,9 @@ public partial class MaterialEditorWindow : Window
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
         var links = ParseMediaLinks();
-        if (title.Length == 0 || content.Length == 0)
+        if (content.Length == 0)
         {
-            FormMessage.Text = "标题和正文均为必填项。";
+            FormMessage.Text = "请填写帖子正文。";
             return;
         }
         var detectedType = MaterialMediaValidator.InferType(links);

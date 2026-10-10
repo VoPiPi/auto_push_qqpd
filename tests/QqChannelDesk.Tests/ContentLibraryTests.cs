@@ -277,6 +277,26 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public void ValidateMaterialForPublish_AllowsEmptyTitleWhenContentIsPresent()
+    {
+        var noTitle = new MaterialRecord(1, "", "text", "正文", "1", "频道", "2", "版块", null, "waitsend", "", [], DateTimeOffset.Now, DateTimeOffset.Now);
+        Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(noTitle));
+
+        var emptyContent = noTitle with { Content = "   " };
+        Assert.Contains("必须填写正文", Pages.MaterialsPage.ValidateMaterialForPublish(emptyContent));
+
+        var imageWithoutMedia = noTitle with { Type = "image" };
+        Assert.Contains("至少需要一个有效的图片链接", Pages.MaterialsPage.ValidateMaterialForPublish(imageWithoutMedia));
+
+        var tooManyImages = noTitle with
+        {
+            Type = "image",
+            MediaLinks = Enumerable.Range(1, 19).Select(index => $"https://example.com/{index}.jpg").ToArray()
+        };
+        Assert.Contains("图片数量不能超过 18 个", Pages.MaterialsPage.ValidateMaterialForPublish(tooManyImages));
+    }
+
+    [Fact]
     public void MaterialMediaValidator_AcceptsExistingLocalFilesAndPublicUrls()
     {
         var localImage = Path.Combine(Path.GetTempPath(), $"qq-channel-{Guid.NewGuid():N}.png");
