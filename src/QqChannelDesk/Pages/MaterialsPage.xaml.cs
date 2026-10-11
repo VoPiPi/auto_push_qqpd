@@ -121,7 +121,7 @@ public partial class MaterialsPage : UserControl
                 OverwritePrompt = true
             };
             if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
-            var bytes = MaterialTemplateService.CreateWorkbook(targets);
+            var bytes = await Task.Run(() => MaterialTemplateService.CreateWorkbook(targets));
             await File.WriteAllBytesAsync(dialog.FileName, bytes);
             MaterialsStatus.Text = $"模板已保存：{Path.GetFileName(dialog.FileName)}";
         }
@@ -150,14 +150,14 @@ public partial class MaterialsPage : UserControl
                 return;
             }
 
-            var fileHash = MaterialTemplateService.ComputeFileHash(dialog.FileName);
+            var fileHash = await Task.Run(() => MaterialTemplateService.ComputeFileHash(dialog.FileName));
             if (await _store.HasImportedFileAsync(fileHash))
             {
                 MessageBox.Show(Window.GetWindow(this), "该导入文件已经处理过，不能重复导入。请修改后另存为新文件，或使用预览中的错误行导出文件。", "重复导入", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var result = MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now);
+            var result = await Task.Run(() => MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now));
             var preview = new MaterialImportPreviewWindow(result, targets) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) return;
 
@@ -257,7 +257,8 @@ public partial class MaterialsPage : UserControl
     private async void DeleteMaterialButton_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not MaterialRecord record) return;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{record.Title}”？素材仅标记为删除，不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var display = string.IsNullOrWhiteSpace(record.Title) ? $"素材 #{record.Id}" : record.Title;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{display}”？素材仅标记为删除，不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         await _store.UpdateMaterialStatusAsync(record.Id, "delete");
         await LoadMaterialsAsync();
     }
@@ -276,7 +277,6 @@ public partial class MaterialsPage : UserControl
 
     public static string ValidateMaterialForPublish(MaterialRecord record)
     {
-        if (string.IsNullOrWhiteSpace(record.Title)) return "发布素材必须填写标题。";
         if (string.IsNullOrWhiteSpace(record.Content)) return "发布素材必须填写正文。";
         if (string.IsNullOrWhiteSpace(record.GuildId) || string.IsNullOrWhiteSpace(record.ChannelId)) return "请先编辑素材并指定发布频道和版块。";
         if (record.Type is not ("text" or "image" or "video")) return "素材类型无效。";

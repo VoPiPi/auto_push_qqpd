@@ -1,5 +1,8 @@
 using QqChannelDesk.Services;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Reflection;
 using Xunit;
 
 namespace QqChannelDesk.Tests;
@@ -72,6 +75,72 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
+    public async Task GetStringWithTimeoutAsyncCancelsWhenHttpClientIgnoresToken()
+    {
+        using var cts = new CancellationTokenSource(100);
+        using var handler = new NeverCompletingHandler();
+        using var http = new HttpClient(handler);
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://ignored.example/", TimeSpan.FromSeconds(5), cts.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+    }
+
+    [Fact]
+    public async Task GetStringWithTimeoutAsyncReportsTimeoutWhenCallerDidNotCancel()
+    {
+        using var handler = new NeverCompletingHandler();
+        using var http = new HttpClient(handler);
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://ignored.example/", TimeSpan.FromMilliseconds(100), CancellationToken.None);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => task);
+    }
+
+    [Fact]
+    public async Task GetStringWithTimeoutAsyncTimesOutWhenHandlerBlocksSynchronously()
+    {
+        using var handler = new SynchronouslyBlockingHandler();
+        using var http = new HttpClient(handler);
+        var startedAt = DateTime.UtcNow;
+
+        var task = CliDiagnostics.GetStringWithTimeoutAsync(
+            http, "https://blocked.example/", TimeSpan.FromMilliseconds(100), CancellationToken.None);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => task);
+        Assert.True(DateTime.UtcNow - startedAt < TimeSpan.FromSeconds(1));
+    }
+
+    private sealed class NeverCompletingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = cancellationToken;
+            var completion = new TaskCompletionSource<HttpResponseMessage>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            return completion.Task;
+        }
+    }
+
+    private sealed class SynchronouslyBlockingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            _ = cancellationToken;
+            Thread.Sleep(TimeSpan.FromSeconds(2));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]")
+            });
+        }
+    }
+
+    [Fact]
     public async Task CheckAsyncUsesResolvedFfmpegPathForCliCommands()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -130,7 +199,7 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerDefaultsToSummaryOnlyAndUsesDailyLogName()
+    public async Task AppLoggerDefaultsToSummaryOnlyAndUsesDailyLogName()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -140,6 +209,7 @@ public sealed class CliDiagnosticsTests
             logger.EntryWritten += displayedEntries.Add;
             logger.Info("普通操作摘要");
             logger.Debug("详细调试数据");
+            await logger.FlushAsync();
 
             Assert.False(logger.DebugEnabled);
             Assert.Contains(displayedEntries, entry => entry.Contains("普通操作摘要", StringComparison.Ordinal));
@@ -177,12 +247,14 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerPersistsDebugSetting()
+    public async Task AppLoggerPersistsDebugSetting()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
-            new AppLogger(directory).SetDebugEnabled(true);
+            var logger = new AppLogger(directory);
+            logger.SetDebugEnabled(true);
+            await logger.FlushAsync();
 
             Assert.True(new AppLogger(directory).DebugEnabled);
         }
@@ -193,7 +265,7 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerShowsSummaryByDefaultAndDebugEntriesOnlyWhenRequested()
+    public async Task AppLoggerShowsSummaryByDefaultAndDebugEntriesOnlyWhenRequested()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -201,6 +273,7 @@ public sealed class CliDiagnosticsTests
             var logger = new AppLogger(directory);
             logger.Info("环境检查完成");
             logger.Debug("CLI JSON 详细响应：{\"success\":false,\"error\":{\"code\":12345}}");
+            await logger.FlushAsync();
 
             var normalEntries = logger.ReadEntries(includeDebug: false);
             var debugEntries = logger.ReadEntries(includeDebug: true);
@@ -247,7 +320,37 @@ public sealed class CliDiagnosticsTests
     }
 
     [Fact]
-    public void AppLoggerHidesErrorCodesInDisplayButKeepsThemInFile()
+    public async Task AppLoggerCliResultKeepsDetailsOutOfSummaryButPersistsThem()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var logger = new AppLogger(directory);
+            var displayedEntries = new List<string>();
+            logger.EntryWritten += displayedEntries.Add;
+            logger.CliResult("发布帖子", 1, "{\"success\":false,\"error\":{\"code\":12345,\"message\":\"发布失败\"}}", "stderr-detail");
+            await logger.FlushAsync();
+
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("发布帖子", StringComparison.Ordinal));
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("stderr-detail", StringComparison.Ordinal));
+            Assert.Empty(logger.ReadEntries(includeDebug: false));
+
+            var debugEntries = logger.ReadEntries(includeDebug: true);
+            Assert.Contains(debugEntries, entry => entry.Contains("发布帖子", StringComparison.Ordinal));
+            Assert.Contains(debugEntries, entry => entry.Contains("stderr-detail", StringComparison.Ordinal));
+
+            var logFile = File.ReadAllText(Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log"));
+            Assert.Contains("stderr-detail", logFile, StringComparison.Ordinal);
+            Assert.Contains("12345", logFile, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteLoggerTestFiles(directory);
+        }
+    }
+
+    [Fact]
+    public async Task AppLoggerHidesErrorCodesInDisplayButKeepsThemInFile()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -257,6 +360,7 @@ public sealed class CliDiagnosticsTests
             logger.SetDebugEnabled(true);
             logger.EntryWritten += displayed.Add;
             logger.Debug("CLI result: {\"success\":false,\"error\":{\"code\":12345,\"message\":\"forbidden\"}}");
+            await logger.FlushAsync();
 
             Assert.Contains(displayed, entry => entry.Contains("forbidden", StringComparison.Ordinal));
             Assert.DoesNotContain(displayed, entry => entry.Contains("12345", StringComparison.Ordinal));
@@ -418,6 +522,7 @@ public sealed class CliWorkflowTests
         try
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => new CliWorkflow(scriptPath, logger: logger).StartLoginAsync());
+            await logger.FlushAsync();
 
             var logFile = File.ReadAllText(Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log"));
             Assert.Contains("already logged in", logFile, StringComparison.Ordinal);
@@ -455,6 +560,39 @@ public sealed class CliWorkflowTests
         finally
         {
             File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public async Task LogoutFailureLogsWarningWithReason()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"fake-channel-cli-{Guid.NewGuid():N}.js");
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        const string script = "console.log(JSON.stringify({success:false,error:{message:'退出被拒绝'}}));process.exit(1);";
+        await File.WriteAllTextAsync(scriptPath, script);
+        try
+        {
+            var logger = new AppLogger(directory);
+            var displayedEntries = new List<string>();
+            logger.EntryWritten += displayedEntries.Add;
+
+            var result = await new CliWorkflow(scriptPath, logger: logger).LogoutAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("退出被拒绝", result.Message, StringComparison.Ordinal);
+            Assert.Contains(displayedEntries, entry => entry.Contains("退出登录失败：退出被拒绝", StringComparison.Ordinal));
+            Assert.DoesNotContain(displayedEntries, entry => entry.Contains("退出 CLI 登录", StringComparison.Ordinal));
+            await logger.FlushAsync();
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+            var logFile = Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log");
+            if (File.Exists(logFile)) File.Delete(logFile);
+            if (File.Exists(Path.Combine(directory, "settings.json"))) File.Delete(Path.Combine(directory, "settings.json"));
+            if (Directory.Exists(Path.Combine(directory, "logs"))) Directory.Delete(Path.Combine(directory, "logs"));
+            if (Directory.Exists(directory)) Directory.Delete(directory);
         }
     }
 

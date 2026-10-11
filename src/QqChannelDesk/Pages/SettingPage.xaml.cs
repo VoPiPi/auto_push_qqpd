@@ -27,8 +27,13 @@ public partial class SettingPage : UserControl
         _settingsStore = settingsStore;
         _mediaStorage = mediaStorage ?? new MediaStorageService(settingsStore);
         _ffmpegManager = ffmpegManager ?? new FfmpegManager(settingsStore: settingsStore);
-        Loaded += async (_, _) => await LoadAsync();
-        MachineCodeBox.Text = MachineCodeProvider.GetMachineCode();
+        MachineCodeBox.Text = "正在生成机器码…";
+        Loaded += async (_, _) =>
+        {
+            var machineCodeTask = Task.Run(MachineCodeProvider.GetMachineCode);
+            await LoadAsync();
+            MachineCodeBox.Text = await machineCodeTask;
+        };
         VersionText.Text = ApplicationVersionInfo.CurrentVersion;
     }
 
@@ -233,7 +238,7 @@ public partial class SettingPage : UserControl
             var startupManager = new StartupManager();
             try
             {
-                startupManager.SetEnabled(settings.StartWithWindows);
+                await Task.Run(() => startupManager.SetEnabled(settings.StartWithWindows));
             }
             catch
             {
@@ -250,7 +255,7 @@ public partial class SettingPage : UserControl
         {
             if (startupChanged)
             {
-                try { new StartupManager().SetEnabled(previous.StartWithWindows); }
+                try { await Task.Run(() => new StartupManager().SetEnabled(previous.StartWithWindows)); }
                 catch { }
                 StartWithWindowsCheckBox.IsChecked = previous.StartWithWindows;
             }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 using Button = System.Windows.Controls.Button;
@@ -41,7 +42,6 @@ public partial class MainWindow : Window
     private readonly IReadOnlyDictionary<string, UserControl> _pages;
     private bool _isChecking;
     private bool _isInstalling;
-    private bool _startupInstallPromptShown;
     private bool _isClosing;
     private int _updateCheckActive;
     private bool _exitRequested;
@@ -101,7 +101,7 @@ public partial class MainWindow : Window
         PageHost.Content = _operationsCenterPage;
         _selectedNavigationButton = OperationsNavButton;
         _logger.EntryWritten += Logger_EntryWritten;
-        _operationsCenterPage.RefreshRequested += async (_, _) => await RefreshDiagnosticsAsync();
+        _operationsCenterPage.RefreshRequested += RefreshDiagnosticsAsync;
         _operationsCenterPage.InstallNodeRequested += async (_, _) => await InstallNodeAsync();
         _operationsCenterPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
         _operationsCenterPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
@@ -120,7 +120,7 @@ public partial class MainWindow : Window
             {
                 await _databaseInitializer.InitializeAsync();
                 //_logger.Info("本地数据库初始化完成，默认配置已检查。\n数据库位置：程序目录\\channels.db");
-                _logger.Info("本地数据库初始化完成，默认配置已检查。");
+                _logger.Debug("本地数据库初始化完成，默认配置已检查。");
             }
             catch (Exception ex)
             {
@@ -189,7 +189,7 @@ public partial class MainWindow : Window
         Topmost = false;
         Focus();
         if (_trayIcon is not null) _trayIcon.Visible = false;
-        _logger.Info("已从系统托盘恢复主界面。");
+        _logger.Debug("已从系统托盘恢复主界面。");
     }
 
     private void ExitFromTray()
@@ -543,7 +543,7 @@ public partial class MainWindow : Window
     private async Task InstallNodeAsync()
     {
         var confirmation = MessageBox.Show(this,
-            "将通过 Windows 包管理器 winget 从 OpenJS 安装 Node.js LTS。若 winget 不可用，可打开 nodejs.org 手动下载安装。继续吗？",
+            "将从 nodejs.org 下载官方 Node.js LTS 安装包并启动安装，不依赖 winget。安装过程中可能弹出“用户账户控制”授权提示。也可以取消后从 nodejs.org 手动安装。继续吗？",
             "安装 Node.js", MessageBoxButton.YesNoCancel, MessageBoxImage.Information);
         if (confirmation == MessageBoxResult.Cancel)
         {
@@ -552,40 +552,105 @@ public partial class MainWindow : Window
         }
         if (confirmation != MessageBoxResult.Yes) return;
 
-        await RunInstallOperationAsync("正在安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
+        var progressDialog = new NodeInstallProgressDialog { Owner = this };
+        var progress = new Progress<NodeInstallProgress>(item =>
+        {
+            progressDialog.Update(item);
+            var detail = string.IsNullOrWhiteSpace(item.Detail)
+                ? string.Empty
+                : $" | {item.Detail.Replace(Environment.NewLine, " | ")}";
+            _logger.Debug($"Node.js 安装 [{item.Percent:0}%] {item.Message}{detail}");
+            _operationsCenterPage.SetFooter($"Node.js 安装 {item.Percent:0}%：{item.Message}");
+        });
+        SetInstalling(true);
+        _operationsCenterPage.SetFooter("正在安装 Node.js LTS…");
+        progressDialog.Show();
+        await Dispatcher.Yield(DispatcherPriority.Background);
+        CliInstallResult result;
+        try
+        {
+            result = await Task.Run(
+                () => _diagnostics.InstallNodeAsync(progress, progressDialog.CancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            result = new CliInstallResult(false, "已取消安装", null);
+        }
+        catch (Exception ex)
+        {
+            result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null);
+        }
+        finally
+        {
+            progressDialog.Complete();
+            SetInstalling(false);
+        }
+
+        if (result.Succeeded)
+            _logger.Info($"Node.js 安装完成：{result.Message}");
+        else
+            _logger.Warning($"Node.js 安装失败：{result.Message}");
+        if (!string.IsNullOrWhiteSpace(result.Output)) _logger.Debug($"Node.js 安装输出：\n{result.Output}");
         await RefreshDiagnosticsAsync();
+        _operationsCenterPage.SetFooter(result.Message);
         if (_operationsCenterPage.NodeState == "可用" && _operationsCenterPage.CliState != "可用")
             await InstallCliAsync(confirm: false);
     }
 
     private async Task InstallFfmpegAsync()
     {
-        var archivePath = _ffmpegManager.FindLatestArchive();
-        if (archivePath is null)
-        {
-            MessageBox.Show(this,
-                $"在本地工具目录中没有找到 FFmpeg 压缩包：\n{_ffmpegManager.ArchiveDirectory}\n\n请放入名称形如 ffmpeg-版本号-描述.7z 或 .zip 的压缩包。",
-                "找不到 FFmpeg 安装包", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
         var confirmation = MessageBox.Show(this,
-            $"将从本地压缩包解压 FFmpeg：\n{archivePath}\n\n部署目录：\n{_ffmpegManager.InstallDirectory}\n\n不会联网下载，也不会修改系统 PATH。此构建受 GPL 许可证约束。继续吗？",
-            "手动部署 FFmpeg", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            $"将从 Gyan.dev 在线下载 FFmpeg 9.0.2 Essentials 便携构建。\n\n安装目录（相对程序目录）：\n{_ffmpegManager.RelativeInstallDirectory}\n\n不会修改系统 PATH，通常不需要管理员权限。此构建受 GPL 许可证约束。继续吗？",
+            "在线安装 FFmpeg", MessageBoxButton.YesNo, MessageBoxImage.Information);
         if (confirmation != MessageBoxResult.Yes) return;
 
+        var progressDialog = new FfmpegInstallProgressDialog { Owner = this };
+        var progress = new Progress<FfmpegInstallProgress>(item =>
+        {
+            progressDialog.Update(item);
+            var detail = string.IsNullOrWhiteSpace(item.Detail)
+                ? string.Empty
+                : $" | {item.Detail.Replace(Environment.NewLine, " | ")}";
+            var source = string.IsNullOrWhiteSpace(item.SourceUrl)
+                ? string.Empty
+                : $" | 来源：{item.SourceUrl}";
+            _logger.Debug($"FFmpeg 安装 [{item.Percent:0}%] {item.Message}{detail}{source}");
+            _operationsCenterPage.SetFooter($"FFmpeg 安装 {item.Percent:0}%：{item.Message}");
+        });
         SetInstalling(true);
-        _operationsCenterPage.SetFooter("正在从本地压缩包部署 FFmpeg…");
+        _operationsCenterPage.SetFooter("正在在线安装 FFmpeg…");
+        progressDialog.Show();
+        await Dispatcher.Yield(DispatcherPriority.Background);
         CliInstallResult result;
-        try { result = await _ffmpegManager.InstallAsync(); }
-        catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
-        finally { SetInstalling(false); }
+        try
+        {
+            result = await Task.Run(
+                () => _ffmpegManager.InstallOnlineAsync(progress, progressDialog.CancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            result = new CliInstallResult(false, "FFmpeg 在线安装已取消。", null);
+        }
+        catch (Exception ex)
+        {
+            result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null);
+        }
+        finally
+        {
+            progressDialog.Complete();
+            SetInstalling(false);
+        }
 
-        _logger.Info($"{(result.Succeeded ? "FFmpeg 部署成功" : "FFmpeg 部署失败")}：{result.Message}");
+        if (result.Succeeded)
+            _logger.Info($"FFmpeg 安装成功：{result.Message}");
+        else
+            _logger.Warning($"FFmpeg 安装失败：{result.Message}");
+        if (!string.IsNullOrWhiteSpace(result.Output))
+            _logger.Debug($"FFmpeg 安装来源：{result.Output}");
         await RefreshDiagnosticsAsync();
         _operationsCenterPage.SetFooter(result.Message);
-        if (!result.Succeeded)
-            MessageBox.Show(this, result.Message, "FFmpeg 部署未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!result.Succeeded && !result.Message.Contains("取消", StringComparison.Ordinal))
+            MessageBox.Show(this, result.Message, "FFmpeg 安装未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private async Task<bool> InstallCliAsync(bool confirm)
@@ -612,7 +677,10 @@ public partial class MainWindow : Window
         catch (Exception ex) { result = new CliInstallResult(false, CliDiagnostics.Sanitize(ex.Message), null); }
         finally { SetInstalling(false); }
 
-        _logger.Info($"{(result.Succeeded ? "依赖安装命令完成" : "依赖安装失败")}：{result.Message}");
+        if (result.Succeeded)
+            _logger.Info($"依赖安装完成：{result.Message}");
+        else
+            _logger.Warning($"依赖安装失败：{result.Message}");
         if (!string.IsNullOrWhiteSpace(result.Output)) _logger.Debug($"依赖安装输出：\n{result.Output}");
         return result;
     }
@@ -629,7 +697,6 @@ public partial class MainWindow : Window
     {
         if (_isChecking) return;
 
-        var promptForAutomaticInstall = false;
         _isChecking = true;
         _operationsCenterPage.SetRefreshEnabled(false);
         _operationsCenterPage.SetFooter("正在检查运行环境…");
@@ -647,14 +714,16 @@ public partial class MainWindow : Window
             if (schedulerWasActive && _accountContext.IsAuthenticated &&
                 !_scheduler.Status.Running && !_scheduler.Status.Paused)
                 await RestartSchedulerAsync();
-            foreach (var line in report.LogLines) _logger.Info(line);
-            _logger.Info($"运行环境：{report.OverallMessage}");
+            foreach (var line in report.LogLines) _logger.Debug(line);
+            var environmentReady = loggedIn
+                && report.Node.State != DiagnosticState.Error
+                && report.Cli.State != DiagnosticState.Error
+                && report.Ffmpeg.State != DiagnosticState.Error;
+            if (environmentReady)
+                _logger.Debug($"运行环境：{report.OverallMessage}");
+            else
+                _logger.Warning($"运行环境：{report.OverallMessage}");
             _operationsCenterPage.SetFooter(report.OverallMessage);
-            if (!_startupInstallPromptShown && (report.Node.State != DiagnosticState.Ready || report.Cli.State != DiagnosticState.Ready))
-            {
-                _startupInstallPromptShown = true;
-                promptForAutomaticInstall = true;
-            }
         }
         catch (Exception ex)
         {
@@ -676,25 +745,6 @@ public partial class MainWindow : Window
             _isChecking = false;
         }
 
-        if (!promptForAutomaticInstall) return;
-        var confirmation = MessageBox.Show(this,
-            "首次启动需要准备运行环境。是否自动安装缺失的 Node.js LTS 和/或腾讯频道 CLI？\n\n安装仅在你确认后开始；自动安装失败或取消后，可在运行环境中手动点击对应按钮重试。",
-            "首次运行需要安装环境", MessageBoxButton.YesNo, MessageBoxImage.Information);
-        if (confirmation != MessageBoxResult.Yes) return;
-
-        if (_operationsCenterPage.NodeState != "可用")
-        {
-            var nodeInstall = await RunInstallOperationAsync("正在自动安装 Node.js LTS…", () => _diagnostics.InstallNodeAsync());
-            await RefreshDiagnosticsAsync();
-            if (!nodeInstall.Succeeded || _operationsCenterPage.NodeState != "可用")
-            {
-                if (!nodeInstall.Succeeded)
-                    MessageBox.Show(this, $"Node.js 自动安装失败：{nodeInstall.Message}\n\n可点击“安装 Node.js”重试，或选择手动下载。",
-                        "自动安装未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-        }
-        if (_operationsCenterPage.CliState != "可用") await InstallCliAsync(confirm: false);
     }
 
     private async Task<bool> RefreshAccountSessionDisplayAsync(string loginState)
@@ -781,12 +831,13 @@ public partial class MainWindow : Window
 
     private async Task RefreshAccountScopedViewsAsync()
     {
-        await _contentCollectionPage.LoadItemsAsync();
-        await _contentCollectionPage.LoadDraftsAsync();
-        await _materialsPage.LoadMaterialsAsync();
-        await _schedulePage.LoadSchedulesAsync();
-        await _historyPage.LoadRecordsAsync();
-        await _operationsCenterPage.RefreshDashboardAsync();
+        await Task.WhenAll(
+            _contentCollectionPage.LoadItemsAsync(),
+            _contentCollectionPage.LoadDraftsAsync(),
+            _materialsPage.LoadMaterialsAsync(),
+            _schedulePage.LoadSchedulesAsync(),
+            _historyPage.LoadRecordsAsync(),
+            _operationsCenterPage.RefreshDashboardAsync());
     }
 
     private async Task<bool> StopSchedulerForContextChangeAsync(string failureMessage)
@@ -873,7 +924,7 @@ public partial class MainWindow : Window
             Hide();
             ShowInTaskbar = false;
             if (_trayIcon is not null) _trayIcon.Visible = true;
-            _logger.Info("主界面已最小化到系统托盘，计划执行器保持运行。自动发布仍受系统设置开关控制。");
+            _logger.Debug("主界面已最小化到系统托盘，计划执行器保持运行。自动发布仍受系统设置开关控制。");
             return;
         }
 

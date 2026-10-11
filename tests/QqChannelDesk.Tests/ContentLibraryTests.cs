@@ -277,6 +277,26 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public void ValidateMaterialForPublish_AllowsEmptyTitleWhenContentIsPresent()
+    {
+        var noTitle = new MaterialRecord(1, "", "text", "正文", "1", "频道", "2", "版块", null, "waitsend", "", [], DateTimeOffset.Now, DateTimeOffset.Now);
+        Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(noTitle));
+
+        var emptyContent = noTitle with { Content = "   " };
+        Assert.Contains("必须填写正文", Pages.MaterialsPage.ValidateMaterialForPublish(emptyContent));
+
+        var imageWithoutMedia = noTitle with { Type = "image" };
+        Assert.Contains("至少需要一个有效的图片链接", Pages.MaterialsPage.ValidateMaterialForPublish(imageWithoutMedia));
+
+        var tooManyImages = noTitle with
+        {
+            Type = "image",
+            MediaLinks = Enumerable.Range(1, 19).Select(index => $"https://example.com/{index}.jpg").ToArray()
+        };
+        Assert.Contains("图片数量不能超过 18 个", Pages.MaterialsPage.ValidateMaterialForPublish(tooManyImages));
+    }
+
+    [Fact]
     public void MaterialMediaValidator_AcceptsExistingLocalFilesAndPublicUrls()
     {
         var localImage = Path.Combine(Path.GetTempPath(), $"qq-channel-{Guid.NewGuid():N}.png");
@@ -337,5 +357,28 @@ public sealed class ContentLibraryTests
         Assert.Equal("waitsend", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(-1), null, now));
         Assert.Equal("queue", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(1), null, now));
         Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(null, "published", now));
+    }
+
+    [Fact]
+    public void MaterialEditorChoice_UsesNameWhenCachedIdHasChanged()
+    {
+        ChannelChoice[] choices =
+        [
+            new("new-guild-id", "鲸鱼落", "管理员"),
+            new("another-id", "其他频道", "")
+        ];
+
+        var selected = MaterialEditorWindow.ResolveChoice(choices, "old-guild-id", " 鲸鱼落 ");
+
+        Assert.Same(choices[0], selected);
+    }
+
+    [Fact]
+    public void MaterialEditorChoice_DoesNotSilentlySelectWrongTargetForExistingMaterial()
+    {
+        ChannelChoice[] choices = [new("channel-1", "默认版块", "")];
+
+        Assert.Null(MaterialEditorWindow.ResolveChoice(choices, "missing", "已删除版块"));
+        Assert.Same(choices[0], MaterialEditorWindow.ResolveChoice(choices, null, null, selectFirstWhenMissing: true));
     }
 }

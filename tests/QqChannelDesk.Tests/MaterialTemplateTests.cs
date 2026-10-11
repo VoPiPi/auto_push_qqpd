@@ -218,7 +218,6 @@ public sealed class MaterialTemplateTests : IDisposable
         Assert.False(result.IsValid);
         var emptyFieldError = result.Rows.Single(row => row.RowNumber == 2).Error;
         Assert.Contains("第 2 行", emptyFieldError);
-        Assert.Contains("标题不能为空", emptyFieldError);
         Assert.Contains("正文不能为空", emptyFieldError);
         Assert.Contains("第 4 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 3).Error);
         Assert.Contains("第 3 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 4).Error);

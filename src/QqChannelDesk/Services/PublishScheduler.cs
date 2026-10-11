@@ -315,7 +315,7 @@ public sealed class PublishScheduler
         try
         {
             if (!await _store.CompleteScheduleExecutionAsync(executionId, recordId, result).ConfigureAwait(false))
-                _logger.Warning($"计划执行记录 {executionId} 已被其他状态处理，忽略迟到的发布结果。");
+                _logger.Debug($"计划执行记录 {executionId} 已被其他状态处理，忽略迟到的发布结果。");
         }
         catch (Exception ex) { _logger.Error($"更新计划执行结果失败：{CliDiagnostics.Sanitize(ex.Message)}"); }
     }

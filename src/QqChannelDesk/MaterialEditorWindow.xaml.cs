@@ -47,22 +47,44 @@ public partial class MaterialEditorWindow : Window
         _loading = true;
         try
         {
+            var previousGuild = GuildCombo.SelectedItem as ChannelChoice;
+            var previousChannel = ChannelCombo.SelectedItem as ChannelChoice;
             var guilds = await _channelSync.GetCachedGuildsAsync();
             GuildCombo.ItemsSource = guilds;
-            GuildCombo.SelectedItem = _existing is null ? null : guilds.FirstOrDefault(item => item.Id == _existing.GuildId);
-            if (GuildCombo.SelectedItem is ChannelChoice guild) await LoadChannelsAsync(guild);
+            GuildCombo.SelectedItem = ResolveChoice(
+                guilds,
+                previousGuild?.Id ?? _existing?.GuildId,
+                previousGuild?.Name ?? _existing?.GuildName);
+            if (GuildCombo.SelectedItem is ChannelChoice guild)
+            {
+                var preservePreviousChannel = previousGuild is not null &&
+                    string.Equals(previousGuild.Id, guild.Id, StringComparison.Ordinal);
+                await LoadChannelsAsync(
+                    guild,
+                    preservePreviousChannel ? previousChannel?.Id : _existing?.ChannelId,
+                    preservePreviousChannel ? previousChannel?.Name : _existing?.ChannelName,
+                    selectFirstWhenMissing: _existing is null && previousChannel is null);
+            }
             else ChannelCombo.ItemsSource = null;
         }
-        catch (Exception ex) { FormMessage.Text = $"讀取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { FormMessage.Text = $"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
         finally { _loading = false; }
     }
 
-    private async Task LoadChannelsAsync(ChannelChoice guild)
+    private async Task LoadChannelsAsync(
+        ChannelChoice guild,
+        string? preferredChannelId = null,
+        string? preferredChannelName = null,
+        bool selectFirstWhenMissing = true)
     {
         var channels = await _channelSync.GetCachedChannelsAsync(guild.Id);
         if ((GuildCombo.SelectedItem as ChannelChoice)?.Id != guild.Id) return;
         ChannelCombo.ItemsSource = channels;
-        ChannelCombo.SelectedItem = channels.FirstOrDefault(item => item.Id == _existing?.ChannelId) ?? channels.FirstOrDefault();
+        ChannelCombo.SelectedItem = ResolveChoice(
+            channels,
+            preferredChannelId,
+            preferredChannelName,
+            selectFirstWhenMissing);
     }
 
     private async void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -73,7 +95,7 @@ public partial class MaterialEditorWindow : Window
             ChannelCombo.ItemsSource = null;
             return;
         }
-        try { await LoadChannelsAsync(guild); }
+        try { await LoadChannelsAsync(guild, selectFirstWhenMissing: true); }
         catch (Exception ex) { FormMessage.Text = $"读取版块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
@@ -135,9 +157,9 @@ public partial class MaterialEditorWindow : Window
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
         var links = ParseMediaLinks();
-        if (title.Length == 0 || content.Length == 0)
+        if (content.Length == 0)
         {
-            FormMessage.Text = "标题和正文均为必填项。";
+            FormMessage.Text = "请填写帖子正文。";
             return;
         }
         var detectedType = MaterialMediaValidator.InferType(links);
@@ -201,6 +223,31 @@ public partial class MaterialEditorWindow : Window
     {
         if (publishAt is { } scheduled && scheduled > now) return "queue";
         return publishAt is null && existingStatus == "published" ? "published" : "waitsend";
+    }
+
+    internal static ChannelChoice? ResolveChoice(
+        IReadOnlyList<ChannelChoice> choices,
+        string? preferredId,
+        string? preferredName,
+        bool selectFirstWhenMissing = false)
+    {
+        var normalizedId = preferredId?.Trim();
+        if (!string.IsNullOrEmpty(normalizedId))
+        {
+            var idMatch = choices.FirstOrDefault(item =>
+                string.Equals(item.Id.Trim(), normalizedId, StringComparison.Ordinal));
+            if (idMatch is not null) return idMatch;
+        }
+
+        var normalizedName = preferredName?.Trim();
+        if (!string.IsNullOrEmpty(normalizedName))
+        {
+            var nameMatch = choices.FirstOrDefault(item =>
+                string.Equals(item.Name.Trim(), normalizedName, StringComparison.Ordinal));
+            if (nameMatch is not null) return nameMatch;
+        }
+
+        return selectFirstWhenMissing ? choices.FirstOrDefault() : null;
     }
 
     private IReadOnlyList<string> ParseMediaLinks() => MediaLinksBox.Text

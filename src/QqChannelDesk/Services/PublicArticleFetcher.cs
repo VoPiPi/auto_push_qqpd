@@ -60,7 +60,7 @@ public sealed class PublicArticleFetcher
                 var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"', '\'');
                 var encoding = TryEncoding(charset);
                 var html = encoding.GetString(buffer.ToArray());
-                var parsed = ParseHtml(html);
+                var parsed = await Task.Run(() => ParseHtml(html), cancellationToken);
                 if (parsed.Title.Length == 0 && parsed.Content.Length == 0) return Failed("网页没有识别到可用标题或正文。");
                 return new(true, current.AbsoluteUri, current.DnsSafeHost, parsed.Title, parsed.Content, "");
             }

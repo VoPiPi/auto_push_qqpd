@@ -19,7 +19,7 @@
 
 - 检测 Node.js、`tencent-channel-cli`、FFmpeg 和当前登录状态。
 - Node.js 或 CLI 缺失时，经用户确认后支持安装或重试。
-- FFmpeg 使用项目本地 `tools` 目录中的压缩包手动部署，不联网下载，不修改系统 PATH。
+- FFmpeg 缺失时可按需从 Gyan.dev 在线下载安装到程序本地 `tools` 目录，不修改系统 PATH。
 - 检查结果相互独立，某一项失败不会中断其他环境检查。
 
 ### 扫码授权与频道同步
@@ -72,11 +72,11 @@
 
 - Windows 10 或更高版本
 - .NET 8 SDK（源码运行和编译）
-- .NET 8 Desktop Runtime（运行已构建程序）
+- 运行发布的程序无需安装 .NET 运行时（Release 包为自包含发布，已内置运行时）
 - Node.js
 - `tencent-channel-cli`
 
-首次使用时，可在"环境检查"页面按照提示安装 Node.js 或 CLI；也可以先手动准备好运行环境。
+首次使用时，可在"环境检查"页面按照提示安装 Node.js、CLI 或 FFmpeg；也可以先手动准备好运行环境。
 
 ## 快速开始
 
@@ -107,42 +107,31 @@ dotnet build .\src\QqChannelDesk\QqChannelDesk.csproj -c Release
 dotnet test .\tests\QqChannelDesk.Tests\QqChannelDesk.Tests.csproj -c Release
 ```
 
-### 5. 制作更新包
+### 5. 制作完整分发包
 
-更新包由发布者在干净的 `dotnet publish` 输出上制作，不从正在运行的用户目录打包：
+完整分发包由发布者在干净的 `dotnet publish` 输出上制作，不从正在运行的用户目录打包。发布为自包含模式，ZIP 内含 .NET 运行时，用户解压后双击 `QqChannelDesk.exe` 即可进入程序，无需安装 .NET 运行时。FFmpeg 不再随 ZIP 分发，仅在使用相关功能时按需在线安装：
 
 ```powershell
 .\scripts\Build-UpdateZip.ps1 -Version 1.0.1
 ```
 
-脚本生成的 ZIP 只包含应用运行文件，明确排除 `channels.db`、`account.session.json`、`channels.sync.json`、`settings.json`、日志、`temp`、媒体缓存和 `tools`。上传到 [Gitee Releases](https://gitee.com/vopipi/auto_push_qqpd/releases) 后，用户关闭程序并将 ZIP 内容覆盖到原程序目录即可。覆盖前请保留用户目录中的数据库、登录授权文件、日志、素材和本地工具。
+脚本生成的 ZIP 包含主程序运行所需文件，并明确排除 FFmpeg 安装包、`channels.db`、`account.session.json`、`channels.sync.json`、`settings.json`、日志、`temp` 和媒体缓存等内容。上传到 [Gitee Releases](https://gitee.com/vopipi/auto_push_qqpd/releases) 后，新用户解压即可进入程序；老用户如需升级，先关闭程序，将 ZIP 内容解压到新目录，再把原目录中的数据库、登录授权文件、日志、素材复制过去即可（数据库等文件会在首次运行时自动在程序目录创建）。
 
 发布标签建议使用 `v主版本.次版本.修订版本`，例如 `v1.0.1` 或 `v1.0.1-release`。程序只比较其中的数字版本，不执行 Release 资产中的任何脚本。
 
-## FFmpeg 本地工具包
+## FFmpeg 在线安装
 
-仓库内的 FFmpeg 压缩包位于：
+环境检测未找到 FFmpeg 时，可点击"在线安装"。程序优先下载经过固定 SHA-256 校验的 FFmpeg 9.0.2 Essentials 便携构建；固定地址不可用时，会切换到 Gyan.dev stable 地址并读取其在线 SHA-256 后再安装。安装窗口会显示实际请求地址、下载进度、已下载大小、当前阶段和耗时，并支持在下载或解压阶段取消。
 
-```text
-src/QqChannelDesk/tools/ffmpeg-9.0.2-essentials_build.7z
-```
-
-点击"手动部署"后，程序从应用对应的本地 `tools` 目录查找名称符合以下格式的压缩包：
-
-```text
-ffmpeg-版本号-描述.7z
-ffmpeg-版本号-描述.zip
-```
-
-部署后文件位于：
+安装后文件位于：
 
 ```text
 tools/ffmpeg/bin
 ```
 
-开发运行时使用源码项目中的 `src/QqChannelDesk/tools`；Release 构建会将工具包复制到程序目录旁的 `tools` 目录。程序不会从 `artifacts` 目录寻找主工具包，也不会联网下载 FFmpeg。
+程序只提取实际使用的 `ffmpeg.exe`，不会修改系统 PATH，通常不需要管理员权限。如果网络安装失败，也可以在"系统设置"中手动指定已有的 `ffmpeg.exe`。路径解析优先级为：手动指定路径、系统 PATH、程序本地 `tools` 目录。
 
-仓库中的 FFmpeg Essentials 便携构建来自 Gyan.dev，涉及 GPL 许可证。重新分发应用或 FFmpeg 压缩包前，请阅读并遵守相应许可证要求。
+在线下载的 FFmpeg Essentials 便携构建来自 [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/)，涉及 GPL 许可证。使用或重新分发 FFmpeg 前，请阅读并遵守相应许可证要求。
 
 ## 数据与隐私
 
@@ -176,7 +165,7 @@ src/QqChannelDesk/
 ├── MainWindow.xaml        主窗口与导航
 ├── LoginWindow.xaml       扫码登录窗口
 ├── PublishDialog.xaml     发布确认窗口
-└── tools/                 随项目提供的本地工具包
+└── tools/                 按需安装的本地工具目录
 
 tests/                     自动化测试
 docs/                      人工验证清单和调研文档
@@ -195,4 +184,4 @@ LICENSE                    项目许可证
 
 ## 许可证
 
-本项目许可证见仓库根目录 [`LICENSE`](LICENSE)。项目中随附的 FFmpeg 压缩包还需遵守其对应的 GPL 许可证要求。
+本项目许可证见仓库根目录 [`LICENSE`](LICENSE)。程序按需下载的 FFmpeg 构建还需遵守其对应的 GPL 许可证要求。

@@ -203,7 +203,7 @@ public static class MaterialTemplateService
         if (rows.Count == 0) return new([], [.. templateErrors, "模板中没有可导入的数据行。"], templateErrors.Count > 0);
 
         var duplicateGroups = rows
-            .Where(row => row.Title.Length > 0 && row.Content.Length > 0)
+            .Where(row => row.Content.Length > 0)
             .GroupBy(row => $"{row.Title}\n{row.Content}", StringComparer.Ordinal)
             .Where(group => group.Count() > 1);
         foreach (var group in duplicateGroups)
@@ -245,7 +245,6 @@ public static class MaterialTemplateService
     {
         ArgumentNullException.ThrowIfNull(currentTargets);
         var errors = new List<string>();
-        if (row.Title.Trim().Length == 0) errors.Add("标题不能为空");
         if (row.Content.Trim().Length == 0) errors.Add("正文不能为空");
         var media = row.MediaLinks.Where(link => !string.IsNullOrWhiteSpace(link)).ToArray();
         var detectedType = MaterialMediaValidator.InferType(media);

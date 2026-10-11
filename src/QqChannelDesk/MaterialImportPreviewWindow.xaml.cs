@@ -91,7 +91,8 @@ public partial class MaterialImportPreviewWindow : Window
         if (dialog.ShowDialog(this) != true) return;
         try
         {
-            await File.WriteAllBytesAsync(dialog.FileName, MaterialTemplateService.CreateErrorWorkbook(errors, _targets));
+            var workbookBytes = await Task.Run(() => MaterialTemplateService.CreateErrorWorkbook(errors, _targets));
+            await File.WriteAllBytesAsync(dialog.FileName, workbookBytes);
             HintText.Text = $"错误行已导出：{Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)

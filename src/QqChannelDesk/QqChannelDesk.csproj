@@ -21,7 +21,16 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="tools\*.7z;tools\*.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="min_logo.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="QqChannelDesk.Tests" />
   </ItemGroup>
+  <Target Name="RemoveWinFormsDesignerFromUpdatePackage"
+          BeforeTargets="_ComputeFilesToBundle"
+          Condition="'$(SlimUpdatePackage)' == 'true'">
+    <ItemGroup>
+      <!-- The app uses WinForms only for NotifyIcon; runtime designer assemblies are not required. -->
+      <_WinFormsDesignerFiles Include="@(ResolvedFileToPublish)"
+                              Condition="$([System.String]::Copy('%(ResolvedFileToPublish.Filename)').StartsWith('System.Windows.Forms.Design', System.StringComparison.OrdinalIgnoreCase))" />
+      <ResolvedFileToPublish Remove="@(_WinFormsDesignerFiles)" />
+    </ItemGroup>
+  </Target>
 </Project>
