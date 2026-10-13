@@ -80,12 +80,16 @@ public sealed class PublicArticleFetcher
     public async Task<string> DownloadMediaAsync(
         string input,
         string expectedType,
-        string targetDirectory,
-        CancellationToken cancellationToken = default)
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default,
+        string? cookieHeader = null)
     {
         if (!TryNormalizePublicUrl(input, out var current, out var error)) throw new InvalidOperationException(error);
         if (expectedType is not ("image" or "video")) throw new ArgumentOutOfRangeException(nameof(expectedType));
-        if (string.IsNullOrWhiteSpace(targetDirectory)) throw new ArgumentException("媒体保存目录不能为空。", nameof(targetDirectory));
+        var saveDirectory = Path.GetFullPath(string.IsNullOrWhiteSpace(targetDirectory)
+            ? Path.Combine(AppContext.BaseDirectory, "tools", "media-cache")
+            : targetDirectory);
+        var cookie = string.IsNullOrWhiteSpace(cookieHeader) ? "" : cookieHeader.Trim();
         const long maximumMediaBytes = 100L * 1024 * 1024;
         for (var redirect = 0; redirect <= MaximumRedirects; redirect++)
         {
@@ -95,6 +99,7 @@ public sealed class PublicArticleFetcher
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-media-reader)");
+            if (cookie.Length > 0) request.Headers.Add("Cookie", cookie);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (IsRedirect(response.StatusCode))
             {
@@ -110,9 +115,8 @@ public sealed class PublicArticleFetcher
             if (response.Content.Headers.ContentLength is > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB 限制。");
             var extension = Path.GetExtension(current.AbsolutePath);
             if (extension.Length is < 2 or > 8 || extension.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch != '.')) extension = expectedType == "image" ? ".img" : ".video";
-            var directory = Path.GetFullPath(targetDirectory);
-            Directory.CreateDirectory(directory);
-            var path = Path.Combine(directory, $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{extension}");
+            Directory.CreateDirectory(saveDirectory);
+            var path = Path.Combine(saveDirectory, $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{extension}");
             try
             {
                 await using var inputStream = await response.Content.ReadAsStreamAsync(cancellationToken);

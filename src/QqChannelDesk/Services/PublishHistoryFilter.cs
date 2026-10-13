@@ -32,6 +32,7 @@ public static class PublishHistoryFilter
                 if (criteria.FeedType.HasValue && record.FeedType != criteria.FeedType.Value) return false;
                 if (keywordQuery.Length > 0 &&
                     !Contains(record.Title, keywordQuery) &&
+                    !Contains(record.Content, keywordQuery) &&
                     !Contains(record.Summary, keywordQuery))
                 {
                     return false;

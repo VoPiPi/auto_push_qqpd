@@ -101,6 +101,8 @@
                                 ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" />
               <TextBox x:Name="PART_EditableTextBox"
                        Margin="6,3,26,3"
+                       MinHeight="0" Padding="4,0"
+                       Foreground="{TemplateBinding Foreground}"
                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
                        Background="Transparent" BorderThickness="0"
@@ -122,6 +124,11 @@
               </Popup>
             </Grid>
             <ControlTemplate.Triggers>
+              <Trigger Property="IsEditable" Value="True">
+                <Setter Property="IsTabStop" Value="False" />
+                <Setter TargetName="ContentSite" Property="Visibility" Value="Collapsed" />
+                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+              </Trigger>
               <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="ToggleButton" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
               <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="ToggleButton" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
             </ControlTemplate.Triggers>

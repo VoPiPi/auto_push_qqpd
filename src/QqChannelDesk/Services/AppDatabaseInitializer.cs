@@ -10,17 +10,20 @@ public sealed class AppDatabaseInitializer
     private readonly ChannelCacheStore _channels;
     private readonly ContentLibraryStore _contentLibrary;
     private readonly PublishHistoryStore _history;
+    private readonly ProxyPoolStore? _proxyPool;
 
     public AppDatabaseInitializer(
         SystemSettingsStore settings,
         ChannelCacheStore channels,
         ContentLibraryStore contentLibrary,
-        PublishHistoryStore history)
+        PublishHistoryStore history,
+        ProxyPoolStore? proxyPool = null)
     {
         _settings = settings;
         _channels = channels;
         _contentLibrary = contentLibrary;
         _history = history;
+        _proxyPool = proxyPool;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -31,5 +34,6 @@ public sealed class AppDatabaseInitializer
         await _channels.InitializeAsync(cancellationToken);
         await _contentLibrary.InitializeAsync(cancellationToken);
         await _history.InitializeAsync(cancellationToken);
+        if (_proxyPool is not null) await _proxyPool.InitializeAsync(cancellationToken);
     }
 }

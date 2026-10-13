@@ -277,10 +277,9 @@ public partial class MaterialsPage : UserControl
 
     public static string ValidateMaterialForPublish(MaterialRecord record)
     {
-        if (string.IsNullOrWhiteSpace(record.Content)) return "发布素材必须填写正文。";
         if (string.IsNullOrWhiteSpace(record.GuildId) || string.IsNullOrWhiteSpace(record.ChannelId)) return "请先编辑素材并指定发布频道和版块。";
         if (record.Type is not ("text" or "image" or "video")) return "素材类型无效。";
-        return MaterialMediaValidator.Validate(record.Type, record.Title, record.MediaLinks);
+        return MaterialMediaValidator.ValidatePost(record.Type, record.Title, record.Content, record.MediaLinks);
     }
 
     public async Task MarkMaterialPublishedAsync(long id, string? link)

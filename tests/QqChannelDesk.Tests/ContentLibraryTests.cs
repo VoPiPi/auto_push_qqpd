@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using QqChannelDesk.Services;
 using Xunit;
 
@@ -110,6 +111,24 @@ public sealed class ContentLibraryTests
         await store.UpdateMaterialStatusAsync(id, "delete");
         Assert.Empty(await store.GetMaterialsAsync());
         Assert.Null(await store.GetMaterialAsync(id));
+    }
+
+    [Fact]
+    public async Task MaterialStore_SavesMediaOnlyMaterialWithoutText()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-media-only-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+
+        var id = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "", "image", "", "guild", "频道", "channel", "版块", null, "waitsend", "",
+            ["https://example.com/media-only.jpg"]));
+
+        var material = await store.GetMaterialAsync(id);
+        Assert.NotNull(material);
+        Assert.Equal("", material!.Title);
+        Assert.Equal("", material.Content);
+        Assert.Equal("image", material.Type);
+        Assert.Equal(new[] { "https://example.com/media-only.jpg" }, material.MediaLinks);
     }
 
     [Fact]
@@ -294,6 +313,17 @@ public sealed class ContentLibraryTests
             MediaLinks = Enumerable.Range(1, 19).Select(index => $"https://example.com/{index}.jpg").ToArray()
         };
         Assert.Contains("图片数量不能超过 18 个", Pages.MaterialsPage.ValidateMaterialForPublish(tooManyImages));
+
+        var mediaOnly = noTitle with
+        {
+            Content = "",
+            Type = "image",
+            MediaLinks = ["https://example.com/photo.jpg"]
+        };
+        Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(mediaOnly));
+
+        var titleOnly = noTitle with { Content = "", Title = "只有标题" };
+        Assert.Contains("必须填写正文", Pages.MaterialsPage.ValidateMaterialForPublish(titleOnly));
     }
 
     [Fact]
@@ -380,5 +410,168 @@ public sealed class ContentLibraryTests
 
         Assert.Null(MaterialEditorWindow.ResolveChoice(choices, "missing", "已删除版块"));
         Assert.Same(choices[0], MaterialEditorWindow.ResolveChoice(choices, null, null, selectFirstWhenMissing: true));
+    }
+
+    [Fact]
+    public async Task Store_RoundTripsTelegramMediaPaths()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+
+        var media = new[] { Path.Combine("tools", "media-cache", "a.mp4"), Path.Combine("tools", "media-cache", "b.jpg") };
+        await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/718", "t.me", "标题", "正文", MediaList: media));
+
+        var saved = await store.FindByUrlAsync("https://t.me/TGWenAnGuan/718");
+        Assert.NotNull(saved);
+        Assert.Equal(media, saved.Media);
+        Assert.Contains("a.mp4", saved.MediaSummary, StringComparison.Ordinal);
+        Assert.Equal(media, Assert.Single(await store.GetItemsAsync()).Media);
+
+        await store.UpdateItemAsync(new CollectedItemDraft(saved.Url, saved.SourceHost, saved.Title, saved.Content, saved.Status, saved.Notes, saved.Tags, saved.ParseError, saved.Id, saved.Media));
+        Assert.Equal(media, (await store.FindByUrlAsync("https://t.me/TGWenAnGuan/718"))!.Media);
+
+        await store.UpdateItemAsync(new CollectedItemDraft(saved.Url, saved.SourceHost, saved.Title, saved.Content, saved.Status, saved.Notes, saved.Tags, saved.ParseError, saved.Id));
+        Assert.Empty((await store.FindByUrlAsync("https://t.me/TGWenAnGuan/718"))!.Media);
+
+        await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/719", "t.me", "无媒体", "正文"));
+        Assert.Empty((await store.FindByUrlAsync("https://t.me/TGWenAnGuan/719"))!.Media);
+    }
+
+    [Fact]
+    public async Task Store_MigratesLegacyDatabaseWithoutMediaColumn()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
+        var collectedAt = DateTimeOffset.Now.ToString("O");
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE CollectedItems (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Url TEXT NOT NULL DEFAULT '',
+                    SourceHost TEXT NOT NULL DEFAULT '',
+                    Title TEXT NOT NULL DEFAULT '',
+                    Content TEXT NOT NULL DEFAULT '',
+                    CollectedAt TEXT NOT NULL,
+                    Status TEXT NOT NULL DEFAULT '待处理',
+                    Notes TEXT NOT NULL DEFAULT '',
+                    TagsJson TEXT NOT NULL DEFAULT '[]',
+                    ParseError TEXT NOT NULL DEFAULT '',
+                    AccountKey TEXT NULL
+                );
+                """;
+            await create.ExecuteNonQueryAsync();
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError)
+                VALUES ('https://t.me/TGWenAnGuan/1', 't.me', '旧库消息', '旧库正文', $at, '待处理', '来自 tg 频道', '[]', '');
+                """;
+            insert.Parameters.AddWithValue("$at", collectedAt);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var store = new ContentLibraryStore(databasePath);
+        var items = await store.GetItemsAsync();
+
+        var legacy = Assert.Single(items);
+        Assert.Equal("旧库消息", legacy.Title);
+        Assert.Equal("旧库正文", legacy.Content);
+        Assert.Equal(DateTimeOffset.Parse(collectedAt), legacy.CollectedAt);
+        Assert.Empty(legacy.Media);
+
+        await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/2", "t.me", "新消息", "新正文", MediaList: ["a.mp4"]));
+        var added = await store.FindByUrlAsync("https://t.me/TGWenAnGuan/2");
+        Assert.Equal(new[] { "a.mp4" }, added!.Media);
+    }
+
+    [Fact]
+    public async Task Store_RoundTripsDraftMediaPaths()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+
+        var media = new[] { Path.Combine("tools", "media-cache", "a.mp4") };
+        var collectedId = await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/736", "t.me", "这城市那么空", "正文", MediaList: media));
+        var draftId = await store.CreateDraftAsync(collectedId, "草稿标题", "草稿正文", "https://t.me/TGWenAnGuan/736", media);
+
+        var draft = Assert.Single(await store.GetDraftsAsync("草稿标题"));
+        Assert.Equal(draftId, draft.Id);
+        Assert.Equal(media, draft.Media);
+        Assert.Contains("媒体 1 个", draft.MediaSummary, StringComparison.Ordinal);
+
+        await store.UpdateDraftAsync(draft with { Title = "新标题", Media = [] });
+        draft = Assert.Single(await store.GetDraftsAsync("新标题"));
+        Assert.Empty(draft.Media);
+
+        await store.CreateDraftAsync(null, "纯文本草稿", "正文", "");
+        Assert.Empty(Assert.Single(await store.GetDraftsAsync("纯文本草稿")).Media);
+    }
+
+    [Fact]
+    public async Task Store_CreatesDraftFromTemporaryTelegramMessage()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+
+        var media = new[]
+        {
+            Path.Combine("temp", "telegram", "20261011", "TGWenAnGuan_718", "a.jpg"),
+            Path.Combine("temp", "telegram", "20261011", "TGWenAnGuan_718", "b.mp4")
+        };
+        var draftId = await store.CreateDraftAsync(
+            null, "这城市那么空", "第一行正文", "https://t.me/TGWenAnGuan/718", media);
+
+        var draft = Assert.Single(await store.GetDraftsAsync("这城市那么空"));
+        Assert.Equal(draftId, draft.Id);
+        Assert.Null(draft.CollectedItemId);
+        Assert.Equal("https://t.me/TGWenAnGuan/718", draft.SourceUrl);
+        Assert.Equal(media, draft.Media);
+        Assert.Contains("媒体 2 个", draft.MediaSummary, StringComparison.Ordinal);
+
+        await store.DeleteDraftAsync(draftId);
+        Assert.Empty(await store.GetDraftsAsync("这城市那么空"));
+    }
+    [Fact]
+    public async Task Store_MigratesLegacyDraftsWithoutMediaColumn()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE ContentDrafts (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    CollectedItemId INTEGER NULL,
+                    Title TEXT NOT NULL DEFAULT '',
+                    Content TEXT NOT NULL DEFAULT '',
+                    SourceUrl TEXT NOT NULL DEFAULT '',
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL,
+                    PublishCount INTEGER NOT NULL DEFAULT 0,
+                    LastPublishedAt TEXT NULL,
+                    AccountKey TEXT NULL
+                );
+                """;
+            await create.ExecuteNonQueryAsync();
+            var now = DateTimeOffset.Now.ToString("O");
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO ContentDrafts (Title, Content, SourceUrl, CreatedAt, UpdatedAt)
+                VALUES ('旧草稿', '旧正文', '', $now, $now);
+                """;
+            insert.Parameters.AddWithValue("$now", now);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var store = new ContentLibraryStore(databasePath);
+        var legacy = Assert.Single(await store.GetDraftsAsync("旧草稿"));
+        Assert.Equal("旧草稿", legacy.Title);
+        Assert.Empty(legacy.Media);
+
+        var media = new[] { Path.Combine("tools", "media-cache", "a.mp4") };
+        await store.CreateDraftAsync(null, "新草稿", "新正文", "", media);
+        Assert.Equal(media, Assert.Single(await store.GetDraftsAsync("新草稿")).Media);
     }
 }

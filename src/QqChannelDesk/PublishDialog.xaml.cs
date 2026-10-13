@@ -54,12 +54,30 @@ public partial class PublishDialog : Window
                 : "标题留空时正文最多 1000 字；填写标题后正文最多 10000 字。";
         if (sourceDraft is not null)
         {
-            TitleBox.Text = sourceDraft.Title;
+            var isTelegramDraft = TelegramChannelParser.IsTelegramHost(
+                Uri.TryCreate(sourceDraft.SourceUrl, UriKind.Absolute, out var sourceUri) ? sourceUri.Host : null);
+            TitleBox.Text = isTelegramDraft ? "" : sourceDraft.Title;
             ContentBox.Text = sourceDraft.Content;
             SourceInfo.Text = string.IsNullOrWhiteSpace(sourceDraft.SourceUrl) ? "来源：手动素材" : $"来源：{sourceDraft.SourceUrl}";
             SourceInfo.Visibility = Visibility.Visible;
             Heading.Text = "发布内容草稿";
             Description.Text = "来源信息仅供核对，不会自动加入帖子正文。";
+            if (isTelegramDraft)
+            {
+                TitleLabel.Visibility = Visibility.Collapsed;
+                TitleBox.Visibility = Visibility.Collapsed;
+                Description.Text = "TG 采集内容固定发布为短帖子；来源信息仅供核对，不会自动加入帖子正文。";
+            }
+            if (sourceDraft.Media.Count > 0 && _feedType != FeedType.Text)
+            {
+                MediaPanel.Visibility = Visibility.Visible;
+                MediaFilesText.Text = string.Join("、", sourceDraft.Media.Select(DisplayMediaSource));
+                MediaFilesText.ToolTip = string.Join(Environment.NewLine, sourceDraft.Media);
+                SelectMediaButton.IsEnabled = false;
+                Description.Text = isTelegramDraft
+                    ? "TG 采集内容固定发布为短帖子；草稿自带的本地媒体将作为附件上传。来源信息仅供核对。"
+                    : "来源信息仅供核对；草稿自带的本地媒体将作为附件上传。";
+            }
         }
         if (sourceMaterial is not null)
         {
@@ -201,7 +219,7 @@ public partial class PublishDialog : Window
     {
         var guild = GuildCombo.SelectedItem as ChannelChoice;
         var channel = ChannelCombo.SelectedItem as ChannelChoice;
-        var sourceMedia = _sourceMaterial?.MediaLinks ?? _mediaPaths;
+        var sourceMedia = _sourceMaterial?.MediaLinks ?? (_sourceDraft?.Media is { Count: > 0 } draftMedia ? draftMedia : _mediaPaths);
         var previewRequest = new PublishRequest(guild?.Id ?? "", channel?.Id ?? "", ContentBox.Text, TitleBox.Text, _feedType, sourceMedia);
         var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest, allowUnknownSources: true);
         if (validation.Length > 0)
@@ -212,7 +230,7 @@ public partial class PublishDialog : Window
 
         var media = previewRequest.MediaPaths.Count == 0 ? "（无）" : string.Join("\n", previewRequest.MediaPaths.Select(DisplayMediaSource));
         var confirmation = MessageBox.Show(this,
-            $"将发布一条真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")} Feed：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{previewRequest.Content}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
+            $"将发布一条真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")} Feed：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{(string.IsNullOrWhiteSpace(previewRequest.Content) ? "（无正文）" : previewRequest.Content)}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
             "确认真实发帖", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirmation != MessageBoxResult.Yes) return;
 

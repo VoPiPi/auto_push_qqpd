@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private readonly SystemSettingsStore _settingsStore = new();
     private readonly MediaStorageService _mediaStorage;
     private readonly ContentLibraryStore _contentLibrary;
+    private readonly ProxyPoolStore _proxyPoolStore;
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
     private readonly UpdateCheckService _updateCheckService = new();
@@ -61,6 +62,7 @@ public partial class MainWindow : Window
         _channelCache = new ChannelCacheStore(accountContext: _accountContext);
         _historyStore = new PublishHistoryStore(accountContext: _accountContext);
         _contentLibrary = new ContentLibraryStore(accountContext: _accountContext);
+        _proxyPoolStore = new ProxyPoolStore();
         _mediaStorage = new MediaStorageService(_settingsStore);
         _channelSync = new ChannelSyncService(_workflow, _channelCache);
         _publisher = new PublishExecutionService(_workflow, _historyStore, _mediaStorage, _logger);
@@ -68,7 +70,8 @@ public partial class MainWindow : Window
             _settingsStore,
             _channelCache,
             _contentLibrary,
-            _historyStore);
+            _historyStore,
+            _proxyPoolStore);
         _scheduler = new PublishScheduler(
             _contentLibrary,
             _publisher,
@@ -76,12 +79,12 @@ public partial class MainWindow : Window
             GetScheduleEnvironmentAsync,
             _logger);
         _historyPage = new HistoryPage(_historyStore);
-        _contentCollectionPage = new ContentCollectionPage(_contentLibrary);
+        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore);
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _settingPage = new SettingPage(_settingsStore, _mediaStorage, _ffmpegManager);
         _dashboardService = new DashboardService(_contentLibrary, _historyStore, _settingsStore);
-        _operationsCenterPage = new OperationsCenterPage(_dashboardService, _runtimeSession);
+        _operationsCenterPage = new OperationsCenterPage(_dashboardService, _runtimeSession, _channelSync, _publisher);
         _logPage = new LogPage();
         _settingPage.SettingsChanged += SettingPage_SettingsChanged;
         _settingPage.UpdateCheckRequested += SettingPage_UpdateCheckRequested;
@@ -106,7 +109,6 @@ public partial class MainWindow : Window
         _operationsCenterPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
         _operationsCenterPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
         _operationsCenterPage.LoginRequested += async (_, _) => await LoginAsync();
-        _operationsCenterPage.PublishRequested += type => _ = OpenPublishDialogAsync(type);
         _logPage.DebugModeChanged += DebugMode_Changed;
         _scheduler.StatusChanged += Scheduler_StatusChanged;
         _contentCollectionPage.PublishDraftRequested += draft => _ = OpenDraftPublishDialogAsync(draft);
@@ -334,13 +336,15 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _operationsCenterPage.SetFooter("扫码授权成功，正在同步频道和版块…");
+            _operationsCenterPage.SetFooter("扫码授权成功，正在检查频道缓存…");
             await RefreshDiagnosticsAsync();
             await RecordLoginSessionAsync();
-            var sync = await _channelSync.SynchronizeAsync(new Progress<string>(_operationsCenterPage.SetFooter));
-            _operationsCenterPage.SetFooter(sync.Succeeded
-                ? $"频道数据已同步：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块"
-                : $"频道数据同步失败，发布已禁用：{sync.Error}");
+            var sync = await _channelSync.EnsureFreshAsync(new Progress<string>(_operationsCenterPage.SetFooter));
+            _operationsCenterPage.SetFooter(sync.Skipped
+                ? "频道缓存仍在 6 小时有效期内，继续使用本地数据。"
+                : sync.Succeeded
+                    ? $"频道数据已更新：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块"
+                    : $"频道数据更新失败，发布已禁用：{sync.Error}");
             await RestartSchedulerAsync();
         }
         finally
@@ -422,7 +426,6 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
         if (dialog.Result is { } result)
         {
-            _operationsCenterPage.SetFeedResult(type, result);
             var details = result.Message;
             if (!string.IsNullOrWhiteSpace(result.Url)) details += $"\n帖子链接：{result.Url}";
             if (!string.IsNullOrWhiteSpace(result.PostId)) details += $"\n帖子 ID：{result.PostId}";
@@ -444,12 +447,14 @@ public partial class MainWindow : Window
             return Task.CompletedTask;
         }
 
-        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, FeedType.Text, draft, _contentLibrary, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _operationsCenterPage.SetFooter("正在从草稿箱打开文本发布窗口…");
+        var mediaType = MaterialMediaValidator.InferType(draft.Media) switch { "image" => FeedType.Image, "video" => FeedType.Video, _ => FeedType.Text };
+        if (draft.Media.Count > 0 && mediaType == FeedType.Text)
+            MessageBox.Show(this, "该草稿的媒体类型无法识别或混合了图片与视频，本次只发布文字，媒体不会随帖子发送。", "媒体未附加", MessageBoxButton.OK, MessageBoxImage.Information);
+        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, mediaType, draft, _contentLibrary, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
+        _operationsCenterPage.SetFooter(mediaType == FeedType.Text ? "正在从草稿箱打开文本发布窗口…" : "正在从草稿箱打开带媒体的发布窗口…");
         dialog.ShowDialog();
         if (dialog.Result is { } result)
         {
-            _operationsCenterPage.SetFeedResult(FeedType.Text, result);
             _logger.Info($"草稿发布{(result.Succeeded ? "成功" : "未成功")}：{CliDiagnostics.Sanitize(result.Message)}");
             _operationsCenterPage.SetFooter(result.Succeeded ? "草稿发布成功" : $"草稿发布失败：{result.Category}");
             _ = _contentCollectionPage.LoadDraftsAsync();
@@ -961,6 +966,7 @@ public partial class MainWindow : Window
         _settingPage.SettingsChanged -= SettingPage_SettingsChanged;
         _settingPage.UpdateCheckRequested -= SettingPage_UpdateCheckRequested;
         _trayIcon?.Dispose();
+        WebProxyPageFetcher.Default.Dispose();
         base.OnClosed(e);
     }
 

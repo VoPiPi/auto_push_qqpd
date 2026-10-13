@@ -91,10 +91,40 @@ public sealed class AppLogger
         });
     }
 
+    private void WriteLogFileSynchronously(string entry)
+    {
+        try
+        {
+            Directory.CreateDirectory(_logDirectory);
+            lock (FileLock)
+            {
+                File.AppendAllText(Path.Combine(_logDirectory, $"{DateTime.Now:yyyy-MM-dd}.log"), entry + Environment.NewLine);
+            }
+        }
+        catch (Exception ex)
+        {
+            // The process may be terminating, so never let a logging failure mask the original exception.
+            try { Console.Error.WriteLine($"无法写入异常日志：{ex.Message}\n{entry}"); } catch { }
+        }
+    }
+
     public void Info(string message) => Write(message, LogLevel.Info, detail: false);
     public void Warning(string message) => Write(message, LogLevel.Warning, detail: false);
     public void Error(string message) => Write(message, LogLevel.Error, detail: false);
     public void Debug(string message) => Write(message, LogLevel.Debug, detail: true);
+
+    public void WriteException(string context, Exception exception, bool terminating = false)
+    {
+        var suffix = terminating ? "（进程正在终止）" : string.Empty;
+        var details = FormatException(exception);
+        var safeContext = Redact(context ?? string.Empty);
+        var entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [Error] {safeContext}{suffix}\n{details}";
+
+        // UnhandledException runs on the termination path. Do not queue this write on the thread pool.
+        WriteLogFileSynchronously(entry);
+        AddSessionEntry(LogLevel.Error, entry);
+        RaiseEntryWrittenSafely(RedactErrorCodes(entry), LogLevel.Error);
+    }
 
     public void CliResult(string operation, int? exitCode, string standardOutput, string standardError)
     {
@@ -112,7 +142,26 @@ public sealed class AppLogger
 
         AddSessionEntry(level, entry);
 
-        if (DebugEnabled || level != LogLevel.Debug) EntryWritten?.Invoke(RedactErrorCodes(entry));
+        if (DebugEnabled || level != LogLevel.Debug) RaiseEntryWrittenSafely(RedactErrorCodes(entry), level);
+    }
+
+    private void RaiseEntryWrittenSafely(string entry, LogLevel level)
+    {
+        if (!DebugEnabled && level == LogLevel.Debug) return;
+        foreach (var subscriber in EntryWritten?.GetInvocationList() ?? Array.Empty<Delegate>())
+        {
+            try { ((Action<string>)subscriber)(entry); } catch { }
+        }
+    }
+
+    internal static string FormatException(Exception exception)
+    {
+        var parts = new List<string>();
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            parts.Add($"异常类型：{current.GetType().FullName}\n异常消息：{current.Message}\n堆栈：{current.StackTrace ?? "（无堆栈）"}");
+        }
+        return Redact(string.Join("\n--- InnerException ---\n", parts));
     }
 
     private void AddSessionEntry(LogLevel level, string entry)

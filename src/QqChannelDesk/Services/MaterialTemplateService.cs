@@ -245,7 +245,6 @@ public static class MaterialTemplateService
     {
         ArgumentNullException.ThrowIfNull(currentTargets);
         var errors = new List<string>();
-        if (row.Content.Trim().Length == 0) errors.Add("正文不能为空");
         var media = row.MediaLinks.Where(link => !string.IsNullOrWhiteSpace(link)).ToArray();
         var detectedType = MaterialMediaValidator.InferType(media);
         var type = ResolveImportType(detectedType, media, errors);
@@ -253,7 +252,7 @@ public static class MaterialTemplateService
         var target = ResolveTarget(currentTargets, row.GuildName.Trim(), row.ChannelName.Trim(), errors);
         if (type is ("text" or "image" or "video"))
         {
-            var mediaError = MaterialMediaValidator.Validate(type, row.Title.Trim(), media);
+            var mediaError = MaterialMediaValidator.ValidatePost(type, row.Title.Trim(), row.Content, media);
             if (mediaError.Length > 0) errors.Add(mediaError);
         }
 

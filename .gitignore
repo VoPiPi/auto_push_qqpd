@@ -31,6 +31,14 @@ src/QqChannelDesk/tools/media-cache/
 .env.*
 *.local.json
 
+# Temporary WebView2 and proxy investigation output
+edge-test-*/
+coproxy-edge-dom.html
+coproxy-post-live.html
+lumi-dom.txt
+proxy-post-test.html
+temp-lumi-dom.html
+
 # Operating system files
 .DS_Store
 Thumbs.db

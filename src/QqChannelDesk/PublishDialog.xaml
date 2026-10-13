@@ -21,9 +21,9 @@
             <TextBlock Grid.Row="1" Text="发布版块" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,10" />
             <ComboBox x:Name="ChannelCombo" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,10,10" DisplayMemberPath="DisplayName" />
             <Button x:Name="RefreshButton" Grid.Row="1" Grid.Column="3" Content="刷新频道数据" Style="{StaticResource QuietButton}" Margin="0,0,0,10" Click="RefreshButton_Click" />
-            <TextBlock Grid.Row="2" Text="帖子标题" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,10" />
+            <TextBlock x:Name="TitleLabel" Grid.Row="2" Text="帖子标题" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,10" />
             <TextBox x:Name="TitleBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,10" />
-            <TextBlock Grid.Row="3" Text="帖子正文" Foreground="{StaticResource Muted}" VerticalAlignment="Top" Margin="0,7,10,10" />
+            <TextBlock Grid.Row="3" Text="帖子正文（可选；无媒体时必填）" Foreground="{StaticResource Muted}" VerticalAlignment="Top" Margin="0,7,10,10" />
             <TextBox x:Name="ContentBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" MinHeight="130" MaxHeight="220" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Margin="0,0,0,10" />
             <StackPanel x:Name="MediaPanel" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,10">
               <Button x:Name="SelectMediaButton" Content="选择媒体文件" Style="{StaticResource QuietButton}" Click="SelectMediaButton_Click" />

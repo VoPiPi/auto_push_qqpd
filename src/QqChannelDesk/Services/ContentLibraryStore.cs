@@ -41,6 +41,7 @@ public sealed class ContentLibraryStore
                     Notes TEXT NOT NULL DEFAULT '',
                     TagsJson TEXT NOT NULL DEFAULT '[]',
                     ParseError TEXT NOT NULL DEFAULT '',
+                    MediaJson TEXT NOT NULL DEFAULT '[]',
                     AccountKey TEXT NULL
                 );
                 DROP INDEX IF EXISTS UX_CollectedItems_Url;
@@ -56,6 +57,7 @@ public sealed class ContentLibraryStore
                     UpdatedAt TEXT NOT NULL,
                     PublishCount INTEGER NOT NULL DEFAULT 0,
                     LastPublishedAt TEXT NULL,
+                    MediaJson TEXT NOT NULL DEFAULT '[]',
                     AccountKey TEXT NULL,
                     FOREIGN KEY (CollectedItemId) REFERENCES CollectedItems(Id) ON DELETE SET NULL
                 );
@@ -109,6 +111,8 @@ public sealed class ContentLibraryStore
             await EnsureAccountKeyColumnAsync(connection, "ContentDrafts", cancellationToken);
             await EnsureAccountKeyColumnAsync(connection, "Materials", cancellationToken);
             await EnsureAccountKeyColumnAsync(connection, "ScheduleExecutions", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
+            await EnsureColumnAsync(connection, "ContentDrafts", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -121,8 +125,8 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, AccountKey)
-            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error, $accountKey);
+            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson, AccountKey)
+            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error, $media, $accountKey);
             SELECT last_insert_rowid();
             """;
         AddItemParameters(command, item);
@@ -139,7 +143,7 @@ public sealed class ContentLibraryStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE CollectedItems SET Url=$url, SourceHost=$host, Title=$title, Content=$content,
-                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error WHERE Id=$id AND ACCOUNT_SCOPE;
+                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error, MediaJson=$media WHERE Id=$id AND ACCOUNT_SCOPE;
             """;
         command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         AddItemParameters(command, item, includeCollectedAt: false);
@@ -156,7 +160,7 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError FROM CollectedItems WHERE Url=$url AND {AccountScope("AccountKey")} ORDER BY Id LIMIT 1";
+        command.CommandText = $"SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson FROM CollectedItems WHERE Url=$url AND {AccountScope("AccountKey")} ORDER BY Id LIMIT 1";
         command.Parameters.AddWithValue("$url", normalizedUrl);
         AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -171,7 +175,7 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError
+            SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson
             FROM CollectedItems
             WHERE ACCOUNT_SCOPE
               AND ($status='' OR Status=$status)
@@ -202,7 +206,7 @@ public sealed class ContentLibraryStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task<long> CreateDraftAsync(long? itemId, string title, string content, string sourceUrl, CancellationToken cancellationToken = default)
+    public async Task<long> CreateDraftAsync(long? itemId, string title, string content, string sourceUrl, IReadOnlyList<string>? media = null, CancellationToken cancellationToken = default)
     {
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
@@ -218,8 +222,8 @@ public sealed class ContentLibraryStore
         }
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ContentDrafts (CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
-            VALUES ($itemId, $title, $content, $url, $now, $now, $accountKey);
+            INSERT INTO ContentDrafts (CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, MediaJson, AccountKey)
+            VALUES ($itemId, $title, $content, $url, $now, $now, $media, $accountKey);
             SELECT last_insert_rowid();
             """;
         command.Parameters.AddWithValue("$itemId", (object?)itemId ?? DBNull.Value);
@@ -227,6 +231,7 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$content", content.Trim());
         command.Parameters.AddWithValue("$url", sourceUrl.Trim());
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
+        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(media ?? []));
         AddAccountParameter(command, accountKey);
         var id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
         if (itemId is not null) await SetItemStatusAsync(itemId.Value, "已转草稿", cancellationToken);
@@ -239,10 +244,11 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE ContentDrafts SET Title=$title, Content=$content, SourceUrl=$url, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
+        command.CommandText = $"UPDATE ContentDrafts SET Title=$title, Content=$content, SourceUrl=$url, MediaJson=$media, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$title", draft.Title.Trim());
         command.Parameters.AddWithValue("$content", draft.Content.Trim());
         command.Parameters.AddWithValue("$url", draft.SourceUrl.Trim());
+        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(draft.Media));
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", draft.Id);
         AddAccountParameter(command, accountKey);
@@ -256,7 +262,7 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, PublishCount, LastPublishedAt FROM ContentDrafts WHERE {AccountScope("AccountKey")} AND ($q='' OR Title LIKE $p OR Content LIKE $p OR SourceUrl LIKE $p) ORDER BY UpdatedAt DESC, Id DESC";
+        command.CommandText = $"SELECT Id, CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, PublishCount, LastPublishedAt, MediaJson FROM ContentDrafts WHERE {AccountScope("AccountKey")} AND ($q='' OR Title LIKE $p OR Content LIKE $p OR SourceUrl LIKE $p) ORDER BY UpdatedAt DESC, Id DESC";
         var query = keyword?.Trim() ?? "";
         command.Parameters.AddWithValue("$q", query);
         command.Parameters.AddWithValue("$p", $"%{query}%");
@@ -264,7 +270,7 @@ public sealed class ContentLibraryStore
         var drafts = new List<ContentDraft>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            drafts.Add(new ContentDraft(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), DateTimeOffset.Parse(reader.GetString(6)), reader.GetInt32(7), reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8))));
+            drafts.Add(new ContentDraft(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), DateTimeOffset.Parse(reader.GetString(6)), reader.GetInt32(7), reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8)), reader.IsDBNull(9) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(9)) ?? []));
         return drafts;
     }
 
@@ -357,6 +363,8 @@ public sealed class ContentLibraryStore
     public async Task<long> SaveMaterialAsync(MaterialDraft material, CancellationToken cancellationToken = default)
     {
         ValidateMaterial(material);
+        var contentError = MaterialMediaValidator.ValidatePost(material.Type, material.Title, material.Content, material.MediaLinks);
+        if (contentError.Length > 0) throw new ArgumentException(contentError, nameof(material));
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
@@ -450,8 +458,9 @@ public sealed class ContentLibraryStore
         foreach (var material in materials)
         {
             ValidateMaterial(material);
-            if (string.IsNullOrWhiteSpace(material.Content))
-                throw new ArgumentException("素材正文不能为空。", nameof(materials));
+            var contentError = MaterialMediaValidator.ValidatePost(material.Type, material.Title, material.Content, material.MediaLinks);
+            if (contentError.Length > 0)
+                throw new ArgumentException(contentError, nameof(materials));
             if (material.Status == "published")
                 throw new ArgumentException("批量导入不允许直接写入已发布状态。", nameof(materials));
         }
@@ -822,13 +831,23 @@ public sealed class ContentLibraryStore
         string tableName,
         CancellationToken cancellationToken)
     {
+        await EnsureColumnAsync(connection, tableName, "AccountKey", "TEXT NULL", cancellationToken);
+    }
+
+    private static async Task EnsureColumnAsync(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string definition,
+        CancellationToken cancellationToken)
+    {
         await using var command = connection.CreateCommand();
         command.CommandText = $"PRAGMA table_info({tableName})";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var found = false;
         while (await reader.ReadAsync(cancellationToken))
         {
-            if (string.Equals(reader.GetString(1), "AccountKey", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
             {
                 found = true;
                 break;
@@ -838,7 +857,7 @@ public sealed class ContentLibraryStore
         if (found) return;
         await reader.DisposeAsync();
         await using var alter = connection.CreateCommand();
-        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN AccountKey TEXT NULL";
+        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
         await alter.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -895,9 +914,10 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$notes", item.Notes.Trim());
         command.Parameters.AddWithValue("$tags", JsonSerializer.Serialize(item.Tags));
         command.Parameters.AddWithValue("$error", item.ParseError.Trim());
+        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(item.Media));
     }
 
-    private static CollectedItem ReadItem(SqliteDataReader reader) => new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), reader.GetString(6), reader.GetString(7), JsonSerializer.Deserialize<string[]>(reader.GetString(8)) ?? [], reader.GetString(9));
+    private static CollectedItem ReadItem(SqliteDataReader reader) => new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), reader.GetString(6), reader.GetString(7), JsonSerializer.Deserialize<string[]>(reader.GetString(8)) ?? [], reader.GetString(9), reader.IsDBNull(10) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? []);
     private async Task<SqliteConnection> OpenAsync(CancellationToken token)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -915,14 +935,19 @@ public sealed class ContentLibraryStore
     }
 }
 
-public sealed record CollectedItemDraft(string Url, string SourceHost, string Title, string Content, string Status = "待处理", string Notes = "", IReadOnlyList<string>? TagList = null, string ParseError = "", long? Id = null)
+public sealed record CollectedItemDraft(string Url, string SourceHost, string Title, string Content, string Status = "待处理", string Notes = "", IReadOnlyList<string>? TagList = null, string ParseError = "", long? Id = null, IReadOnlyList<string>? MediaList = null)
 {
     public IReadOnlyList<string> Tags => TagList ?? [];
+    public IReadOnlyList<string> Media => MediaList ?? [];
 }
-public sealed record CollectedItem(long Id, string Url, string SourceHost, string Title, string Content, DateTimeOffset CollectedAt, string Status, string Notes, IReadOnlyList<string> Tags, string ParseError);
-public sealed record ContentDraft(long Id, long? CollectedItemId, string Title, string Content, string SourceUrl, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int PublishCount, DateTimeOffset? LastPublishedAt)
+public sealed record CollectedItem(long Id, string Url, string SourceHost, string Title, string Content, DateTimeOffset CollectedAt, string Status, string Notes, IReadOnlyList<string> Tags, string ParseError, IReadOnlyList<string> Media)
+{
+    public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个（{string.Join("、", Media.Select(Path.GetFileName))}）";
+}
+public sealed record ContentDraft(long Id, long? CollectedItemId, string Title, string Content, string SourceUrl, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int PublishCount, DateTimeOffset? LastPublishedAt, IReadOnlyList<string> Media)
 {
     public string PublishStatus => PublishCount > 0 ? $"已发布 {PublishCount} 次" : "未发布";
+    public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个";
 }
 public sealed record MaterialDraft(long? Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks);
 public sealed record MaterialRecord(long Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)

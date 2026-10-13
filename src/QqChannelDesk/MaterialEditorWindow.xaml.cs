@@ -157,11 +157,6 @@ public partial class MaterialEditorWindow : Window
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
         var links = ParseMediaLinks();
-        if (content.Length == 0)
-        {
-            FormMessage.Text = "请填写帖子正文。";
-            return;
-        }
         var detectedType = MaterialMediaValidator.InferType(links);
         if (detectedType is null)
         {
@@ -170,7 +165,7 @@ public partial class MaterialEditorWindow : Window
         }
 
         var type = detectedType;
-        var mediaError = MaterialMediaValidator.Validate(type, title, links);
+        var mediaError = MaterialMediaValidator.ValidatePost(type, title, content, links);
         if (mediaError.Length > 0) { FormMessage.Text = mediaError; return; }
 
         var storedLinks = new List<string>(links.Count);

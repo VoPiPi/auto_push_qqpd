@@ -48,7 +48,8 @@ public sealed class PublishExecutionService : IPublishExecutor
             sourceRequest.ChannelId,
             channelName,
             sourceRequest.Title.Trim(),
-            sourceRequest.MediaPaths.Select(GetMediaName).ToArray()), cancellationToken);
+            sourceRequest.MediaPaths.Select(GetMediaName).ToArray(),
+            sourceRequest.Content), cancellationToken);
 
         if (sourceValidation.Length > 0)
         {

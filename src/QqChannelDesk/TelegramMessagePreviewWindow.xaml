@@ -1,0 +1,36 @@
+<Window x:Class="QqChannelDesk.TelegramMessagePreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="消息预览" Width="840" Height="620" MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Canvas}">
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <StackPanel Grid.Row="0" Margin="0,0,0,14">
+      <TextBlock x:Name="TitleText" Style="{StaticResource PageTitle}" TextWrapping="Wrap" Visibility="Collapsed"/>
+      <TextBlock x:Name="MetaText" Foreground="{StaticResource Muted}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+      <TextBlock x:Name="LinkText" Foreground="{StaticResource TableLink}" Margin="0,6,0,0" TextWrapping="Wrap" Cursor="Hand" ToolTip="点击复制原帖链接" MouseLeftButtonUp="LinkText_MouseLeftButtonUp"/>
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <TextBlock x:Name="ContentText" TextWrapping="Wrap"/>
+        <TextBlock Text="媒体" Style="{StaticResource SectionTitle}" Margin="0,18,0,6"/>
+        <TextBlock x:Name="MediaHint" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+        <WrapPanel x:Name="ImagePanel" Orientation="Horizontal" Margin="0,10,0,0"/>
+      </StackPanel>
+    </ScrollViewer>
+    <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+    <DockPanel Grid.Row="3" Margin="0,16,0,0">
+      <Button x:Name="LoadImagesButton" Content="加载图片" Style="{StaticResource QuietButton}" VerticalAlignment="Center" Click="LoadImagesButton_Click"/>
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button x:Name="DeleteButton" Content="删除" Width="86" Click="DeleteButton_Click"/>
+        <Button Content="关闭" IsCancel="True" Width="86" Margin="8,0,0,0"/>
+        <Button x:Name="DraftButton" Content="转为草稿" Style="{StaticResource PrimaryButton}" Width="104" Margin="8,0,0,0" Click="DraftButton_Click"/>
+      </StackPanel>
+    </DockPanel>
+  </Grid>
+</Window>

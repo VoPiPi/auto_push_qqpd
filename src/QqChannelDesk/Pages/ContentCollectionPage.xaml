@@ -3,9 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-    <DockPanel Grid.Row="0" Margin="0,0,0,14">
-      <TextBlock Text="公开网页内容先进入本地收件箱；保存或发布前请确认内容使用权限。" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
-      <TextBlock DockPanel.Dock="Right" Text="不下载媒体 · 不自动发布" Foreground="{StaticResource Info}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+    <DockPanel Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="内容采集" Style="{StaticResource PageTitle}"/>
+                <TextBlock Text="公开网页内容先进入本地收件箱；保存或发布前请确认内容使用权限。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/>
+            </StackPanel>
     </DockPanel>
     <TabControl Grid.Row="1" x:Name="WorkspaceTabs">
       <TabItem Header="内容收件箱">
@@ -60,6 +62,7 @@
               <TextBox x:Name="ItemNotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" VerticalContentAlignment="Top"/>
               <TextBlock Text="标签（用逗号分隔）" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
               <TextBox x:Name="ItemTagsBox"/>
+              <TextBlock x:Name="ItemMediaInfo" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
               <TextBlock x:Name="ItemMessage" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,9,0,0"/>
               <WrapPanel Margin="0,12,0,0">
                 <Button Content="保存修改" Style="{StaticResource QuietButton}" Click="SaveItemButton_Click"/>
@@ -88,6 +91,7 @@
                 <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="155" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="发布状态" Binding="{Binding PublishStatus}" Width="90" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="媒体" Binding="{Binding MediaSummary}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
               </DataGrid.Columns>
             </DataGrid>
@@ -119,6 +123,184 @@
               </WrapPanel>
             </StackPanel>
           </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem Header="tg 临时采集">
+        <Grid Margin="12,4,12,12">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="TgChannelBox" IsEditable="True" VerticalContentAlignment="Center" ToolTip="输入 tg 频道地址或 @频道名，如 t.me/频道名"/>
+                <TextBox x:Name="TgLimitBox" Grid.Column="1" Width="64" VerticalContentAlignment="Center" ToolTip="单次采集数量上限，留空为全部" Margin="8,0,0,0"/>
+                <ComboBox x:Name="TgProxyBox" Grid.Column="2" Width="180" IsEditable="True" IsTextSearchEnabled="False" VerticalContentAlignment="Center" DisplayMemberPath="DisplayName" SelectedValuePath="Value" ToolTip="选择系统网页代理，或输入自定义代理地址" Margin="8,0,0,0"/>
+                <TextBox x:Name="TgKeywordBox" Grid.Column="3" Width="150" VerticalContentAlignment="Center" ToolTip="关键词过滤：标题或正文包含才入列，留空为不过滤" Margin="8,0,0,0"/>
+                <Button x:Name="TgCollectButton" Grid.Column="4" Content="开始采集" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="TgCollectButton_Click"/>
+                <Button x:Name="TgCancelButton" Grid.Column="5" Content="取消" Style="{StaticResource QuietButton}" Margin="8,0,0,0" IsEnabled="False" Click="TgCancelButton_Click"/>
+              </Grid>
+              <TextBlock Grid.Row="1" Text="采集结果仅临时展示在列表中，不会自动保存；点「草稿」后才下载媒体并加入草稿箱。" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="TgSelectionText" Text="共 0 条消息" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+              <Button x:Name="TgSelectAllButton" Content="全选" Style="{StaticResource QuietButton}" Margin="14,0,0,0" Click="TgSelectAllButton_Click"/>
+              <Button x:Name="TgInvertButton" Content="反选" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgInvertButton_Click"/>
+              <Button x:Name="TgBatchDraftButton" Content="批量草稿" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="TgBatchDraftButton_Click"/>
+              <Button x:Name="TgBatchDeleteButton" Content="批量删除" Margin="8,0,0,0" Click="TgBatchDeleteButton_Click"/>
+              <Button x:Name="TgClearButton" Content="清空列表" Margin="8,0,0,0" Click="TgClearButton_Click"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="打开 temp 目录" Style="{StaticResource QuietButton}" Click="TgOpenTempButton_Click" VerticalAlignment="Center"/>
+          </Grid>
+          <Grid Grid.Row="2">
+            <DataGrid x:Name="TgGrid" AutoGenerateColumns="False" IsReadOnly="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="Cell" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="44"/>
+                <DataGridTextColumn Header="序号" Binding="{Binding DisplayIndex}" IsReadOnly="True" Width="52" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="内容摘要" Binding="{Binding Summary}" IsReadOnly="True" Width="3*" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="发布时间" Binding="{Binding PublishedAtDisplay}" IsReadOnly="True" Width="96" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="媒体" Binding="{Binding MediaSummary}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="来源" Binding="{Binding Channel}" IsReadOnly="True" Width="84" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="状态" Binding="{Binding StatusLabel}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="190" IsReadOnly="True">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Orientation="Horizontal">
+                        <Button Content="查看" Style="{StaticResource QuietButton}" Width="52" Padding="0" Click="TgViewButton_Click"/>
+                        <Button Content="删除" Style="{StaticResource QuietButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDeleteRowButton_Click"/>
+                        <Button Content="草稿" Style="{StaticResource PrimaryButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDraftRowButton_Click" IsEnabled="{Binding CanDraft}"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock x:Name="TgEmptyHint" Text="输入频道地址后点「开始采集」，结果会临时展示在列表中；点「草稿」后才下载媒体并加入草稿箱。" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Width="380" TextAlignment="Center" Visibility="Collapsed"/>
+          </Grid>
+          <TextBlock x:Name="TgStatusText" Grid.Row="3" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+        </Grid>
+      </TabItem>
+      <TabItem Header="代理池">
+        <Grid Margin="12,4,12,12">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBlock Text="代理源" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <ComboBox x:Name="ProxySourceBox" Grid.Column="1" DisplayMemberPath="DisplayName" SelectedValuePath="Id" VerticalContentAlignment="Center" SelectionChanged="ProxySourceBox_SelectionChanged" ToolTip="选择代理源"/>
+              <Button x:Name="ProxyAddSourceButton" Grid.Column="2" Content="新增源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyAddSourceButton_Click"/>
+              <Button x:Name="ProxyEditSourceButton" Grid.Column="3" Content="编辑源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyEditSourceButton_Click"/>
+              <Button x:Name="ProxyDeleteSourceButton" Grid.Column="4" Content="删除源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyDeleteSourceButton_Click"/>
+              <StackPanel Grid.Row="1" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,10,0,0">
+                <TextBlock Text="测活并发" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+                <TextBox x:Name="ProxyConcurrencyBox" Width="54" Margin="8,0,0,0" VerticalContentAlignment="Center" ToolTip="测活并发数，1-50"/>
+                <Button x:Name="ProxyFetchButton" Content="获取代理" Style="{StaticResource PrimaryButton}" Margin="14,0,0,0" Click="ProxyFetchButton_Click" ToolTip="从当前代理源读取最新节点"/>
+                <Button x:Name="ProxyHealthButton" Content="批量测活" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyHealthButton_Click" ToolTip="测活已勾选节点；未勾选时测活全部节点"/>
+                <TextBlock Text="仅保留 HTTP / HTTPS · 测活使用 WebProxy · TG 验证单独执行" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="ProxyPoolSummaryText" Text="请选择代理源" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+              <Border Background="{StaticResource AccentSoft}" CornerRadius="9" Padding="9,2" Margin="16,0,0,0" VerticalAlignment="Center">
+                <TextBlock x:Name="ProxySelectionText" Text="已选 0 个" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+              </Border>
+              <Button x:Name="ProxySelectAllButton" Content="全选" Style="{StaticResource QuietButton}" Padding="10,3" Margin="10,0,0,0" Click="ProxySelectAllButton_Click" ToolTip="选中当前代理源的全部节点"/>
+              <Button x:Name="ProxyInvertButton" Content="反选" Style="{StaticResource QuietButton}" Padding="10,3" Margin="6,0,0,0" Click="ProxyInvertButton_Click" ToolTip="反转当前所有节点的选中状态"/>
+              <Button x:Name="ProxyClearSelectionButton" Content="清除选择" Style="{StaticResource QuietButton}" Padding="10,3" Margin="6,0,0,0" Click="ProxyClearSelectionButton_Click" ToolTip="取消所有节点的选择"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <Button x:Name="ProxyCheckTgButton" Content="验证选中 TG" Style="{StaticResource PrimaryButton}" Click="ProxyCheckTgButton_Click" ToolTip="用选中的节点访问 TG 频道并解析消息"/>
+              <Button x:Name="ProxyRefreshButton" Content="刷新" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyRefreshButton_Click"/>
+            </StackPanel>
+          </Grid>
+          <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="节点总数" Foreground="{StaticResource Muted}"/><TextBlock x:Name="ProxyTotalCountText" Text="-" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="1" Background="{StaticResource AccentSoft}" BorderBrush="{StaticResource AccentSoft}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="可用节点" Foreground="{StaticResource Accent}"/><TextBlock x:Name="ProxyAliveCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="2" Background="{StaticResource WarnSoft}" BorderBrush="{StaticResource WarnSoft}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="待测节点" Foreground="{StaticResource Warn}"/><TextBlock x:Name="ProxyUncheckedCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Warn}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="3" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoSoft}" BorderThickness="1" CornerRadius="5" Padding="12">
+              <StackPanel><TextBlock Text="TG 可访问" Foreground="{StaticResource Info}"/><TextBlock x:Name="ProxyTgCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Info}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+          </Grid>
+          <Grid Grid.Row="3">
+            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" IsReadOnly="False" HeadersVisibility="Column" RowHeight="34" ColumnHeaderHeight="38" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" Focusable="False" Click="ProxyNodeSelectionCheckBox_Click" ToolTip="选择此节点"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="代理地址" Binding="{Binding Address}" Width="2.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="协议" Binding="{Binding Scheme}" Width="55" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="端口" Binding="{Binding Port}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="源国家" Binding="{Binding SourceCountry}" Width="65" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="出口 IP" Binding="{Binding ExitIp}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="国家" Binding="{Binding Country}" Width="90" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="测活" Width="82">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Background="{Binding StatusBackground}" CornerRadius="9" Padding="8,2" HorizontalAlignment="Left">
+                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusForeground}" FontWeight="SemiBold"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="TG" Width="112">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Background="{Binding TgStatusBackground}" CornerRadius="9" Padding="8,2" HorizontalAlignment="Left">
+                        <TextBlock Text="{Binding TgStatus}" Foreground="{Binding TgStatusForeground}" FontWeight="SemiBold"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="最后测活" Binding="{Binding LastChecked}" Width="95" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="最近错误" Binding="{Binding Error}" Width="2.3*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="120">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Orientation="Horizontal">
+                        <Button Content="测活" Style="{StaticResource QuietButton}" Padding="5,2" Click="ProxyRowHealthButton_Click"/>
+                        <Button Content="TG" Style="{StaticResource QuietButton}" Padding="5,2" Margin="5,0,0,0" Click="ProxyRowTgButton_Click"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+            <StackPanel x:Name="ProxyEmptyHint" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+              <TextBlock Text="当前代理源还没有节点" Foreground="{StaticResource Ink}" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Text="点击上方“获取代理”读取节点，协议不符合 HTTP / HTTPS 的记录会自动过滤。" Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock x:Name="ProxyPoolStatusText" Grid.Row="4" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
         </Grid>
       </TabItem>
     </TabControl>

@@ -7,6 +7,22 @@ public static class MaterialMediaValidator
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"];
 
+    public static string ValidateContent(string content, IReadOnlyList<string> media) =>
+        string.IsNullOrWhiteSpace(content) && !media.Any(source => !string.IsNullOrWhiteSpace(source))
+            ? "未提供图片或视频时，必须填写正文。"
+            : "";
+
+    public static string ValidatePost(
+        string type,
+        string title,
+        string content,
+        IReadOnlyList<string> media,
+        bool allowUnknownSources = false)
+    {
+        var mediaError = Validate(type, title, media, allowUnknownSources);
+        return mediaError.Length > 0 ? mediaError : ValidateContent(content, media);
+    }
+
     public static string Validate(
         string type,
         string title,

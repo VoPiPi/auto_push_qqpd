@@ -389,7 +389,7 @@ public sealed class CliWorkflowTests
     [Theory]
     [InlineData("abc", "123", "hello", "频道 ID 必须为数字。")]
     [InlineData("123", "abc", "hello", "版块 ID 必须为数字。")]
-    [InlineData("123", "456", "", "请填写帖子正文。")]
+    [InlineData("123", "456", "", "未提供图片或视频时，必须填写正文。")]
     public void ValidatesPublishRequest(string guildId, string channelId, string content, string expected)
     {
         Assert.Equal(expected, CliWorkflow.ValidatePublishRequest(new PublishRequest(guildId, channelId, content)));
@@ -435,6 +435,57 @@ public sealed class CliWorkflowTests
 
         Assert.Contains("一个视频", missing, StringComparison.Ordinal);
         Assert.Contains("不存在", nonexistent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AppLoggerWriteExceptionPersistsSynchronouslyAndKeepsInnerDetails()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var logger = new AppLogger(directory);
+            Action<string> failingSubscriber = _ => throw new InvalidOperationException("日志订阅者故障");
+            logger.EntryWritten += failingSubscriber;
+
+            var exception = new InvalidOperationException(
+                "TG 请求失败，token=secret-token",
+                new HttpRequestException("代理 cookie=secret-cookie 无效"));
+            logger.WriteException("代理节点 TG 验证异常", exception);
+
+            var logFile = Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log");
+            Assert.True(File.Exists(logFile));
+            var content = File.ReadAllText(logFile);
+            Assert.Contains("代理节点 TG 验证异常", content, StringComparison.Ordinal);
+            Assert.Contains(nameof(InvalidOperationException), content, StringComparison.Ordinal);
+            Assert.Contains("InnerException", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("secret-token", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("secret-cookie", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            var logFile = Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log");
+            if (File.Exists(logFile)) File.Delete(logFile);
+            var logsDirectory = Path.Combine(directory, "logs");
+            if (Directory.Exists(logsDirectory)) Directory.Delete(logsDirectory);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public void AllowsMediaOnlyPostsAndRejectsTitleOnlyPosts()
+    {
+        var image = Path.Combine(Path.GetTempPath(), $"qq-channel-media-only-{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(image, [1, 2, 3]);
+        try
+        {
+            Assert.Empty(CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", Type: FeedType.Image, Files: [image])));
+            Assert.Empty(CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", Type: FeedType.Video, Files: ["https://example.com/video.mp4"])));
+            Assert.Contains("必须填写正文", CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", "只有标题")));
+        }
+        finally
+        {
+            File.Delete(image);
+        }
     }
 
     [Fact]
@@ -634,6 +685,28 @@ public sealed class CliWorkflowTests
             var workflow = new CliWorkflow(scriptPath);
             var result = await workflow.PublishAsync(new PublishRequest("123", "456", content, Type: type, Files: [mediaPath]));
             Assert.True(result.Succeeded);
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+            File.Delete(mediaPath);
+        }
+    }
+
+    [Fact]
+    public async Task OmitsEmptyContentArgumentForMediaOnlyPosts()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"fake-channel-cli-{Guid.NewGuid():N}.js");
+        var mediaPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-media.png");
+        await File.WriteAllTextAsync(mediaPath, "fake media");
+        var script = "const a=process.argv.slice(2);const mi=a.indexOf('--image');const ok=!a.includes('--content')&&mi>=0&&a[mi+1]===" + System.Text.Json.JsonSerializer.Serialize(mediaPath) + ";console.log(JSON.stringify({success:ok,data:{feed_id:'media-only'}}));process.exit(ok?0:1);";
+        await File.WriteAllTextAsync(scriptPath, script);
+        try
+        {
+            var result = await new CliWorkflow(scriptPath).PublishAsync(new PublishRequest("1", "2", "", Type: FeedType.Image, Files: [mediaPath]));
+            Assert.True(result.Succeeded);
+            Assert.Equal("media-only", result.PostId);
         }
         finally
         {

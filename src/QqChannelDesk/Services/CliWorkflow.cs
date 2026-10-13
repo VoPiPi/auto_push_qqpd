@@ -192,13 +192,12 @@ public sealed class CliWorkflow
     {
         if (!Regex.IsMatch(request.GuildId.Trim(), @"^\d+$")) return "频道 ID 必须为数字。";
         if (!Regex.IsMatch(request.ChannelId.Trim(), @"^\d+$")) return "版块 ID 必须为数字。";
-        if (string.IsNullOrWhiteSpace(request.Content)) return "请填写帖子正文。";
         var hasTitle = !string.IsNullOrWhiteSpace(request.Title);
         var contentLimit = hasTitle ? 10000 : 1000;
         if (request.Content.Length > contentLimit)
             return hasTitle ? "文本长贴正文不能超过 10000 个字符。" : "文本短贴正文不能超过 1000 个字符。";
         var imageLimit = hasTitle ? 50 : 18;
-        var videoLimit = hasTitle ? 5 : 1;
+        if (request.Type is not (FeedType.Text or FeedType.Image or FeedType.Video)) return "素材类型无效。";
         if (request.MediaPaths.Count > 0 && request.Type == FeedType.Text) return "文本不能包含媒体文件。";
         if (request.Type == FeedType.Image && request.MediaPaths.Count == 0) return "请选择至少一张图片。";
         if (request.Type == FeedType.Image && request.MediaPaths.Count > imageLimit) return $"图片数量不能超过 {imageLimit} 张。";
@@ -211,6 +210,8 @@ public sealed class CliWorkflow
                 request.Type == FeedType.Image ? "image" : "video",
                 allowUnknownSources)))
             return "所选媒体文件或链接无效，请重新选择。";
+        var contentError = MaterialMediaValidator.ValidateContent(request.Content, request.MediaPaths);
+        if (contentError.Length > 0) return contentError;
         return string.Empty;
     }
 
@@ -235,8 +236,11 @@ public sealed class CliWorkflow
             args.Add("--title");
             args.Add(request.Title.Trim());
         }
-        args.Add("--content");
-        args.Add(request.Content);
+        if (!string.IsNullOrWhiteSpace(request.Content))
+        {
+            args.Add("--content");
+            args.Add(request.Content);
+        }
         foreach (var path in request.MediaPaths)
         {
             args.Add(request.Type == FeedType.Image ? "--image" : "--video");
