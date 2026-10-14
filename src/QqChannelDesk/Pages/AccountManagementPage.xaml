@@ -7,8 +7,8 @@
       <TextBlock Text="账号管理" Style="{StaticResource PageTitle}" />
       <TextBlock Text="查看和管理本机频道账号" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
     </StackPanel>
-    <Border Grid.Row="1" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,24,0,0">
-      <StackPanel VerticalAlignment="Top" Margin="0,24,0,0">
+    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,24,0,0">
+      <StackPanel VerticalAlignment="Top">
         <TextBlock Text="待开发" FontSize="18" FontWeight="SemiBold" />
         <TextBlock Text="账号管理功能正在规划中。" Foreground="{StaticResource Muted}" Margin="0,8,0,0" />
       </StackPanel>

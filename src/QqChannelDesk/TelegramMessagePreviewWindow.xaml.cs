@@ -35,9 +35,9 @@ public partial class TelegramMessagePreviewWindow : Window
         ContentText.Text = item.Text.Length > 0 ? item.Text : "（无正文）";
         MediaHint.Text = item.Message.Media.Count == 0
             ? "该消息没有可下载的媒体文件。"
-            : $"共 {item.Message.Media.Count} 个媒体引用；图片可加载预览，视频在草稿化时下载。";
+            : $"共 {item.Message.Media.Count} 个媒体引用；图片可加载预览，视频在加入素材库时下载。";
         LoadImagesButton.IsEnabled = item.Message.Media.Any(media => media.Kind == "image");
-        DraftButton.IsEnabled = item.CanDraft;
+        DraftButton.IsEnabled = item.CanMaterialize;
     }
 
     private void LinkText_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -106,20 +106,20 @@ public partial class TelegramMessagePreviewWindow : Window
             var drafted = await _draftAction(_item);
             if (drafted)
             {
-                SetStatus(_item.DraftIdDisplay.Length > 0
-                    ? $"已加入草稿箱（编号 {_item.DraftIdDisplay}）。"
-                    : "已加入草稿箱。", true);
+                SetStatus(_item.MaterialIdDisplay.Length > 0
+                    ? $"已加入素材仓库（编号 {_item.MaterialIdDisplay}）。"
+                    : "已加入素材仓库。", true);
                 DraftButton.IsEnabled = false;
             }
             else
             {
-                DraftButton.IsEnabled = _item.CanDraft;
+                DraftButton.IsEnabled = _item.CanMaterialize;
             }
         }
         catch (Exception ex)
         {
-            SetStatus($"加入草稿箱失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
-            DraftButton.IsEnabled = _item.CanDraft;
+            SetStatus($"加入素材仓库失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            DraftButton.IsEnabled = _item.CanMaterialize;
         }
     }
 
@@ -132,6 +132,6 @@ public partial class TelegramMessagePreviewWindow : Window
     private void SetStatus(string message, bool succeeded)
     {
         StatusText.Text = message;
-        StatusText.Foreground = succeeded ? Brushes.SeaGreen : Brushes.DarkGoldenrod;
+        StatusText.Foreground = succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
     }
 }

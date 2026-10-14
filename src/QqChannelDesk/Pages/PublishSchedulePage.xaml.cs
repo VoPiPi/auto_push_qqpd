@@ -49,7 +49,7 @@ public partial class PublishSchedulePage : UserControl
             EmptyTitle.Text = "发布计划读取失败";
             EmptyMessage.Text = "请刷新重试，或检查本地数据库是否可访问。";
             StatusText.Text = $"读取发布计划失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Foreground = UiStatusBrushes.Danger;
             LastRefreshText.Text = "刷新失败";
         }
         finally { _loading = false; }
@@ -154,6 +154,6 @@ public partial class PublishSchedulePage : UserControl
         SchedulerStatusText.Text = status.Paused
             ? $"计划执行器已暂停：{status.Message}"
             : status.Running ? status.Message : "计划执行器已停止";
-        SchedulerStatusText.Foreground = status.Paused ? Brushes.Firebrick : (Brush)FindResource("Ink");
+        SchedulerStatusText.Foreground = status.Paused ? UiStatusBrushes.Danger : (Brush)FindResource("Ink");
     }
 }

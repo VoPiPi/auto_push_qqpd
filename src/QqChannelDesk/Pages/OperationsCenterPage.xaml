@@ -41,10 +41,10 @@
               <StackPanel><TextBlock Text="剩余任务" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RemainingTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,4,0,0"/><TextBlock x:Name="ScheduleStatusText" Text="计划执行器准备中" Foreground="{StaticResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
             </Border>
             <Border Grid.Column="2" Style="{StaticResource Card}" Margin="4,0" Padding="14,13">
-              <StackPanel><TextBlock Text="正在运行" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RunningTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="#2F6F9F" Margin="0,4,0,0"/><TextBlock Text="后台执行中的计划" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
+              <StackPanel><TextBlock Text="正在运行" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RunningTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Info}" Margin="0,4,0,0"/><TextBlock Text="后台执行中的计划" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
             </Border>
             <Border Grid.Column="3" Style="{StaticResource Card}" Margin="4,0" Padding="14,13">
-              <StackPanel><TextBlock Text="近 7 天成功率" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="SuccessRateText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="#23845E" Margin="0,4,0,0"/><TextBlock x:Name="TodayMetricText" Text="今日暂无记录" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
+              <StackPanel><TextBlock Text="近 7 天成功率" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="SuccessRateText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,4,0,0"/><TextBlock x:Name="TodayMetricText" Text="今日暂无记录" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
             </Border>
             <Border Grid.Column="4" Style="{StaticResource Card}" Margin="8,0,0,0" Padding="14,13">
               <StackPanel><TextBlock Text="程序运行时长" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="UptimeText" Text="00:00:00" FontSize="24" FontWeight="SemiBold" Margin="0,7,0,0"/><TextBlock x:Name="AccountSummaryText" Text="当前账号：未登录" Foreground="{StaticResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
@@ -58,13 +58,13 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <DockPanel Grid.Row="0"><TextBlock Text="任务状态" Style="{StaticResource SectionTitle}"/><TextBlock x:Name="AttentionText" DockPanel.Dock="Right" Foreground="{StaticResource Danger}" VerticalAlignment="Center"/></DockPanel>
                 <Grid Grid.Row="1" Margin="0,2,0,10" Height="18">
-                  <ProgressBar x:Name="TaskProgress" Minimum="0" Maximum="1" Value="0" Height="12" Foreground="{StaticResource Accent}" Background="#E9EFEB" BorderThickness="0" />
+                  <ProgressBar x:Name="TaskProgress" Minimum="0" Maximum="1" Value="0" Height="12" Foreground="{StaticResource Accent}" Background="{StaticResource ProgressTrack}" BorderThickness="0" />
                 </Grid>
                 <UniformGrid Grid.Row="2" Columns="2" Margin="0,0,0,10">
                   <TextBlock x:Name="PendingStatusText" Text="待发布 0" Foreground="{StaticResource Muted}" Margin="0,0,8,5" />
                   <TextBlock x:Name="ScheduledStatusText" Text="已排期 0" Foreground="{StaticResource Accent}" Margin="0,0,8,5" />
                   <TextBlock x:Name="OverdueStatusText" Text="已逾期 0" Foreground="{StaticResource Warn}" Margin="0,0,8,5" />
-                  <TextBlock x:Name="SucceededStatusText" Text="已成功 0" Foreground="#23845E" Margin="0,0,8,5" />
+                  <TextBlock x:Name="SucceededStatusText" Text="已成功 0" Foreground="{StaticResource Accent}" Margin="0,0,8,5" />
                   <TextBlock x:Name="FailedStatusText" Text="失败 0" Foreground="{StaticResource Danger}" Margin="0,0,8,5" />
                 </UniformGrid>
                 <TextBlock Grid.Row="3" Text="进度条显示剩余任务相对于当前任务总量的占比。" Foreground="{StaticResource Muted}" FontSize="11" />
@@ -73,7 +73,7 @@
             <Border Grid.Column="1" Style="{StaticResource Card}" Margin="8,0,0,0" Padding="16,14">
               <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="122"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <DockPanel Grid.Row="0"><TextBlock Text="近 7 天发布趋势" Style="{StaticResource SectionTitle}"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><TextBlock Text="成功" Foreground="#23845E" Margin="0,0,10,0"/><TextBlock Text="失败" Foreground="{StaticResource Danger}" Margin="0,0,10,0"/><TextBlock Text="待核实" Foreground="{StaticResource Warn}"/></StackPanel></DockPanel>
+                <DockPanel Grid.Row="0"><TextBlock Text="近 7 天发布趋势" Style="{StaticResource SectionTitle}"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><TextBlock Text="成功" Foreground="{StaticResource Accent}" Margin="0,0,10,0"/><TextBlock Text="失败" Foreground="{StaticResource Danger}" Margin="0,0,10,0"/><TextBlock Text="待核实" Foreground="{StaticResource Warn}"/></StackPanel></DockPanel>
                 <ItemsControl x:Name="DailyMetricsItems" Grid.Row="1" Margin="0,4,0,0">
                   <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
@@ -82,9 +82,9 @@
                         <Grid.RowDefinitions><RowDefinition Height="88"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <Grid Grid.Row="0" VerticalAlignment="Bottom">
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                          <Border Grid.Column="0" Height="{Binding SuccessHeight}" Background="#62B48C" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
-                          <Border Grid.Column="1" Height="{Binding FailureHeight}" Background="#D97878" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
-                          <Border Grid.Column="2" Height="{Binding VerificationHeight}" Background="#D5A35B" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
+                          <Border Grid.Column="0" Height="{Binding SuccessHeight}" Background="{StaticResource Accent}" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
+                          <Border Grid.Column="1" Height="{Binding FailureHeight}" Background="{StaticResource Danger}" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
+                          <Border Grid.Column="2" Height="{Binding VerificationHeight}" Background="{StaticResource Warn}" CornerRadius="2,2,0,0" VerticalAlignment="Bottom" Margin="2,0" />
                         </Grid>
                         <TextBlock Grid.Row="1" Text="{Binding Label}" HorizontalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,5,0,0" />
                       </Grid>
@@ -106,7 +106,7 @@
                   <TextBlock Text="实时状态" DockPanel.Dock="Right" Foreground="{StaticResource Accent}" FontSize="11" VerticalAlignment="Center" />
                 </DockPanel>
                 <UniformGrid Grid.Row="1" Columns="2">
-                  <Border Background="#F7FAF8" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="0,0,6,6" MinWidth="190">
+                  <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="0,0,6,6" MinWidth="190">
                     <StackPanel>
                       <TextBlock Text="Node.js" Foreground="{StaticResource Muted}" FontSize="11" />
                       <TextBlock x:Name="DashboardNodeBadge" Text="检查中" FontWeight="SemiBold" Margin="0,3,0,0" />
@@ -114,7 +114,7 @@
                       <Button x:Name="DashboardInstallNodeButton" Content="安装 Node.js" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="InstallNodeButton_Click" Visibility="Collapsed" />
                     </StackPanel>
                   </Border>
-                  <Border Background="#F7FAF8" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="6,0,0,6" MinWidth="190">
+                  <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="6,0,0,6" MinWidth="190">
                     <StackPanel>
                       <TextBlock Text="频道 CLI" Foreground="{StaticResource Muted}" FontSize="11" />
                       <TextBlock x:Name="DashboardCliBadge" Text="检查中" FontWeight="SemiBold" Margin="0,3,0,0" />
@@ -122,7 +122,7 @@
                       <Button x:Name="DashboardInstallCliButton" Content="安装 / 升级 CLI" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="InstallCliButton_Click" Visibility="Collapsed" />
                     </StackPanel>
                   </Border>
-                  <Border Background="#F7FAF8" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="0,6,6,0" MinWidth="190">
+                  <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="0,6,6,0" MinWidth="190">
                     <StackPanel>
                       <TextBlock Text="FFmpeg" Foreground="{StaticResource Muted}" FontSize="11" />
                       <TextBlock x:Name="DashboardFfmpegBadge" Text="检查中" FontWeight="SemiBold" Margin="0,3,0,0" />
@@ -130,7 +130,7 @@
                       <Button x:Name="DashboardInstallFfmpegButton" Content="安装 FFmpeg" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="InstallFfmpegButton_Click" Visibility="Collapsed" />
                     </StackPanel>
                   </Border>
-                  <Border Background="#F7FAF8" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="6,6,0,0" MinWidth="190">
+                  <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="6,6,0,0" MinWidth="190">
                     <StackPanel>
                       <TextBlock Text="登录状态" Foreground="{StaticResource Muted}" FontSize="11" />
                       <TextBlock x:Name="DashboardLoginBadge" Text="检查中" FontWeight="SemiBold" Margin="0,3,0,0" />
@@ -154,7 +154,7 @@
       <TabItem Header="手工发布">
         <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="{StaticResource InfoSoft}" BorderBrush="#C9DEE8" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,12">
+          <Border Grid.Row="0" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoLine}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,12">
             <TextBlock Text="直接在这里编辑并发布。标题留空为短贴，填写标题为长贴；正文和标题都可为空，但至少要有有效图片或视频。自动计划不会经过这里。" Foreground="{StaticResource Info}" TextWrapping="Wrap"/>
           </Border>
           <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -209,7 +209,7 @@
           <Border Grid.Row="2" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="12,10" Margin="0,12,0,0">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <ProgressBar x:Name="ManualProgress" Width="120" Height="8" VerticalAlignment="Center" IsHitTestVisible="False" IsIndeterminate="False" Maximum="1" Value="0" Foreground="{StaticResource Accent}" Background="#E9EFEB" BorderThickness="0"/>
+              <ProgressBar x:Name="ManualProgress" Width="120" Height="8" VerticalAlignment="Center" IsHitTestVisible="False" IsIndeterminate="False" Maximum="1" Value="0" Foreground="{StaticResource Accent}" Background="{StaticResource ProgressTrack}" BorderThickness="0"/>
               <TextBlock x:Name="ManualResultText" Grid.Column="1" Text="尚未进行手工发布。" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="12,0,0,0" VerticalAlignment="Center"/>
             </Grid>
           </Border>
@@ -220,12 +220,12 @@
         <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <DockPanel Grid.Row="0" Margin="0,0,0,14"><Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="重新检查" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" VerticalAlignment="Center"/><StackPanel><TextBlock Text="运行环境" Style="{StaticResource SectionTitle}"/><TextBlock Text="依赖安装和官方扫码授权都由你手动触发。" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel></DockPanel>
-          <Border Grid.Row="1" Background="{StaticResource WarnSoft}" BorderBrush="#F0D3A7" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14"><TextBlock Text="安全提示：请使用 CLI 自带的官方扫码流程登录。此工具不会读取浏览器 Cookie，也不会要求你粘贴 Token。" Foreground="#75440E"/></Border>
+          <Border Grid.Row="1" Background="{StaticResource WarnSoft}" BorderBrush="{StaticResource WarnLine}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14"><TextBlock Text="安全提示：请使用 CLI 自带的官方扫码流程登录。此工具不会读取浏览器 Cookie，也不会要求你粘贴 Token。" Foreground="{StaticResource Warn}"/></Border>
           <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,8,8" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="#61B28B" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="Node.js" FontWeight="SemiBold"/><TextBlock x:Name="NodeValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="NodeBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallNodeButton" Content="安装" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallNodeButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
-            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="8,0,0,8" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="#61B28B" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="频道 CLI" FontWeight="SemiBold"/><TextBlock x:Name="CliValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="CliBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallCliButton" Content="安装/升级" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallCliButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
-            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,8,8,0" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="#61B28B" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="FFmpeg" FontWeight="SemiBold"/><TextBlock x:Name="FfmpegValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="FfmpegBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallFfmpegButton" Content="在线安装" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallFfmpegButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
-            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Margin="8,8,0,0" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="#61B28B" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="登录状态" FontWeight="SemiBold"/><TextBlock x:Name="LoginValue" Text="等待 CLI 检查" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="LoginBadge" Text="未检查" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="LoginAction" Content="扫码登录" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="LoginAction_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
+            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,8,8" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="{StaticResource StatusDot}" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="Node.js" FontWeight="SemiBold"/><TextBlock x:Name="NodeValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="NodeBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallNodeButton" Content="安装" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallNodeButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
+            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="8,0,0,8" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="{StaticResource StatusDot}" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="频道 CLI" FontWeight="SemiBold"/><TextBlock x:Name="CliValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="CliBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallCliButton" Content="安装/升级" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallCliButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
+            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,8,8,0" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="{StaticResource StatusDot}" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="FFmpeg" FontWeight="SemiBold"/><TextBlock x:Name="FfmpegValue" Text="正在检查…" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="FfmpegBadge" Text="检查中" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="InstallFfmpegButton" Content="在线安装" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="InstallFfmpegButton_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
+            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Margin="8,8,0,0" Padding="15"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Ellipse Width="12" Height="12" Fill="{StaticResource StatusDot}" VerticalAlignment="Top" Margin="0,4,10,0"/><StackPanel Grid.Column="1"><TextBlock Text="登录状态" FontWeight="SemiBold"/><TextBlock x:Name="LoginValue" Text="等待 CLI 检查" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock x:Name="LoginBadge" Text="未检查" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><Button x:Name="LoginAction" Content="扫码登录" Style="{StaticResource TableLinkButton}" HorizontalAlignment="Right" Margin="0,7,0,0" Click="LoginAction_Click" Visibility="Collapsed"/></StackPanel></Grid></Border>
           </Grid>
           <TextBlock Grid.Row="3" x:Name="FooterStatus" Text="准备检查" Foreground="{StaticResource Muted}" Margin="0,14,0,0"/>
         </Grid>

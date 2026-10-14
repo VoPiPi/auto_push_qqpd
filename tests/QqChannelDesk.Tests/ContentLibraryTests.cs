@@ -132,6 +132,112 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public async Task MaterialBatchOperations_UpdateTargetAndTimeWithoutTouchingProtectedRows()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-batch-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+
+        var editableId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "可修改", "text", "正文", "", "", "", "", null, "waitsend", "", []));
+        var runningId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "正在发布", "text", "正文", "old-guild", "旧频道", "old-channel", "旧版块",
+            DateTimeOffset.Now.AddMinutes(1), "queue", "", []));
+        var runningExecution = await store.TryClaimDueExecutionAsync(DateTimeOffset.Now.AddMinutes(2));
+        Assert.NotNull(runningExecution);
+        var publishedId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "已发布", "text", "正文", "published-guild", "已发布频道",
+            "published-channel", "已发布版块", null, "published", "https://example.com/post", []));
+
+        var targetResult = await store.UpdateMaterialsTargetAsync(
+            [editableId, runningId, publishedId, 999999],
+            "new-guild",
+            "新频道",
+            "new-channel",
+            "新版块");
+        Assert.Equal([editableId], targetResult.UpdatedIds);
+        Assert.Equal([runningId], targetResult.RunningIds);
+        Assert.Equal([publishedId], targetResult.PublishedIds);
+        Assert.Equal([999999L], targetResult.MissingIds);
+
+        var editable = await store.GetMaterialAsync(editableId);
+        Assert.Equal("new-guild", editable!.GuildId);
+        Assert.Equal("新频道", editable.GuildName);
+        Assert.Equal("new-channel", editable.ChannelId);
+        Assert.Equal("新版块", editable.ChannelName);
+        Assert.Equal("old-guild", (await store.GetMaterialAsync(runningId))!.GuildId);
+
+        var publishAt = DateTimeOffset.Now.AddHours(3);
+        var timeResult = await store.UpdateMaterialsPublishAtAsync(
+            [editableId, runningId, publishedId, 999999],
+            publishAt);
+        Assert.Equal([editableId], timeResult.UpdatedIds);
+        Assert.Equal([runningId], timeResult.RunningIds);
+        Assert.Equal([publishedId], timeResult.PublishedIds);
+        Assert.Equal([999999L], timeResult.MissingIds);
+        editable = await store.GetMaterialAsync(editableId);
+        Assert.Equal("queue", editable!.Status);
+        Assert.Equal(publishAt.ToString("O"), editable.PublishAt!.Value.ToString("O"));
+
+        var deleteResult = await store.DeleteMaterialsAsync(
+            [editableId, runningId, publishedId, 999999]);
+        Assert.Equal([editableId], deleteResult.DeletedIds);
+        Assert.Equal([runningId], deleteResult.RunningIds);
+        Assert.Equal([publishedId], deleteResult.PublishedIds);
+        Assert.Equal([999999L], deleteResult.MissingIds);
+        Assert.Null(await store.GetMaterialAsync(editableId));
+        Assert.NotNull(await store.GetMaterialAsync(runningId));
+        Assert.NotNull(await store.GetMaterialAsync(publishedId));
+        Assert.Null(await store.GetActiveScheduleExecutionAsync(editableId));
+        Assert.NotNull(await store.GetActiveScheduleExecutionAsync(runningId));
+    }
+
+    [Fact]
+    public async Task QueueMaterialsForPublishAsync_IsAtomicAndRejectsRunningRows()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-queue-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var firstId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "第一篇", "text", "正文一", "guild", "频道", "channel", "版块", null, "waitsend", "", []));
+        var secondId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "第二篇", "text", "正文二", "guild", "频道", "channel", "版块", null, "waitsend", "", []));
+        var publishedId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "已发布", "text", "正文", "guild", "频道", "channel", "版块", null, "published", "https://example.com/post", []));
+        var firstScheduledAt = DateTimeOffset.Now.AddHours(1);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.QueueMaterialsForPublishAsync([firstId, secondId, publishedId], firstScheduledAt));
+        Assert.Equal("waitsend", (await store.GetMaterialAsync(firstId))!.Status);
+        Assert.Empty(await store.GetScheduleExecutionsAsync());
+
+        var queuedIds = await store.QueueMaterialsForPublishAsync([firstId, secondId], firstScheduledAt);
+        Assert.Equal([firstId, secondId], queuedIds);
+        Assert.Equal(2, (await store.GetScheduleExecutionsAsync()).Count);
+        Assert.All(await store.GetScheduleExecutionsAsync(), execution =>
+            Assert.Equal(ScheduleExecutionStatus.Pending, execution.Status));
+
+        var claimed = await store.TryClaimDueExecutionAsync(firstScheduledAt.AddMinutes(1));
+        Assert.NotNull(claimed);
+        var secondScheduledAt = firstScheduledAt.AddHours(1);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.QueueMaterialsForPublishAsync([claimed!.MaterialId], secondScheduledAt));
+    }
+
+    [Fact]
+    public void MaterialBatchSettingsWindow_ResolvesOnlyFutureValidTimes()
+    {
+        var now = new DateTimeOffset(2026, 10, 14, 10, 0, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 10, 14)));
+        var localDate = now.LocalDateTime.Date.AddDays(1);
+        var expected = new DateTimeOffset(
+            localDate.AddHours(9).AddMinutes(5),
+            TimeZoneInfo.Local.GetUtcOffset(localDate.AddHours(9).AddMinutes(5)));
+
+        Assert.Equal(expected, MaterialBatchSettingsWindow.ResolvePublishAt(localDate, "09:05:00", now));
+        Assert.Null(MaterialBatchSettingsWindow.ResolvePublishAt(now.LocalDateTime.Date, "09:00:00", now));
+        Assert.Null(MaterialBatchSettingsWindow.ResolvePublishAt(localDate, "9:5", now));
+        Assert.Null(MaterialBatchSettingsWindow.ResolvePublishAt(null, "09:00:00", now));
+    }
+
+    [Fact]
     public async Task MaterialStore_ReturnsScheduledMaterialsInPublishOrderAndCanCancelSchedule()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-schedule-{Guid.NewGuid():N}.db");
@@ -483,6 +589,51 @@ public sealed class ContentLibraryTests
         await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/2", "t.me", "新消息", "新正文", MediaList: ["a.mp4"]));
         var added = await store.FindByUrlAsync("https://t.me/TGWenAnGuan/2");
         Assert.Equal(new[] { "a.mp4" }, added!.Media);
+    }
+
+    [Fact]
+    public async Task Store_MigratesLegacyMaterialsBeforeCreatingSourceIndex()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-legacy-{Guid.NewGuid():N}.db");
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE Materials (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Title TEXT NOT NULL DEFAULT '',
+                    Type TEXT NOT NULL DEFAULT 'text',
+                    Content TEXT NOT NULL DEFAULT '',
+                    GuildId TEXT NOT NULL DEFAULT '',
+                    GuildName TEXT NOT NULL DEFAULT '',
+                    ChannelId TEXT NOT NULL DEFAULT '',
+                    ChannelName TEXT NOT NULL DEFAULT '',
+                    PublishAt TEXT NULL,
+                    Status TEXT NOT NULL DEFAULT 'waitsend',
+                    Link TEXT NOT NULL DEFAULT '',
+                    MediaJson TEXT NOT NULL DEFAULT '[]',
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL,
+                    AccountKey TEXT NULL
+                );
+                INSERT INTO Materials (Title, Type, Content, CreatedAt, UpdatedAt)
+                VALUES ('旧素材', 'text', '旧正文', '2026-10-13T00:00:00+08:00', '2026-10-13T00:00:00+08:00');
+                """;
+            await create.ExecuteNonQueryAsync();
+        }
+
+        var store = new ContentLibraryStore(databasePath);
+        var material = Assert.Single(await store.GetMaterialsAsync());
+        Assert.Equal("旧素材", material.Title);
+        Assert.Equal("手工添加", material.SourceType);
+        Assert.Empty(material.SourceUrl);
+
+        var id = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "新素材", "text", "新正文", "", "", "", "", null, "waitsend", "", [], "TG采集", "https://t.me/example/1"));
+        var added = await store.GetMaterialAsync(id);
+        Assert.Equal("TG采集", added!.SourceType);
+        Assert.Equal("https://t.me/example/1", added.SourceUrl);
     }
 
     [Fact]

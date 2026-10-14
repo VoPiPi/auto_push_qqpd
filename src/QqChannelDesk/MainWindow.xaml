@@ -61,11 +61,11 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="14,24,10,24">
           <TextBlock Text="发帖助手" Foreground="White" FontSize="18" FontWeight="SemiBold" />
-          <TextBlock Text="QQ CHANNEL DESK" Foreground="#91A29A" FontSize="10" Margin="0,7,0,0" />
+          <TextBlock Text="QQ CHANNEL DESK" Foreground="{StaticResource SidebarMuted}" FontSize="10" Margin="0,7,0,0" />
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,12">
           <StackPanel Margin="8,0,6,0">
-            <TextBlock Text="工作区" Foreground="#91A29A" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,9" />
+            <TextBlock Text="工作区" Foreground="{StaticResource SidebarMuted}" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,9" />
             <Button x:Name="OperationsNavButton" Style="{StaticResource ActiveNavigationButton}" Tag="运行中台" Click="NavigationButton_Click" ToolTip="打开运行中台">
               <StackPanel Orientation="Horizontal">
                 <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M3,3 h7 v9 h-7 z M14,3 h7 v5 h-7 z M14,12 h7 v9 h-7 z M3,16 h7 v5 h-7 z" />
@@ -76,7 +76,7 @@
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M22,12 h-6 l-2,3 h-4 l-2,-3 h-6 M5,5 h14 l3,7 v6 a2,2 0 0 1 -2,2 h-16 a2,2 0 0 1 -2,-2 v-6 z" />
                 <TextBlock Grid.Column="1" Text="内容采集" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
-                <Border Grid.Column="2" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
+                <Border Grid.Column="2" Background="{StaticResource SidebarBadge}" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
               </Grid>
             </Button>
             <Button x:Name="MaterialsNavButton" Style="{StaticResource NavigationButton}" Tag="素材仓库" Click="NavigationButton_Click" ToolTip="管理待发布和已发布素材">
@@ -107,7 +107,7 @@
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M19,21 v-2 a4,4 0 0 0 -4,-4 h-6 a4,4 0 0 0 -4,4 v2 M12,3 a4,4 0 1 1 -0.01,0 z" />
                 <TextBlock Grid.Column="1" Text="账号管理" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
-                <Border Grid.Column="2" Background="#3D5048" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
+                <Border Grid.Column="2" Background="{StaticResource SidebarBadge}" CornerRadius="3" Padding="5,2" Margin="5,0,0,0"><TextBlock Text="待开发" Style="{StaticResource NavigationBadgeText}" /></Border>
               </Grid>
             </Button>
             <Button x:Name="SettingNavButton" Style="{StaticResource NavigationButton}" Tag="系统设置" Click="NavigationButton_Click" ToolTip="打开系统设置页面">
@@ -118,25 +118,28 @@
             </Button>
           </StackPanel>        </ScrollViewer>
         <StackPanel Grid.Row="2">
-          <Border BorderBrush="#3C4842" BorderThickness="0,1,0,0" Padding="8,5">
+          <Border BorderBrush="{StaticResource SidebarLine}" BorderThickness="0,1,0,0" Padding="8,5">
             <Button x:Name="FeedbackNavButton" Style="{StaticResource NavigationButton}" Tag="交流反馈" Click="FeedbackNavButton_Click" ToolTip="打开交流和问题反馈频道" Height="30" Margin="0" Padding="8,0">
-              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="交流反馈" Style="{StaticResource NavigationLabel}"/><TextBlock Grid.Column="1" Text="外部链接" Foreground="#91A29A" FontSize="9" Margin="5,0,0,0" VerticalAlignment="Center"/></Grid>
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="交流反馈" Style="{StaticResource NavigationLabel}"/><TextBlock Grid.Column="1" Text="外部链接" Foreground="{StaticResource SidebarMuted}" FontSize="9" Margin="5,0,0,0" VerticalAlignment="Center"/></Grid>
             </Button>
           </Border>
-          <Border BorderBrush="#3C4842" BorderThickness="0,1,0,0" Padding="12,10">
+          <Border BorderBrush="{StaticResource SidebarLine}" BorderThickness="0,1,0,0" Padding="12,10">
             <StackPanel>
               <Grid>
-                <TextBlock Text="当前账号" Foreground="#91A29A" FontSize="10" />
-                <TextBlock x:Name="AccountLoginAction" HorizontalAlignment="Right" Foreground="Red" FontSize="10" Cursor="Hand" ToolTip="使用 CLI 官方扫码授权" MouseLeftButtonUp="AccountLoginAction_Click" Visibility="Collapsed">扫码登录</TextBlock>
-                                <TextBlock x:Name="AccountLogoutAction" HorizontalAlignment="Right" Foreground="Red" FontSize="10" Cursor="Hand" ToolTip="退出当前频道账号" MouseLeftButtonUp="AccountLogoutAction_Click" Visibility="Collapsed">退出</TextBlock>
+                <TextBlock Text="当前账号" Foreground="{StaticResource SidebarMuted}" FontSize="10" />
+                <TextBlock x:Name="AccountLoginAction" HorizontalAlignment="Right" Foreground="{StaticResource SidebarDanger}" FontSize="10" Cursor="Hand" ToolTip="使用 CLI 官方扫码授权" MouseLeftButtonUp="AccountLoginAction_Click" Visibility="Collapsed">扫码登录</TextBlock>
+                                <TextBlock x:Name="AccountLogoutAction" HorizontalAlignment="Right" Foreground="{StaticResource SidebarDanger}" FontSize="10" Cursor="Hand" ToolTip="退出当前频道账号" MouseLeftButtonUp="AccountLogoutAction_Click" Visibility="Collapsed">退出</TextBlock>
               </Grid>
               <TextBlock x:Name="AccountNameText" Text="未登录" Foreground="White" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
-              <TextBlock x:Name="AccountLoginTimeText" Text="登录时间：待登录" Foreground="#AEBBB4" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+              <TextBlock x:Name="AccountLoginTimeText" Text="登录时间：待登录" Foreground="{StaticResource SidebarTextMuted}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
             </StackPanel>
           </Border>
         </StackPanel>
       </Grid>
     </Border>
-    <ContentControl x:Name="PageHost" Grid.Column="1" />
+    <ContentControl x:Name="PageHost"
+                    Grid.Column="1"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch" />
   </Grid>
 </Window>

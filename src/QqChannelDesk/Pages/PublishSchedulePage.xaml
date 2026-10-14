@@ -5,7 +5,7 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Grid.Row="0" Margin="0,0,0,16">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-        <Button Content="立即检查" Style="{StaticResource QuietButton}" Margin="0,0,8,0" Click="CheckNowButton_Click" />
+        <Button Content="立即检查" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Click="CheckNowButton_Click" />
         <Button Content="刷新计划" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
       </StackPanel>
       <StackPanel>
@@ -20,43 +20,33 @@
       </StackPanel>
     </Border>
     <Grid Grid.Row="2">
-      <DataGrid x:Name="SchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+      <DataGrid x:Name="SchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>
           <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="标题" Width="180">
+          <DataGridTemplateColumn Header="标题/正文" Width="1.25*">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <TextBlock Text="{Binding Title}" ToolTip="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Title}" ToolTip="{Binding Title}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="55" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="频道/版块" Width="150">
+          <DataGridTemplateColumn Header="频道/版块" Width="1*">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <TextBlock Text="{Binding TargetDisplay}" ToolTip="{Binding TargetDisplay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding TargetDisplay}" ToolTip="{Binding TargetDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="计划时间" Binding="{Binding ScheduledAtDisplay}" Width="135" ElementStyle="{StaticResource DataGridCellText}" />
           <DataGridTemplateColumn Header="状态" Width="86">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
-                <Border x:Name="pill" Style="{StaticResource StatusPill}"><TextBlock x:Name="pillText" Text="{Binding StatusLabel}" FontSize="11" /></Border>
-                <DataTemplate.Triggers>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="成功"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="已发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="失败"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="已逾期"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="待核实"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="处理中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="执行中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="发布中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="待发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="等待执行"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
-                </DataTemplate.Triggers>
+                <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
+                  <TextBlock Text="{Binding StatusLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding StatusLabel, Converter={StaticResource StatusStrongBrushConverter}}" />
+                </Border>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="结果" Width="190">
+          <DataGridTemplateColumn Header="结果" Width="1.6*">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="发布记录" Binding="{Binding PublishRecordDisplay}" Width="75" ElementStyle="{StaticResource DataGridCellText}" />
@@ -67,7 +57,7 @@
           </DataGridTemplateColumn>
         </DataGrid.Columns>
       </DataGrid>
-      <Border x:Name="EmptyState" Margin="1,43,1,1" Background="#FBFCFB" CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed">
+      <Border x:Name="EmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}" CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <TextBlock x:Name="EmptyTitle" Text="暂无发布计划" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
           <TextBlock x:Name="EmptyMessage" Text="在素材仓库设置未来发布时间后，计划会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" Margin="0,7,0,0" />
@@ -78,9 +68,9 @@
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <TextBlock x:Name="StatusText" Text="尚未加载计划" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
         <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-          <Button x:Name="PreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click" />
+          <Button x:Name="PreviousPageButton" Content="‹" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click" />
           <TextBlock x:Name="PageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
-          <Button x:Name="NextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="NextPageButton_Click" />
+          <Button x:Name="NextPageButton" Content="›" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="NextPageButton_Click" />
         </StackPanel>
       </StackPanel>
       <TextBlock x:Name="LastRefreshText" Text="尚未刷新" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />

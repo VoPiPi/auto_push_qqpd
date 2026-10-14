@@ -81,6 +81,22 @@ public sealed class TelegramCollectorServiceTests
     }
 
     [Fact]
+    public void ApplyPreviewFilters_SupportsMultipleKeywordsWithOrMatching()
+    {
+        var messages = new[]
+        {
+            Message("https://t.me/c/1", title: "AI 进展"),
+            Message("https://t.me/c/2", text: "今日新闻摘要"),
+            Message("https://t.me/c/3", title: "其他消息", text: "没有命中")
+        };
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, " AI | 新闻 || ");
+
+        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "AI", "新闻" }, TelegramCollectorService.SplitKeywords(" AI | 新闻 || "));
+    }
+
+    [Fact]
     public void ApplyPreviewFilters_CapsLimitAtTemporaryListLimit()
     {
         var messages = Enumerable.Range(1, 10).Select(index => Message($"https://t.me/c/{index}")).ToArray();
@@ -94,10 +110,9 @@ public sealed class TelegramCollectorServiceTests
         var directory = TelegramCollectorService.BuildDraftDirectory(
             "G:\\app",
             new DateTimeOffset(2026, 10, 11, 23, 40, 0, TimeSpan.FromHours(8)),
-            "TG/WenAn:Guan",
-            "718");
+            "TG/WenAn:Guan");
 
-        var expected = Path.Combine("G:\\app", "temp", "telegram", "20261011", "TG_WenAn_Guan_718");
+        var expected = Path.Combine("G:\\app", "temp", "telegram", "20261011", "TG_WenAn_Guan");
         Assert.Equal(expected, directory);
     }
 
@@ -107,12 +122,27 @@ public sealed class TelegramCollectorServiceTests
         var directory = TelegramCollectorService.BuildDraftDirectory(
             "G:\\app",
             new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero),
-            new string('a', 60),
-            "718");
+            new string('a', 60));
 
         var folder = Path.GetFileName(directory);
-        Assert.EndsWith("_718", folder, StringComparison.Ordinal);
         Assert.True(folder.Length < 60, $"目录名过长：{folder}");
+    }
+
+    [Fact]
+    public void SelectDraftMedia_KeepsImagesAndVideos()
+    {
+        var media = new[]
+        {
+            new TelegramMediaRef("https://example.com/a.jpg", "https://example.com/a.jpg", "image"),
+            new TelegramMediaRef("https://example.com/a.mp4", "https://example.com/a.mp4", "video"),
+            new TelegramMediaRef("https://example.com/b.MP4", "https://example.com/b.MP4", "VIDEO")
+        };
+
+        var selected = TelegramCollectorService.SelectDraftMedia(media);
+
+        Assert.Equal(3, selected.Count);
+        Assert.Contains(selected, item => string.Equals(item.Kind, "image", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(selected, item => string.Equals(item.Kind, "video", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -147,33 +177,6 @@ public sealed class TelegramCollectorServiceTests
     public void ReadMessageChannel_SkipsThePreviewPrefix(string url, string expected)
     {
         Assert.Equal(expected, TelegramCollectorService.ReadMessageChannel(url));
-    }
-
-    [Fact]
-    public void BuildMessageMeta_KeepsTitleBodyAndOriginalLink()
-    {
-        var message = Message("https://t.me/TGWenAnGuan/718", title: "这城市那么空", text: "第一行正文");
-
-        var meta = TelegramCollectorService.BuildMessageMeta(message, new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero));
-
-        Assert.Contains("这城市那么空", meta, StringComparison.Ordinal);
-        Assert.Contains("第一行正文", meta, StringComparison.Ordinal);
-        Assert.Contains("https://t.me/TGWenAnGuan/718", meta, StringComparison.Ordinal);
-        Assert.Contains("TGWenAnGuan", meta, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void BuildMessageMeta_FormatsTimestampsInLocalTime()
-    {
-        var message = Message("https://t.me/TGWenAnGuan/718");
-        var collectedAt = new DateTimeOffset(2026, 10, 11, 4, 0, 0, TimeSpan.Zero);
-
-        var meta = TelegramCollectorService.BuildMessageMeta(message, collectedAt);
-
-        var published = message.PublishedAt!.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        var collected = collectedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        Assert.Contains(published, meta, StringComparison.Ordinal);
-        Assert.Contains(collected, meta, StringComparison.Ordinal);
     }
 
     [Fact]

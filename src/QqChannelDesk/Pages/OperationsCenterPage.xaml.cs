@@ -128,7 +128,7 @@ public partial class OperationsCenterPage : UserControl
             return;
         }
         ScheduleStatusText.Text = status.Paused ? "已暂停" : status.Message;
-        ScheduleStatusText.Foreground = status.Paused ? Brushes.DarkGoldenrod : Brushes.Gray;
+        ScheduleStatusText.Foreground = status.Paused ? UiStatusBrushes.Warning : UiStatusBrushes.Neutral;
         RunningTaskText.Text = status.RunningTaskCount.ToString();
     }
 
@@ -166,7 +166,7 @@ public partial class OperationsCenterPage : UserControl
         TaskProgress.Maximum = Math.Max(1, tasks.TotalCount);
         TaskProgress.Value = Math.Min(tasks.TotalCount, tasks.RemainingCount);
         ScheduleStatusText.Text = _schedulerStatus.Paused ? "已暂停" : snapshot.AutoExecutionEnabled ? "自动执行已开启" : "自动执行已关闭";
-        ScheduleStatusText.Foreground = _schedulerStatus.Paused ? Brushes.DarkGoldenrod : Brushes.Gray;
+        ScheduleStatusText.Foreground = _schedulerStatus.Paused ? UiStatusBrushes.Warning : UiStatusBrushes.Neutral;
         DailyMetricsItems.ItemsSource = snapshot.LastSevenDays;
         ActivitiesItems.ItemsSource = snapshot.RecentActivities;
         TrendSummaryText.Text = $"成功 {snapshot.LastSevenDays.Sum(item => item.Succeeded)} · 失败 {snapshot.LastSevenDays.Sum(item => item.Failed)} · 待核实 {snapshot.LastSevenDays.Sum(item => item.NeedsVerification)}";
@@ -489,9 +489,9 @@ public partial class OperationsCenterPage : UserControl
 
     private static Brush StateBrush(DiagnosticState state) => state switch
     {
-        DiagnosticState.Ready => Brushes.SeaGreen,
-        DiagnosticState.Warning => Brushes.DarkGoldenrod,
-        DiagnosticState.Error => Brushes.Firebrick,
-        _ => Brushes.DimGray
+        DiagnosticState.Ready => UiStatusBrushes.Success,
+        DiagnosticState.Warning => UiStatusBrushes.Warning,
+        DiagnosticState.Error => UiStatusBrushes.Danger,
+        _ => UiStatusBrushes.Neutral
     };
 }

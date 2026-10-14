@@ -6,7 +6,7 @@
   <Grid Margin="24">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel Grid.Row="0" Margin="0,0,0,18">
-      <TextBlock x:Name="Heading" Text="文本验证" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock x:Name="Heading" Text="文本验证" Style="{StaticResource PageTitle}" />
         <TextBlock x:Name="Description" Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
         <TextBlock x:Name="SourceInfo" Foreground="{StaticResource Info}" TextTrimming="CharacterEllipsis" Margin="0,6,0,0" Visibility="Collapsed" />
     </StackPanel>
@@ -36,7 +36,7 @@
       </StackPanel>
     </ScrollViewer>
     <DockPanel Grid.Row="2" Margin="0,16,0,0">
-      <Button DockPanel.Dock="Right" Content="取消" Margin="8,0,0,0" IsCancel="True" />
+      <Button DockPanel.Dock="Right" Content="取消" Style="{StaticResource QuietButton}" Margin="8,0,0,0" IsCancel="True" />
       <Button x:Name="PublishButton" DockPanel.Dock="Right" Content="预览并发布" Style="{StaticResource PrimaryButton}" Click="PublishButton_Click" />
       <TextBlock x:Name="FooterStatus" Text="加载频道列表…" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
     </DockPanel>

@@ -248,7 +248,12 @@ public sealed class ProxyPoolStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ProxyNodes SET IsAlive=$alive, ExitIp=$ip, CountryCode=$code, CountryName=$country, LastCheckedAt=$at, LastCheckError=$error, UpdatedAt=$at WHERE Id=$id";
+        command.CommandText = """
+            UPDATE ProxyNodes SET IsAlive=$alive, ExitIp=$ip,
+                CountryCode=CASE WHEN TRIM($code)<>'' AND LOWER(TRIM($code)) NOT IN ('unknown', '未知') THEN $code ELSE CountryCode END,
+                CountryName=CASE WHEN TRIM($country)<>'' AND LOWER(TRIM($country)) NOT IN ('unknown', '未知') THEN $country ELSE CountryName END,
+                LastCheckedAt=$at, LastCheckError=$error, UpdatedAt=$at WHERE Id=$id
+            """;
         command.Parameters.AddWithValue("$alive", alive ? 1 : 0);
         command.Parameters.AddWithValue("$ip", exitIp ?? "");
         command.Parameters.AddWithValue("$code", countryCode ?? "");
@@ -271,6 +276,17 @@ public sealed class ProxyPoolStore
         command.Parameters.AddWithValue("$error", error ?? "");
         command.Parameters.AddWithValue("$id", nodeId);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task DeleteNodeAsync(ProxyNode node, CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM ProxyNodes WHERE Id=$id AND SourceId=$source";
+        command.Parameters.AddWithValue("$id", node.Id);
+        command.Parameters.AddWithValue("$source", node.SourceId);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("代理节点不存在。");
     }
 
     private static async Task SeedBuiltInSourceAsync(SqliteConnection connection, string key, string name, string url, CancellationToken cancellationToken)

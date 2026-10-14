@@ -11,19 +11,22 @@ public sealed class AppDatabaseInitializer
     private readonly ContentLibraryStore _contentLibrary;
     private readonly PublishHistoryStore _history;
     private readonly ProxyPoolStore? _proxyPool;
+    private readonly TelegramCollectionStore? _telegramCollections;
 
     public AppDatabaseInitializer(
         SystemSettingsStore settings,
         ChannelCacheStore channels,
         ContentLibraryStore contentLibrary,
         PublishHistoryStore history,
-        ProxyPoolStore? proxyPool = null)
+        ProxyPoolStore? proxyPool = null,
+        TelegramCollectionStore? telegramCollections = null)
     {
         _settings = settings;
         _channels = channels;
         _contentLibrary = contentLibrary;
         _history = history;
         _proxyPool = proxyPool;
+        _telegramCollections = telegramCollections;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -35,5 +38,6 @@ public sealed class AppDatabaseInitializer
         await _contentLibrary.InitializeAsync(cancellationToken);
         await _history.InitializeAsync(cancellationToken);
         if (_proxyPool is not null) await _proxyPool.InitializeAsync(cancellationToken);
+        if (_telegramCollections is not null) await _telegramCollections.InitializeAsync(cancellationToken);
     }
 }

@@ -38,7 +38,7 @@ public partial class HistoryPage : UserControl
             _filteredRecords = [];
             UpdatePagination();
             StatusText.Text = $"读取发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
         }
     }
@@ -75,7 +75,7 @@ public partial class HistoryPage : UserControl
         if (startDate.HasValue && endDate.HasValue && startDate.Value.Date > endDate.Value.Date)
         {
             StatusText.Text = "开始日期不能晚于结束日期，请调整筛选条件。";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
             return;
         }
@@ -93,7 +93,7 @@ public partial class HistoryPage : UserControl
         {
             RecordsGrid.ItemsSource = null;
             StatusText.Text = $"筛选发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
             return;
         }

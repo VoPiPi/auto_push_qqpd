@@ -1,12 +1,20 @@
 <Application x:Class="QqChannelDesk.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QqChannelDesk"
              StartupUri="MainWindow.xaml">
   <Application.Resources>
     <ResourceDictionary>
 
+    <local:StatusBrushConverter x:Key="StatusSoftBrushConverter" Soft="True" />
+    <local:StatusBrushConverter x:Key="StatusStrongBrushConverter" />
+
     <SolidColorBrush x:Key="Sidebar" Color="#202624" />
     <SolidColorBrush x:Key="SidebarHover" Color="#34433C" />
+    <SolidColorBrush x:Key="SidebarMuted" Color="#91A29A" />
+    <SolidColorBrush x:Key="SidebarLine" Color="#3C4842" />
+    <SolidColorBrush x:Key="SidebarBadge" Color="#3D5048" />
+    <SolidColorBrush x:Key="SidebarTextMuted" Color="#AEBBB4" />
     <SolidColorBrush x:Key="Ink" Color="#202624" />
     <SolidColorBrush x:Key="Muted" Color="#69736E" />
     <SolidColorBrush x:Key="Line" Color="#DDE3DE" />
@@ -14,6 +22,10 @@
     <SolidColorBrush x:Key="Canvas" Color="#F3F6F3" />
     <SolidColorBrush x:Key="Accent" Color="#147D69" />
     <SolidColorBrush x:Key="AccentSoft" Color="#E5F3EE" />
+    <SolidColorBrush x:Key="Success" Color="#147D69" />
+    <SolidColorBrush x:Key="SuccessSoft" Color="#E5F3EE" />
+    <SolidColorBrush x:Key="Neutral" Color="#69736E" />
+    <SolidColorBrush x:Key="NeutralSoft" Color="#EEF1EF" />
     <SolidColorBrush x:Key="TableLink" Color="#1677FF" />
     <SolidColorBrush x:Key="TableLinkHover" Color="#0B5ED7" />
     <SolidColorBrush x:Key="Warn" Color="#A95F13" />
@@ -22,6 +34,13 @@
     <SolidColorBrush x:Key="DangerSoft" Color="#FCECEC" />
     <SolidColorBrush x:Key="Info" Color="#315F78" />
     <SolidColorBrush x:Key="InfoSoft" Color="#EAF3F7" />
+    <SolidColorBrush x:Key="InfoLine" Color="#C9DEE8" />
+    <SolidColorBrush x:Key="WarnLine" Color="#F0D3A7" />
+    <SolidColorBrush x:Key="ProgressTrack" Color="#E9EFEB" />
+    <SolidColorBrush x:Key="StatusDot" Color="#61B28B" />
+    <SolidColorBrush x:Key="PanelSoft" Color="#F7FAF8" />
+    <SolidColorBrush x:Key="EmptySurface" Color="#FBFCFB" />
+    <SolidColorBrush x:Key="SidebarDanger" Color="#E78B8B" />
     <!-- Base styles replacing the removed HandyControl theme -->
     <Style x:Key="ButtonDefault" TargetType="Button">
       <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -312,6 +331,8 @@
       <Setter Property="CanUserResizeRows" Value="False" />
       <Setter Property="HeadersVisibility" Value="Column" />
       <Setter Property="RowHeaderWidth" Value="0" />
+      <Setter Property="RowHeight" Value="34" />
+      <Setter Property="ColumnHeaderHeight" Value="38" />
       <Setter Property="SelectionMode" Value="Single" />
       <Setter Property="SelectionUnit" Value="FullRow" />
     </Style>
@@ -339,7 +360,7 @@
       </Style.Triggers>
     </Style>
     <Style TargetType="DataGridRow">
-      <Setter Property="MinHeight" Value="36" />
+      <Setter Property="MinHeight" Value="34" />
       <Style.Triggers>
         <Trigger Property="IsMouseOver" Value="True">
           <Setter Property="Background" Value="#F1F7F3" />
@@ -347,12 +368,13 @@
       </Style.Triggers>
     </Style>
     <Style x:Key="CompactDataGridRow" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
-      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="MinHeight" Value="34" />
     </Style>
     <Style x:Key="DataGridCellText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="TextWrapping" Value="NoWrap" />
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
     </Style>
     <Style x:Key="SectionTitle" TargetType="TextBlock">
       <Setter Property="FontSize" Value="18" />
@@ -467,7 +489,7 @@
       </Setter>
     </Style>
     <Style TargetType="ProgressBar">
-      <Setter Property="Background" Value="#E9EFEB" />
+      <Setter Property="Background" Value="{StaticResource ProgressTrack}" />
       <Setter Property="Foreground" Value="{StaticResource Accent}" />
       <Setter Property="Template">
         <Setter.Value>
@@ -521,11 +543,19 @@
       </Setter>
     </Style>
     <Style x:Key="StatusPill" TargetType="Border">
-      <Setter Property="CornerRadius" Value="9" />
-      <Setter Property="Padding" Value="9,1.5" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="10,0" />
       <Setter Property="HorizontalAlignment" Value="Left" />
       <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="Background" Value="#EEF1EF" />
+      <Setter Property="Background" Value="{StaticResource NeutralSoft}" />
+    </Style>
+    <Style x:Key="StatusPillText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource Neutral}" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextWrapping" Value="NoWrap" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
     <Style x:Key="Card" TargetType="Border">
       <Setter Property="Background" Value="{StaticResource Surface}" />

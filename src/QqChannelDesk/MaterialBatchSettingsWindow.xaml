@@ -1,0 +1,74 @@
+<Window x:Class="QqChannelDesk.MaterialBatchSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="560"
+        SizeToContent="Height"
+        MinHeight="300"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{StaticResource Canvas}">
+  <Grid Margin="24">
+    <StackPanel>
+      <TextBlock x:Name="Heading" Style="{StaticResource PageTitle}" Margin="0,0,0,8"/>
+      <TextBlock x:Name="Description" Foreground="{StaticResource Muted}" Margin="0,0,0,16"/>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <Grid x:Name="TargetPanel">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="90"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="频道" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,12"/>
+            <ComboBox x:Name="GuildCombo"
+                      Grid.Column="1"
+                      DisplayMemberPath="DisplayName"
+                      Margin="0,0,0,12"
+                      SelectionChanged="GuildCombo_SelectionChanged"/>
+            <TextBlock Grid.Row="1" Text="版块" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <ComboBox x:Name="ChannelCombo"
+                      Grid.Row="1"
+                      Grid.Column="1"
+                      DisplayMemberPath="DisplayName"/>
+          </Grid>
+
+          <Grid x:Name="TimePanel" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="90"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="发布日期" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,12"/>
+            <DatePicker x:Name="PublishDatePicker" Grid.Column="1" Margin="0,0,0,12"/>
+            <TextBlock Grid.Row="1" Text="发布时间" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <TextBox x:Name="PublishTimeBox" Grid.Row="1" Grid.Column="1" ToolTip="时:分:秒,例如 14:30:00"/>
+          </Grid>
+
+          <TextBlock x:Name="FormMessage"
+                     Foreground="{StaticResource Warn}"
+                     TextWrapping="Wrap"
+                     Margin="0,14,0,0"/>
+        </StackPanel>
+      </Border>
+
+      <DockPanel Margin="0,16,0,0">
+        <Button DockPanel.Dock="Right"
+                Content="应用设置"
+                Style="{StaticResource PrimaryButton}"
+                Click="ConfirmButton_Click"/>
+        <Button DockPanel.Dock="Right"
+                Content="取消"
+                Style="{StaticResource QuietButton}"
+                Margin="8,0,0,0"
+                IsCancel="True"/>
+      </DockPanel>
+    </StackPanel>
+  </Grid>
+</Window>

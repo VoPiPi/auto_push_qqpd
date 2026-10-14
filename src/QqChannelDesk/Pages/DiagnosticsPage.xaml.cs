@@ -70,7 +70,7 @@ public partial class DiagnosticsPage : UserControl
     {
         var status = type switch { FeedType.Text => TextFeedStatus, FeedType.Image => ImageFeedStatus, _ => VideoFeedStatus };
         status.Text = result.Succeeded ? $"已发布 · {DateTime.Now:HH:mm}" : $"验证失败 · {result.Category}";
-        status.Foreground = result.Succeeded ? Brushes.SeaGreen : Brushes.Firebrick;
+        status.Foreground = result.Succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Danger;
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke(this, EventArgs.Empty);
@@ -93,10 +93,10 @@ public partial class DiagnosticsPage : UserControl
         target.Text = item.StateLabel;
         target.Foreground = item.State switch
         {
-            DiagnosticState.Ready => Brushes.SeaGreen,
-            DiagnosticState.Warning => Brushes.DarkGoldenrod,
-            DiagnosticState.Error => Brushes.Firebrick,
-            _ => Brushes.DimGray
+            DiagnosticState.Ready => UiStatusBrushes.Success,
+            DiagnosticState.Warning => UiStatusBrushes.Warning,
+            DiagnosticState.Error => UiStatusBrushes.Danger,
+            _ => UiStatusBrushes.Neutral
         };
     }
 }

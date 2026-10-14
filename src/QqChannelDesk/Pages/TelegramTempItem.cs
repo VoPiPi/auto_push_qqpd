@@ -5,14 +5,14 @@ using System.Runtime.CompilerServices;
 namespace QqChannelDesk.Pages;
 
 /// <summary>
-/// 「tg 临时采集」表格的一行：消息快照 + 多选状态 + 草稿状态。数据仅存于内存，不落库。
+/// 「TG采集」表格的一行：消息快照 + 多选状态 + 入库状态。数据仅存于内存，不落库。
 /// </summary>
 public sealed class TelegramTempItem : INotifyPropertyChanged
 {
     private bool _isSelected;
     private string _status = "待处理";
-    private long? _draftId;
-    private string _draftDirectory = "";
+    private long? _materialId;
+    private string _materialDirectory = "";
 
     public TelegramTempItem(TelegramChannelMessage message)
     {
@@ -77,14 +77,14 @@ public sealed class TelegramTempItem : INotifyPropertyChanged
 
     public string StatusLabel => _status;
 
-    /// <summary>只有待处理的行可以转草稿，已转草稿的行禁用按钮防止重复入库。</summary>
-    public bool CanDraft => _status == "待处理";
+    /// <summary>只有待处理的行可以加入素材仓库，已入库的行禁用按钮防止重复入库。</summary>
+    public bool CanMaterialize => _status == "待处理";
 
-    public long? DraftId => _draftId;
+    public long? MaterialId => _materialId;
 
-    public string DraftIdDisplay => _draftId?.ToString() ?? "";
+    public string MaterialIdDisplay => _materialId?.ToString() ?? "";
 
-    public string DraftDirectory => _draftDirectory;
+    public string MaterialDirectory => _materialDirectory;
 
     public bool IsSelected
     {
@@ -97,16 +97,16 @@ public sealed class TelegramTempItem : INotifyPropertyChanged
         }
     }
 
-    public void MarkDrafted(long draftId, string directory)
+    public void MarkMaterialized(long materialId, string directory)
     {
-        _draftId = draftId;
-        _draftDirectory = directory;
-        _status = "已转草稿";
+        _materialId = materialId;
+        _materialDirectory = directory;
+        _status = "已入素材库";
         _isSelected = false;
         OnPropertyChanged(nameof(StatusLabel));
-        OnPropertyChanged(nameof(CanDraft));
-        OnPropertyChanged(nameof(DraftIdDisplay));
-        OnPropertyChanged(nameof(DraftDirectory));
+        OnPropertyChanged(nameof(CanMaterialize));
+        OnPropertyChanged(nameof(MaterialIdDisplay));
+        OnPropertyChanged(nameof(MaterialDirectory));
         OnPropertyChanged(nameof(IsSelected));
     }
 

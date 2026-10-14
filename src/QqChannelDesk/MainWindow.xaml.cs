@@ -26,8 +26,10 @@ public partial class MainWindow : Window
     private readonly MediaStorageService _mediaStorage;
     private readonly ContentLibraryStore _contentLibrary;
     private readonly ProxyPoolStore _proxyPoolStore;
+    private readonly TelegramCollectionStore _telegramCollectionStore;
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
+    private readonly TelegramCollectionScheduler _telegramCollectionScheduler;
     private readonly UpdateCheckService _updateCheckService = new();
     private readonly AppDatabaseInitializer _databaseInitializer;
     private readonly AppLogger _logger = AppLogger.Instance;
@@ -63,6 +65,7 @@ public partial class MainWindow : Window
         _historyStore = new PublishHistoryStore(accountContext: _accountContext);
         _contentLibrary = new ContentLibraryStore(accountContext: _accountContext);
         _proxyPoolStore = new ProxyPoolStore();
+        _telegramCollectionStore = new TelegramCollectionStore(accountContext: _accountContext);
         _mediaStorage = new MediaStorageService(_settingsStore);
         _channelSync = new ChannelSyncService(_workflow, _channelCache);
         _publisher = new PublishExecutionService(_workflow, _historyStore, _mediaStorage, _logger);
@@ -71,16 +74,21 @@ public partial class MainWindow : Window
             _channelCache,
             _contentLibrary,
             _historyStore,
-            _proxyPoolStore);
+            _proxyPoolStore,
+            _telegramCollectionStore);
         _scheduler = new PublishScheduler(
             _contentLibrary,
             _publisher,
             _settingsStore,
             GetScheduleEnvironmentAsync,
             _logger);
+        _telegramCollectionScheduler = new TelegramCollectionScheduler(
+            _telegramCollectionStore,
+            _contentLibrary,
+            logger: _logger);
         _historyPage = new HistoryPage(_historyStore);
-        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore);
-        _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage);
+        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore, _telegramCollectionStore, _telegramCollectionScheduler, _channelSync);
+        _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage, _scheduler);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _settingPage = new SettingPage(_settingsStore, _mediaStorage, _ffmpegManager);
         _dashboardService = new DashboardService(_contentLibrary, _historyStore, _settingsStore);
@@ -111,7 +119,6 @@ public partial class MainWindow : Window
         _operationsCenterPage.LoginRequested += async (_, _) => await LoginAsync();
         _logPage.DebugModeChanged += DebugMode_Changed;
         _scheduler.StatusChanged += Scheduler_StatusChanged;
-        _contentCollectionPage.PublishDraftRequested += draft => _ = OpenDraftPublishDialogAsync(draft);
         _materialsPage.PublishMaterialRequested += material => _ = OpenMaterialPublishDialogAsync(material);
         InitializeTrayIcon();
         Closing += MainWindow_Closing;
@@ -152,6 +159,7 @@ public partial class MainWindow : Window
             var settings = await _settingsStore.GetAsync();
             _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
             _scheduler.Start(settings.RunTasksOnStartup);
+            if (_accountContext.IsAuthenticated) _telegramCollectionScheduler.Start();
             _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
             await _operationsCenterPage.RefreshDashboardAsync();
             if (settings.NotifyUpgrade)
@@ -457,7 +465,6 @@ public partial class MainWindow : Window
         {
             _logger.Info($"草稿发布{(result.Succeeded ? "成功" : "未成功")}：{CliDiagnostics.Sanitize(result.Message)}");
             _operationsCenterPage.SetFooter(result.Succeeded ? "草稿发布成功" : $"草稿发布失败：{result.Category}");
-            _ = _contentCollectionPage.LoadDraftsAsync();
         }
         return Task.CompletedTask;
     }
@@ -838,7 +845,6 @@ public partial class MainWindow : Window
     {
         await Task.WhenAll(
             _contentCollectionPage.LoadItemsAsync(),
-            _contentCollectionPage.LoadDraftsAsync(),
             _materialsPage.LoadMaterialsAsync(),
             _schedulePage.LoadSchedulesAsync(),
             _historyPage.LoadRecordsAsync(),
@@ -847,8 +853,12 @@ public partial class MainWindow : Window
 
     private async Task<bool> StopSchedulerForContextChangeAsync(string failureMessage)
     {
-        if (!_scheduler.Status.Running && !_scheduler.Status.Paused) return true;
-        var stopped = await _scheduler.StopAsync();
+        var publishActive = _scheduler.Status.Running || _scheduler.Status.Paused;
+        var telegramActive = _telegramCollectionScheduler.IsRunning;
+        if (!publishActive && !telegramActive) return true;
+        var stopped = true;
+        if (publishActive) stopped &= await _scheduler.StopAsync();
+        if (telegramActive) stopped &= await _telegramCollectionScheduler.StopAsync();
         if (stopped) return true;
 
         _operationsCenterPage.SetFooter(failureMessage);
@@ -861,6 +871,7 @@ public partial class MainWindow : Window
         if (!_accountContext.IsAuthenticated || _isClosing) return;
         var settings = await _settingsStore.GetAsync();
         _scheduler.Start(settings.RunTasksOnStartup);
+        if (_accountContext.IsAuthenticated) _telegramCollectionScheduler.Start();
         _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
     }
 
@@ -938,6 +949,7 @@ public partial class MainWindow : Window
         try
         {
             await _scheduler.StopAsync();
+            await _telegramCollectionScheduler.StopAsync();
         }
         catch (Exception ex)
         {

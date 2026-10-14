@@ -6,7 +6,7 @@ namespace QqChannelDesk.Services;
 
 /// <summary>
 /// 采集 tg 频道：经网页代理打开 t.me/s/ 预览页解析消息。解析结果先以临时列表展示，不落库、
-/// 不下载媒体；仅在选择「草稿」时才把媒体下载到 temp/telegram/日期目录并生成元信息文件。
+/// 不下载媒体；仅在选择「加入素材库」时才把图片和视频下载到 temp/telegram/日期/频道目录。
 /// </summary>
 public sealed class TelegramCollectorService
 {
@@ -131,19 +131,28 @@ public sealed class TelegramCollectorService
         IReadOnlyList<TelegramChannelMessage> messages, int limit, string keyword)
     {
         IEnumerable<TelegramChannelMessage> result = messages;
-        if (!string.IsNullOrWhiteSpace(keyword))
+        var keywords = SplitKeywords(keyword);
+        if (keywords.Count > 0)
         {
-            var trimmed = keyword.Trim();
             result = result.Where(message =>
-                message.Title.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
-                message.Text.Contains(trimmed, StringComparison.OrdinalIgnoreCase));
+                keywords.Any(item =>
+                    message.Title.Contains(item, StringComparison.OrdinalIgnoreCase) ||
+                    message.Text.Contains(item, StringComparison.OrdinalIgnoreCase)));
         }
         var take = limit > 0 ? Math.Min(limit, TempListLimit) : TempListLimit;
         return result.Take(take).ToArray();
     }
 
+    internal static IReadOnlyList<string> SplitKeywords(string? keyword) =>
+        (keyword ?? string.Empty)
+            .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Where(item => item.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     /// <summary>
-    /// 草稿化一条临时消息：媒体下载到 temp/telegram/{yyyyMMdd}/{频道}_{消息ID}/，并写入 message.txt。
+    /// 将一条临时消息加入素材库所需的图片和视频下载到
+    /// temp/telegram/{yyyyMMdd}/{频道}/。不再生成元信息文件。
     /// 单个媒体失败不中断，只累计失败数量。
     /// </summary>
     public async Task<TelegramDraftResult> DraftMessageAsync(
@@ -154,22 +163,23 @@ public sealed class TelegramCollectorService
     {
         var now = DateTimeOffset.Now;
         var directory = BuildDraftDirectory(
-            AppContext.BaseDirectory, now, ReadMessageChannel(message.Url), ReadMessageId(message.Url));
-        Directory.CreateDirectory(directory);
-        await File.WriteAllTextAsync(
-            Path.Combine(directory, "message.txt"),
-            BuildMessageMeta(message, now),
-            Encoding.UTF8,
-            cancellationToken);
-        var download = await DownloadMediaAsync(message.Media, cookieHeader, progress, cancellationToken, directory);
+            AppContext.BaseDirectory, now, ReadMessageChannel(message.Url));
+        var media = SelectDraftMedia(message.Media);
+        if (media.Count > 0) Directory.CreateDirectory(directory);
+        var download = await DownloadMediaAsync(media, cookieHeader, progress, cancellationToken, directory);
         return new TelegramDraftResult(directory, download.Paths, download.Failed);
     }
 
-    internal static string BuildDraftDirectory(string root, DateTimeOffset now, string channelName, string messageId)
+    internal static IReadOnlyList<TelegramMediaRef> SelectDraftMedia(IReadOnlyList<TelegramMediaRef> media) =>
+        media
+            .Where(item => string.Equals(item.Kind, "image", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(item.Kind, "video", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+    internal static string BuildDraftDirectory(string root, DateTimeOffset now, string channelName)
     {
         var channel = SanitizeSegment(channelName);
-        var id = SanitizeSegment(messageId);
-        return Path.Combine(root, "temp", "telegram", now.ToString("yyyyMMdd"), $"{channel}_{id}");
+        return Path.Combine(root, "temp", "telegram", now.ToString("yyyyMMdd"), channel);
     }
 
     internal static string BuildPreviewDirectory(string root, string messageId) =>
@@ -193,20 +203,6 @@ public sealed class TelegramCollectorService
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (segments.Length == 0) return "";
         return segments[0].Equals("s", StringComparison.OrdinalIgnoreCase) && segments.Length >= 2 ? segments[1] : segments[0];
-    }
-
-    internal static string BuildMessageMeta(TelegramChannelMessage message, DateTimeOffset collectedAt)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine($"标题：{message.Title}");
-        builder.AppendLine($"频道：{ReadMessageChannel(message.Url)}");
-        builder.AppendLine($"发布时间：{(message.PublishedAt is null ? "未知" : message.PublishedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))}");
-        builder.AppendLine($"采集时间：{collectedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
-        builder.AppendLine($"原帖链接：{message.Url}");
-        builder.AppendLine();
-        builder.AppendLine("正文：");
-        builder.Append(message.Text);
-        return builder.ToString();
     }
 
     private static string SanitizeSegment(string value)

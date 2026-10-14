@@ -18,13 +18,11 @@ public partial class ContentCollectionPage : UserControl
     private readonly ProxyPoolService _proxyPoolService;
     private readonly PublicArticleFetcher _fetcher = new();
     private readonly TelegramCollectorService _telegramCollector = new();
+    private readonly TelegramMaterializer _telegramMaterializer;
     private readonly List<string> _pendingMedia = [];
     private CollectedItem? _selectedItem;
-    private ContentDraft? _selectedDraft;
     private IReadOnlyList<CollectedItem> _allItems = [];
-    private IReadOnlyList<ContentDraft> _allDrafts = [];
     private int _itemsPage = 1;
-    private int _draftsPage = 1;
     private bool _loading;
     private string _parseError = "";
     private readonly ObservableCollection<TelegramTempItem> _tempItems = [];
@@ -34,27 +32,50 @@ public partial class ContentCollectionPage : UserControl
     private CancellationTokenSource? _collectCts;
     private bool _tgPermissionConfirmed;
 
-    public event Action<ContentDraft>? PublishDraftRequested;
     private readonly ObservableCollection<ProxySource> _proxySources = [];
     private readonly ObservableCollection<ProxyNodeRow> _proxyNodes = [];
+    private readonly TelegramCollectionStore? _telegramCollectionStore;
+    private readonly TelegramCollectionScheduler? _telegramCollectionScheduler;
+    private readonly ChannelSyncService? _channelSync;
+    private readonly ObservableCollection<TelegramCollectionSchedule> _telegramSchedules = [];
+    private TelegramCollectionSchedule? _editingTelegramSchedule;
+    private string _scheduleCronExpression = "0 0 * * *";
+    private string _scheduleKeyword = "";
+    private IReadOnlyList<TelegramDistributionRuleDraft> _scheduleRules = [];
+    private CancellationTokenSource? _telegramScheduleRunCts;
+    private bool _telegramScheduleRunActive;
 
-    public ContentCollectionPage(ContentLibraryStore? store = null, ProxyPoolStore? proxyPoolStore = null)
+    public ContentCollectionPage(ContentLibraryStore? store = null, ProxyPoolStore? proxyPoolStore = null, TelegramCollectionStore? telegramCollectionStore = null, TelegramCollectionScheduler? telegramCollectionScheduler = null, ChannelSyncService? channelSync = null)
     {
         InitializeComponent();
         _store = store ?? new ContentLibraryStore();
         _proxyPoolStore = proxyPoolStore ?? new ProxyPoolStore();
         _proxyPoolService = new ProxyPoolService(_proxyPoolStore);
+        _telegramMaterializer = new TelegramMaterializer(_telegramCollector, _store);
+        _telegramCollectionStore = telegramCollectionStore;
+        _telegramCollectionScheduler = telegramCollectionScheduler;
+        _channelSync = channelSync;
         TgGrid.ItemsSource = _tempItems;
         TgChannelBox.ItemsSource = _channelHistory;
         TgProxyBox.ItemsSource = _proxyRegistry.Options;
         TgProxyBox.SelectedIndex = 0;
-        TgLimitBox.Text = "50";
+        TgLimitBox.Text = "20";
         UpdateTgSelectionCount();
         ProxySourceBox.ItemsSource = _proxySources;
         ProxyNodesGrid.ItemsSource = _proxyNodes;
+        TgSchedulesGrid.ItemsSource = _telegramSchedules;
+        TgScheduleProxyBox.ItemsSource = _proxyRegistry.Options;
+        TgScheduleProxyBox.SelectedIndex = 0;
+        TgScheduleLimitBox.Text = "20";
+        if (_telegramCollectionScheduler is not null)
+        {
+            _telegramCollectionScheduler.StatusChanged += TelegramCollectionScheduler_StatusChanged;
+            _telegramCollectionScheduler.ProgressChanged += TelegramCollectionScheduler_ProgressChanged;
+        }
         ProxyConcurrencyBox.Text = ProxyPoolService.DefaultConcurrency.ToString();
-        Loaded += async (_, _) => { await LoadItemsAsync(); await LoadDraftsAsync(); };
+        Loaded += async (_, _) => await LoadItemsAsync();
         Loaded += async (_, _) => await LoadProxySourcesAsync();
+        Loaded += async (_, _) => await LoadTelegramSchedulesAsync();
     }
 
     public async Task LoadItemsAsync()
@@ -78,23 +99,6 @@ public partial class ContentCollectionPage : UserControl
         finally { _loading = false; }
     }
 
-    public async Task LoadDraftsAsync()
-    {
-        try
-        {
-            _allDrafts = await _store.GetDraftsAsync(DraftSearchBox.Text);
-            _draftsPage = 1;
-            RenderDraftsPage();
-        }
-        catch (Exception ex)
-        {
-            _allDrafts = [];
-            DraftsGrid.ItemsSource = null;
-            UpdateDraftsPagination();
-            DraftsStatus.Text = $"读取草稿箱失败：{CliDiagnostics.Sanitize(ex.Message)}";
-        }
-    }
-
     private void RenderItemsPage()
     {
         var pageCount = GetPageCount(_allItems.Count);
@@ -104,29 +108,12 @@ public partial class ContentCollectionPage : UserControl
         UpdateItemsPagination(pageCount);
     }
 
-    private void RenderDraftsPage()
-    {
-        var pageCount = GetPageCount(_allDrafts.Count);
-        _draftsPage = Math.Clamp(_draftsPage, 1, pageCount);
-        DraftsGrid.ItemsSource = _allDrafts.Skip((_draftsPage - 1) * PageSize).Take(PageSize).ToArray();
-        DraftsStatus.Text = $"共 {_allDrafts.Count} 条";
-        UpdateDraftsPagination(pageCount);
-    }
-
     private void UpdateItemsPagination(int? pageCount = null)
     {
         var pages = pageCount ?? GetPageCount(_allItems.Count);
         ItemsPageText.Text = $"{_itemsPage} / {pages}";
         ItemsPreviousPageButton.IsEnabled = _itemsPage > 1 && _allItems.Count > 0;
         ItemsNextPageButton.IsEnabled = _itemsPage < pages && _allItems.Count > 0;
-    }
-
-    private void UpdateDraftsPagination(int? pageCount = null)
-    {
-        var pages = pageCount ?? GetPageCount(_allDrafts.Count);
-        DraftsPageText.Text = $"{_draftsPage} / {pages}";
-        DraftsPreviousPageButton.IsEnabled = _draftsPage > 1 && _allDrafts.Count > 0;
-        DraftsNextPageButton.IsEnabled = _draftsPage < pages && _allDrafts.Count > 0;
     }
 
     private static int GetPageCount(int total) => Math.Max(1, (total + PageSize - 1) / PageSize);
@@ -145,20 +132,6 @@ public partial class ContentCollectionPage : UserControl
         RenderItemsPage();
     }
 
-    private void DraftsPreviousPageButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_draftsPage <= 1) return;
-        _draftsPage--;
-        RenderDraftsPage();
-    }
-
-    private void DraftsNextPageButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_draftsPage >= GetPageCount(_allDrafts.Count)) return;
-        _draftsPage++;
-        RenderDraftsPage();
-    }
-
     private async void FetchButton_Click(object sender, RoutedEventArgs e)
     {
         if (!PublicArticleFetcher.TryNormalizePublicUrl(UrlBox.Text, out var normalized, out var error))
@@ -168,8 +141,8 @@ public partial class ContentCollectionPage : UserControl
         }
         if (TelegramChannelParser.IsTelegramHost(normalized.Host))
         {
-            var answer = MessageBox.Show(Window.GetWindow(this), "tg 频道和消息请使用「tg 临时采集」页签采集：\n\n结果先临时展示在列表中，转草稿时才下载媒体并加入草稿箱。\n\n是否立即切换到该页签？", "请使用 tg 临时采集", MessageBoxButton.YesNo, MessageBoxImage.Information);
-            if (answer == MessageBoxResult.Yes) WorkspaceTabs.SelectedIndex = 2;
+            var answer = MessageBox.Show(Window.GetWindow(this), "tg 频道和消息请使用「TG采集」页签采集：\n\n结果先临时展示在列表中，确认后下载媒体并直接加入素材仓库。\n\n是否立即切换到该页签？", "请使用 TG采集", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            if (answer == MessageBoxResult.Yes) WorkspaceTabs.SelectedIndex = 1;
             return;
         }
         try
@@ -202,7 +175,7 @@ public partial class ContentCollectionPage : UserControl
             ItemMessage.Text = result.Succeeded
                 ? $"已提取自 {result.SourceHost}。请检查并确认内容使用权限后保存。"
                 : $"{result.Error} 可手动补全标题和正文后保存。";
-            ItemMessage.Foreground = result.Succeeded ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.DarkGoldenrod;
+            ItemMessage.Foreground = result.Succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
         }
         finally { FetchButtonIsEnabled(true); }
     }
@@ -215,7 +188,7 @@ public partial class ContentCollectionPage : UserControl
     private void SetItemMessage(string message, bool succeeded)
     {
         ItemMessage.Text = message;
-        ItemMessage.Foreground = succeeded ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.DarkGoldenrod;
+        ItemMessage.Foreground = succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
     }
 
     private void ShowMediaInfo(IReadOnlyList<string>? media = null)
@@ -275,7 +248,7 @@ public partial class ContentCollectionPage : UserControl
             if (_selectedItem is null) _ = await _store.SaveItemAsync(model);
             else await _store.UpdateItemAsync(model);
             ItemMessage.Text = "素材已保存。";
-            ItemMessage.Foreground = System.Windows.Media.Brushes.SeaGreen;
+            ItemMessage.Foreground = UiStatusBrushes.Success;
             await LoadItemsAsync();
         }
         catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
@@ -321,21 +294,39 @@ public partial class ContentCollectionPage : UserControl
         await LoadItemsAsync();
     }
 
-    private async void CreateDraftButton_Click(object sender, RoutedEventArgs e)
+    private async void AddItemToMaterialsButton_Click(object sender, RoutedEventArgs e)
     {
         var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem?.Media;
         if (string.IsNullOrWhiteSpace(ItemTitleBox.Text) && string.IsNullOrWhiteSpace(ItemContentBox.Text) && (media is null || media.Count == 0))
         {
-            MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项后才能创建草稿。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项后才能加入素材仓库。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         var source = ItemUrlBox.Text.Trim();
-        if (source.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。来源链接会保留在草稿中，但不会自动加入帖子正文。继续创建草稿？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        var id = await _store.CreateDraftAsync(_selectedItem?.Id, ItemTitleBox.Text, ItemContentBox.Text, source, media);
+        if (source.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。来源地址会保留在素材来源中，不会自动加入帖子正文。继续加入素材仓库？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var mediaList = media ?? [];
+        var type = MaterialMediaValidator.InferType(mediaList) ?? (mediaList.Count == 0 ? "text" : "");
+        if (type.Length == 0)
+        {
+            MessageBox.Show(Window.GetWindow(this), "媒体类型无法识别，请确认图片和视频没有混用，且文件或链接带有正确扩展名。", "媒体无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        try
+        {
+            var materialId = await _store.SaveMaterialAsync(new MaterialDraft(
+                null, ItemTitleBox.Text, type, ItemContentBox.Text, "", "", "", "", null, "waitsend", "", mediaList,
+                source.Length > 0 ? "网络采集" : "手工添加", source));
+            if (_selectedItem is not null) await _store.SetItemStatusAsync(_selectedItem.Id, "已入素材库");
+            ItemMessage.Text = $"已加入素材仓库（编号 {materialId}），状态为待发布。";
+            ItemMessage.Foreground = UiStatusBrushes.Success;
+        }
+        catch (Exception ex)
+        {
+            ItemMessage.Text = $"加入素材仓库失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+            return;
+        }
         await LoadItemsAsync();
-        await LoadDraftsAsync();
-        WorkspaceTabs.SelectedIndex = 1;
-        DraftsGrid.SelectedItem = ((IEnumerable<ContentDraft>)DraftsGrid.ItemsSource!).FirstOrDefault(draft => draft.Id == id);
     }
 
     private async void DeleteItemButton_Click(object sender, RoutedEventArgs e)
@@ -347,60 +338,24 @@ public partial class ContentCollectionPage : UserControl
         await LoadItemsAsync();
     }
 
-    private void DraftsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        _selectedDraft = DraftsGrid.SelectedItem as ContentDraft;
-        if (_selectedDraft is null) return;
-        DraftTitleBox.Text = _selectedDraft.Title;
-        DraftContentBox.Text = _selectedDraft.Content;
-        DraftSourceBox.Text = _selectedDraft.SourceUrl;
-        var media = _selectedDraft.Media.Count == 0 ? "" : $" · 媒体 {_selectedDraft.Media.Count} 个";
-        DraftMessage.Text = $"{_selectedDraft.PublishStatus}{media}{(_selectedDraft.LastPublishedAt is null ? "" : $" · 最近發布 { _selectedDraft.LastPublishedAt.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}";
-    }
-
-    private async void SaveDraftButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedDraft is null) return;
-        await _store.UpdateDraftAsync(_selectedDraft with { Title = DraftTitleBox.Text, Content = DraftContentBox.Text });
-        DraftMessage.Text = "草稿已保存。";
-        await LoadDraftsAsync();
-    }
-
-    private void PublishDraftButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedDraft is null) return;
-        PublishDraftRequested?.Invoke(_selectedDraft with { Title = DraftTitleBox.Text, Content = DraftContentBox.Text });
-    }
-
-    private async void DeleteDraftButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedDraft is null) return;
-        if (MessageBox.Show(Window.GetWindow(this), "确定删除此草稿？", "删除草稿", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await _store.DeleteDraftAsync(_selectedDraft.Id);
-        _selectedDraft = null;
-        await LoadDraftsAsync();
-    }
-
     private async void SearchItemsButton_Click(object sender, RoutedEventArgs e) => await LoadItemsAsync();
     private async void ItemStatusFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) await LoadItemsAsync(); }
-    private async void SearchDraftsButton_Click(object sender, RoutedEventArgs e) => await LoadDraftsAsync();
     private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
         if (ReferenceEquals(sender, ItemSearchBox)) await LoadItemsAsync();
-        else if (ReferenceEquals(sender, DraftSearchBox)) await LoadDraftsAsync();
-        else await LoadDraftsAsync();
+        else await LoadItemsAsync();
     }
 
-    #region tg 临时采集
+    #region TG采集
 
     private void SetTgStatus(string message, bool succeeded)
     {
         TgStatusText.Text = message;
-        TgStatusText.Foreground = succeeded ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.DarkGoldenrod;
+        TgStatusText.Foreground = succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
     }
 
-    /// <summary>采集或草稿化期间锁住可能冲突的操作；allowCancel 只在采集时打开取消按钮。</summary>
+    /// <summary>采集或入库期间锁住可能冲突的操作；allowCancel 只在采集时打开取消按钮。</summary>
     private void SetTgBusy(bool busy, bool allowCancel = false)
     {
         TgCollectButton.IsEnabled = !busy;
@@ -424,7 +379,7 @@ public partial class ContentCollectionPage : UserControl
         if (!_tgPermissionConfirmed)
         {
             var granted = MessageBox.Show(Window.GetWindow(this),
-                "将通过网络代理打开 tg 频道预览页并解析其中的消息。\n\n采集结果仅临时展示在列表中，不会自动保存；点「草稿」后才会下载媒体并加入草稿箱。\n\n请确认你对这些内容拥有合法使用权限。是否继续？",
+                "将通过网络代理打开 tg 频道预览页并解析其中的消息。\n\n采集结果仅临时展示在列表中，确认后会下载媒体并直接加入素材仓库。\n\n请确认你对这些内容拥有合法使用权限。是否继续？",
                 "确认采集", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (granted != MessageBoxResult.Yes) return;
             _tgPermissionConfirmed = true;
@@ -462,7 +417,7 @@ public partial class ContentCollectionPage : UserControl
             if (preview.Total > preview.Messages.Count) summary += $"（筛选后保留 {preview.Messages.Count} 条）";
             if (preview.ProviderName.Length > 0) summary += $" 使用 {preview.ProviderName}。";
             SetTgStatus(summary, true);
-            AppLogger.Instance.Info($"tg 临时采集 {channelUrl}：{summary}");
+            AppLogger.Instance.Info($"TG采集 {channelUrl}：{summary}");
         }
         catch (OperationCanceledException)
         {
@@ -591,19 +546,19 @@ public partial class ContentCollectionPage : UserControl
 
     private async void TgBatchDraftButton_Click(object sender, RoutedEventArgs e)
     {
-        var targets = _tempItems.Where(item => item.IsSelected && item.CanDraft).ToArray();
+        var targets = _tempItems.Where(item => item.IsSelected && item.CanMaterialize).ToArray();
         if (targets.Length == 0)
         {
-            var drafted = _tempItems.Count(item => item.IsSelected && !item.CanDraft);
-            SetTgStatus(drafted > 0 ? "选中的消息都已转为草稿，不能重复入库。" : "请先勾选要转为草稿的临时消息。", false);
+            var drafted = _tempItems.Count(item => item.IsSelected && !item.CanMaterialize);
+            SetTgStatus(drafted > 0 ? "选中的消息都已加入素材仓库，不能重复入库。" : "请先勾选要加入素材仓库的临时消息。", false);
             return;
         }
-        var answer = MessageBox.Show(Window.GetWindow(this), $"将把选中的 {targets.Length} 条消息下载媒体并加入草稿箱：\n\ntemp\\telegram\\yyyyMMdd\\频道_消息ID\\\n\n已转草稿的消息会自动跳过。是否继续？", "批量转草稿", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        var answer = MessageBox.Show(Window.GetWindow(this), $"将把选中的 {targets.Length} 条消息下载图片和视频并加入素材仓库：\n\ntemp\\telegram\\yyyyMMdd\\频道\\\n\n已入素材库的消息会自动跳过。是否继续？", "批量加入素材仓库", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (answer != MessageBoxResult.Yes) return;
         await DraftTempItemsAsync(targets);
     }
 
-    /// <summary>逐条下载媒体并写入草稿箱；单条失败不中断，最后统一汇总。</summary>
+    /// <summary>逐条下载媒体并写入素材仓库；单条失败不中断，最后统一汇总。</summary>
     private async Task DraftTempItemsAsync(IReadOnlyList<TelegramTempItem> targets)
     {
         SetTgBusy(true);
@@ -615,34 +570,43 @@ public partial class ContentCollectionPage : UserControl
             for (var index = 0; index < targets.Count; index++)
             {
                 var item = targets[index];
-                if (!item.CanDraft) continue;
-                SetTgStatus($"正在转草稿 {index + 1}/{targets.Count}：{item.TitleDisplay}…", false);
+                if (!item.CanMaterialize) continue;
+                SetTgStatus($"正在加入素材库 {index + 1}/{targets.Count}：{item.TitleDisplay}…", false);
                 try
                 {
-                    var result = await _telegramCollector.DraftMessageAsync(item.Message, _proxyCookie);
-                    if (result.MediaPaths.Count == 0 && string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Text))
+                    var result = await _telegramMaterializer.MaterializeAsync(item.Message, _proxyCookie);
+                    if (result.SkippedDuplicate)
                     {
-                        failed++;
-                        mediaFailed += result.Failed;
-                        AppLogger.Instance.Warning($"tg 草稿化未生成空白草稿：{item.Url} 的媒体全部下载失败。");
+                        item.MarkMaterialized(result.MaterialId ?? 0, result.Directory);
                         continue;
                     }
-                    // TG 采集固定进入短帖子草稿；标题字段保留给后续迭代，但当前不写入标题。
-                    var draftId = await _store.CreateDraftAsync(null, "", item.Text, item.Url, result.MediaPaths);
-                    item.MarkDrafted(draftId, result.Directory);
+                    if (result.SkippedEmpty)
+                    {
+                        failed++;
+                        mediaFailed += result.FailedMediaCount;
+                        AppLogger.Instance.Warning($"tg 入库未生成空白素材：{item.Url} 的媒体全部下载失败。");
+                        continue;
+                    }
+                    if (!result.Succeeded || result.MaterialId is null)
+                    {
+                        failed++;
+                        mediaFailed += result.FailedMediaCount;
+                        AppLogger.Instance.Warning($"tg 入库失败：{item.Url} {result.Error}");
+                        continue;
+                    }
+                    item.MarkMaterialized(result.MaterialId.Value, result.Directory);
                     drafted++;
-                    mediaFailed += result.Failed;
+                    mediaFailed += result.FailedMediaCount;
                 }
                 catch (Exception ex)
                 {
                     failed++;
-                    AppLogger.Instance.Warning($"tg 草稿化失败 {item.Url}：{ex.Message}");
+                    AppLogger.Instance.Warning($"tg 入库失败 {item.Url}：{ex.Message}");
                 }
             }
-            if (drafted > 0) await LoadDraftsAsync();
-            var summary = $"转草稿完成：成功 {drafted} 条，失败 {failed} 条";
-            if (mediaFailed > 0) summary += $"，{mediaFailed} 个媒体下载失败（内容已入草稿箱）";
-            summary += "。可在「发布草稿箱」查看。";
+            var summary = $"加入素材库完成：成功 {drafted} 条，失败 {failed} 条";
+            if (mediaFailed > 0) summary += $"，{mediaFailed} 个媒体下载失败（成功内容已入素材库）";
+            summary += "。可在「素材仓库」查看。";
             SetTgStatus(summary, failed == 0);
         }
         finally
@@ -655,7 +619,7 @@ public partial class ContentCollectionPage : UserControl
     private void TgViewButton_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.DataContext is not TelegramTempItem item) return;
-        var window = new TelegramMessagePreviewWindow(item, _proxyCookie, DraftSingleAsync, DeleteTempItem)
+        var window = new TelegramMessagePreviewWindow(item, _proxyCookie, MaterializeSingleAsync, DeleteTempItem)
         {
             Owner = Window.GetWindow(this)
         };
@@ -682,13 +646,13 @@ public partial class ContentCollectionPage : UserControl
         await DraftTempItemsAsync(new[] { item });
     }
 
-    /// <summary>预览窗里的单条草稿回调，返回是否成功入箱。</summary>
-    private async Task<bool> DraftSingleAsync(TelegramTempItem item)
+    /// <summary>预览窗里的单条入库回调，返回是否成功入库。</summary>
+    private async Task<bool> MaterializeSingleAsync(TelegramTempItem item)
     {
         try
         {
             await DraftTempItemsAsync(new[] { item });
-            return item.DraftId is not null;
+            return item.MaterialId is not null;
         }
         catch
         {
@@ -710,6 +674,286 @@ public partial class ContentCollectionPage : UserControl
         }
     }
 
+    #region TG定时采集
+
+    private async Task LoadTelegramSchedulesAsync()
+    {
+        if (_telegramCollectionStore is null) return;
+        try
+        {
+            var schedules = await _telegramCollectionStore.GetAsync();
+            _telegramSchedules.Clear();
+            foreach (var schedule in schedules)
+            {
+                var rules = await _telegramCollectionStore.GetRulesAsync(schedule.Id);
+                var targetSummary = rules.Count == 0
+                    ? "未配置规则"
+                    : $"{rules[0].TargetDisplay}（{rules.Count}条规则）";
+                _telegramSchedules.Add(schedule with { DistributionDisplay = targetSummary });
+            }
+            TgScheduleStatusText.Text = _telegramSchedules.Count == 0
+                ? "还没有配置定时采集频道。"
+                : $"已配置 {_telegramSchedules.Count} 个频道，调度器每 2 分钟检查一次到期配置。";
+        }
+        catch (Exception ex)
+        {
+            TgScheduleStatusText.Text = $"读取定时采集配置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+    }
+
+    private void ClearTelegramScheduleEditor()
+    {
+        _editingTelegramSchedule = null;
+        TgScheduleChannelBox.Text = "";
+        TgScheduleLimitBox.Text = "20";
+        TgScheduleProxyBox.SelectedIndex = 0;
+        _scheduleCronExpression = "0 0 * * *";
+        _scheduleKeyword = "";
+        _scheduleRules = [];
+        TgScheduleSaveButton.Content = "保存配置";
+    }
+
+    private void TgScheduleClearButton_Click(object sender, RoutedEventArgs e) => ClearTelegramScheduleEditor();
+
+    private async void TgScheduleSaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SaveTelegramScheduleAsync();
+    }
+
+    private async Task<long?> SaveTelegramScheduleAsync()
+    {
+        if (_telegramCollectionStore is null) return null;
+        var url = TelegramCollectorService.NormalizeChannelUrl(TgScheduleChannelBox.Text);
+        if (url.Length == 0)
+        {
+            TgScheduleStatusText.Text = "请输入有效的公开 TG 频道地址。";
+            TgScheduleChannelBox.Focus();
+            return null;
+        }
+        var limit = 20;
+        if (TgScheduleLimitBox.Text.Trim().Length > 0 &&
+            (!int.TryParse(TgScheduleLimitBox.Text.Trim(), out limit) || limit < 0 || limit > TelegramCollectorService.TempListLimit))
+        {
+            TgScheduleStatusText.Text = "数量上限请填写 0 到 500 的整数，0 表示不限制。";
+            return null;
+        }
+        if (!TelegramCronSchedule.TryParse(_scheduleCronExpression, out var cron, out var cronError))
+        {
+            TgScheduleStatusText.Text = $"Cron 表达式无效：{cronError}";
+            return null;
+        }
+        var proxySelection = _proxyRegistry.ParseSelection(
+            TgScheduleProxyBox.Text,
+            (TgScheduleProxyBox.SelectedItem as WebProxyOption)?.Value).Value;
+        try
+        {
+            var id = await _telegramCollectionStore.SaveAsync(new TelegramCollectionScheduleDraft(
+                _editingTelegramSchedule?.Id,
+                url,
+                TelegramCollectorService.ReadChannelName(url),
+                0,
+                _editingTelegramSchedule?.Enabled ?? true,
+                proxySelection,
+                limit,
+                _scheduleKeyword,
+                "daily",
+                1,
+                1,
+                "00:00",
+                cron.Expression));
+            await _telegramCollectionStore.ReplaceRulesAsync(id, _scheduleRules);
+            await LoadTelegramSchedulesAsync();
+            TgScheduleStatusText.Text = $"定时采集配置已保存（编号 {id}）。";
+            return id;
+        }
+        catch (Exception ex)
+        {
+            TgScheduleStatusText.Text = $"保存定时采集配置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            return null;
+        }
+    }
+
+    private async void TgScheduleEditButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TelegramCollectionSchedule schedule) return;
+        _editingTelegramSchedule = schedule;
+        TgScheduleChannelBox.Text = schedule.ChannelUrl;
+        TgScheduleLimitBox.Text = schedule.MessageLimit.ToString();
+        _scheduleCronExpression = schedule.EffectiveCronExpression;
+        _scheduleKeyword = schedule.Keyword;
+        _scheduleRules = [];
+        if (_telegramCollectionStore is not null)
+        {
+            try
+            {
+                var rules = await _telegramCollectionStore.GetRulesAsync(schedule.Id);
+                _scheduleRules = rules.Select(rule => new TelegramDistributionRuleDraft(rule.MessageType, rule.Keyword, rule.GuildId, rule.GuildName, rule.ChannelId, rule.ChannelName, rule.SortOrder)).ToArray();
+            }
+            catch (Exception ex) { TgScheduleStatusText.Text = $"读取分发规则失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        }
+        var option = _proxyRegistry.Options.FirstOrDefault(item => string.Equals(item.Value, schedule.ProxySelection, StringComparison.OrdinalIgnoreCase));
+        if (option is not null) TgScheduleProxyBox.SelectedItem = option;
+        else TgScheduleProxyBox.Text = schedule.ProxySelection;
+        TgScheduleSaveButton.Content = "保存修改";
+        TgScheduleStatusText.Text = $"正在编辑：{schedule.ChannelName}";
+    }
+
+    private async void TgScheduleToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_telegramCollectionStore is null || (sender as FrameworkElement)?.DataContext is not TelegramCollectionSchedule schedule) return;
+        try
+        {
+            await _telegramCollectionStore.SetEnabledAsync(schedule.Id, !schedule.Enabled);
+            await LoadTelegramSchedulesAsync();
+            TgScheduleStatusText.Text = schedule.Enabled ? "定时采集已关闭。" : "定时采集已开启。";
+        }
+        catch (Exception ex)
+        {
+            TgScheduleStatusText.Text = $"切换定时采集状态失败：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+    }
+
+    private async void TgScheduleDeleteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_telegramCollectionStore is null || (sender as FrameworkElement)?.DataContext is not TelegramCollectionSchedule schedule) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除频道“{schedule.ChannelName}”的定时采集配置？已入素材仓库的内容不会删除。", "删除定时采集", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        try
+        {
+            await _telegramCollectionStore.DeleteAsync(schedule.Id);
+            if (_editingTelegramSchedule?.Id == schedule.Id) ClearTelegramScheduleEditor();
+            await LoadTelegramSchedulesAsync();
+        }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"删除失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+    }
+
+    private async void TgScheduleRunButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_telegramCollectionScheduler is null || (sender as FrameworkElement)?.DataContext is not TelegramCollectionSchedule schedule) return;
+        if (_telegramScheduleRunActive) return;
+        _telegramScheduleRunCts = new CancellationTokenSource();
+        SetTelegramScheduleRunState(true);
+        TgScheduleProgressBar.Visibility = Visibility.Visible;
+        TgScheduleProgressBar.IsIndeterminate = true;
+        TgScheduleStatusText.Text = $"{schedule.ChannelName}：正在启动采集…";
+        try
+        {
+            var result = await _telegramCollectionScheduler.RunNowAsync(schedule.Id, _telegramScheduleRunCts.Token);
+            await LoadTelegramSchedulesAsync();
+            TgScheduleStatusText.Text = result.Succeeded
+                ? $"立即采集完成：新增 {result.AddedCount} 条，跳过 {result.SkippedCount} 条。"
+                : $"立即采集失败：{result.Message}";
+        }
+        catch (OperationCanceledException)
+        {
+            TgScheduleStatusText.Text = "立即采集已取消，已完成的入库内容会保留。";
+        }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"立即采集失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        finally
+        {
+            TgScheduleProgressBar.Visibility = Visibility.Collapsed;
+            SetTelegramScheduleRunState(false);
+            _telegramScheduleRunCts.Dispose();
+            _telegramScheduleRunCts = null;
+        }
+    }
+
+    private void TgScheduleCancelButton_Click(object sender, RoutedEventArgs e) => _telegramScheduleRunCts?.Cancel();
+
+    private async void TgScheduleCheckButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_telegramCollectionScheduler is null || _telegramScheduleRunActive) return;
+        _telegramScheduleRunCts = new CancellationTokenSource();
+        SetTelegramScheduleRunState(true);
+        try
+        {
+            await _telegramCollectionScheduler.CheckNowAsync(_telegramScheduleRunCts.Token);
+            await LoadTelegramSchedulesAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            TgScheduleStatusText.Text = "定时采集检查已取消。";
+        }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"检查定时采集失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        finally
+        {
+            SetTelegramScheduleRunState(false);
+            _telegramScheduleRunCts.Dispose();
+            _telegramScheduleRunCts = null;
+        }
+    }
+
+    private void TgScheduleAdvancedButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new TelegramScheduleAdvancedWindow(
+            new TelegramScheduleAdvancedSettings(_scheduleCronExpression, _scheduleKeyword, _scheduleRules),
+            _channelSync)
+        { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() != true) return;
+        _scheduleCronExpression = window.Settings.CronExpression;
+        _scheduleKeyword = window.Settings.Keyword;
+        _scheduleRules = window.Settings.DistributionRules;
+        _ = SaveAdvancedSettingsAsync();
+    }
+
+    private async Task SaveAdvancedSettingsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(TgScheduleChannelBox.Text))
+        {
+            TgScheduleStatusText.Text = "高级设置已更新；请输入频道地址后保存配置。";
+            return;
+        }
+        await SaveTelegramScheduleAsync();
+    }
+
+    private void SetTelegramScheduleRunState(bool active)
+    {
+        _telegramScheduleRunActive = active;
+        TgScheduleSaveButton.IsEnabled = !active;
+        TgScheduleAdvancedButton.IsEnabled = !active;
+        TgScheduleClearButton.IsEnabled = !active;
+        TgScheduleCheckButton.IsEnabled = !active;
+        TgScheduleCancelButton.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        TgSchedulesGrid.IsEnabled = !active;
+    }
+
+    private void TelegramCollectionScheduler_StatusChanged(string message)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => TelegramCollectionScheduler_StatusChanged(message));
+            return;
+        }
+        TgScheduleStatusText.Text = message;
+    }
+
+    private void TelegramCollectionScheduler_ProgressChanged(TelegramCollectionProgress progress)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => TelegramCollectionScheduler_ProgressChanged(progress));
+            return;
+        }
+        TgScheduleStatusText.Text = $"{progress.ChannelName}：{progress.Message}";
+        TgScheduleProgressBar.Visibility = Visibility.Visible;
+        if (progress.Total > 0)
+        {
+            TgScheduleProgressBar.IsIndeterminate = false;
+            TgScheduleProgressBar.Maximum = progress.Total;
+            TgScheduleProgressBar.Value = Math.Min(progress.Current, progress.Total);
+        }
+        else
+        {
+            TgScheduleProgressBar.IsIndeterminate = progress.Stage is not ("完成" or "失败");
+        }
+        if (progress.Stage is "完成" or "失败")
+        {
+            TgScheduleProgressBar.Visibility = Visibility.Collapsed;
+            if (IsLoaded) _ = LoadTelegramSchedulesAsync();
+        }
+    }
+
+    #endregion
+
     #region 代理池
 
     private ProxySource? SelectedProxySource => ProxySourceBox.SelectedItem as ProxySource;
@@ -730,8 +974,9 @@ public partial class ContentCollectionPage : UserControl
             else
             {
                 _proxyNodes.Clear();
-                ProxyPoolSummaryText.Text = "请选择代理源";
                 ProxyEmptyHint.Visibility = Visibility.Visible;
+                UpdateProxySummary();
+                UpdateProxySelectionSummary();
             }
         }
         catch (Exception ex)
@@ -747,7 +992,7 @@ public partial class ContentCollectionPage : UserControl
         {
             _proxyNodes.Clear();
             ProxyEmptyHint.Visibility = Visibility.Visible;
-            ProxyPoolSummaryText.Text = "请选择代理源";
+            UpdateProxySummary();
             UpdateProxySelectionSummary();
             return;
         }
@@ -755,19 +1000,17 @@ public partial class ContentCollectionPage : UserControl
         _proxyNodes.Clear();
         foreach (var node in nodes) _proxyNodes.Add(new ProxyNodeRow(node));
         ProxyEmptyHint.Visibility = _proxyNodes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateProxySummary(source);
+        UpdateProxySummary();
         UpdateProxySelectionSummary();
     }
 
-    private void UpdateProxySummary(ProxySource source)
+    private void UpdateProxySummary()
     {
         var total = _proxyNodes.Count;
         var alive = _proxyNodes.Count(item => item.Node.IsAlive);
         var tg = _proxyNodes.Count(item => item.Node.TgAccessible is true);
         var checkedCount = _proxyNodes.Count(item => item.Node.LastCheckedAt is not null);
         var uncheckedCount = Math.Max(0, total - checkedCount);
-        var fetched = source.LastFetchedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "未获取";
-        ProxyPoolSummaryText.Text = $"{source.DisplayName} · 节点 {total} · 可用 {alive} · 已测 {checkedCount} · TG 可访问 {tg} · 最近获取 {fetched}";
         ProxyTotalCountText.Text = total.ToString();
         ProxyAliveCountText.Text = alive.ToString();
         ProxyUncheckedCountText.Text = uncheckedCount.ToString();
@@ -778,15 +1021,12 @@ public partial class ContentCollectionPage : UserControl
     {
         var selected = _proxyNodes.Count(item => item.IsSelected);
         ProxySelectionText.Text = $"已选 {selected} 个";
-        ProxySelectAllButton.IsEnabled = _proxyNodes.Count > 0;
-        ProxyInvertButton.IsEnabled = _proxyNodes.Count > 0;
-        ProxyClearSelectionButton.IsEnabled = selected > 0;
     }
 
     private void SetProxyStatus(string message, bool succeeded)
     {
         ProxyPoolStatusText.Text = message;
-        ProxyPoolStatusText.Foreground = succeeded ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.DarkGoldenrod;
+        ProxyPoolStatusText.Foreground = succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
     }
 
     private void SetProxyBusy(bool busy)
@@ -794,35 +1034,75 @@ public partial class ContentCollectionPage : UserControl
         ProxySourceBox.IsEnabled = !busy;
         ProxyAddSourceButton.IsEnabled = !busy;
         ProxyEditSourceButton.IsEnabled = !busy;
-        ProxyDeleteSourceButton.IsEnabled = !busy;
         ProxyConcurrencyBox.IsEnabled = !busy;
         ProxyFetchButton.IsEnabled = !busy;
-        ProxyHealthButton.IsEnabled = !busy;
-        ProxyCheckTgButton.IsEnabled = !busy;
-        ProxyRefreshButton.IsEnabled = !busy;
-        ProxySelectAllButton.IsEnabled = !busy && _proxyNodes.Count > 0;
-        ProxyInvertButton.IsEnabled = !busy && _proxyNodes.Count > 0;
-        ProxyClearSelectionButton.IsEnabled = !busy && _proxyNodes.Any(item => item.IsSelected);
+        ProxyBatchActionBox.IsEnabled = !busy && _proxyNodes.Count > 0;
+        ProxyNodesGrid.IsEnabled = !busy;
     }
 
     private void ProxyNodeSelectionCheckBox_Click(object sender, RoutedEventArgs e) => UpdateProxySelectionSummary();
 
-    private void ProxySelectAllButton_Click(object sender, RoutedEventArgs e)
+    private async void ProxyBatchActionBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        foreach (var row in _proxyNodes) row.IsSelected = true;
-        UpdateProxySelectionSummary();
+        if (ProxyBatchActionBox.SelectedItem is not ComboBoxItem item || item.Tag is not string action) return;
+        ProxyBatchActionBox.SelectedIndex = 0;
+        switch (action)
+        {
+            case "select-all":
+                foreach (var row in _proxyNodes) row.IsSelected = true;
+                UpdateProxySelectionSummary();
+                break;
+            case "invert":
+                foreach (var row in _proxyNodes) row.IsSelected = !row.IsSelected;
+                UpdateProxySelectionSummary();
+                break;
+            case "health":
+                ProxyHealthButton_Click(sender, e);
+                break;
+            case "telegram":
+                ProxyCheckTgButton_Click(sender, e);
+                break;
+            case "delete-selected":
+                await DeleteProxyNodesAsync(_proxyNodes.Where(row => row.IsSelected).Select(row => row.Node).ToArray(), "已选节点");
+                break;
+            case "delete-invalid":
+                var invalidNodes = _proxyNodes
+                    .Where(row => row.Node.LastCheckedAt is not null && !row.Node.IsAlive &&
+                                  row.Node.LastTgCheckedAt is not null && row.Node.TgAccessible is false)
+                    .Select(row => row.Node)
+                    .ToArray();
+                await DeleteProxyNodesAsync(invalidNodes, "测活不可用且 TG 不可访问的失效节点");
+                break;
+        }
     }
 
-    private void ProxyInvertButton_Click(object sender, RoutedEventArgs e)
+    private async Task DeleteProxyNodesAsync(IReadOnlyList<ProxyNode> nodes, string description)
     {
-        foreach (var row in _proxyNodes) row.IsSelected = !row.IsSelected;
-        UpdateProxySelectionSummary();
-    }
+        if (nodes.Count == 0)
+        {
+            SetProxyStatus(description == "已选节点" ? "请先勾选要删除的节点。" : "没有同时满足测活不可用且 TG 不可访问的节点。", false);
+            return;
+        }
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除 {nodes.Count} 个{description}？删除后，下次同步代理源时这些节点可能重新出现。", "批量删除代理节点", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-    private void ProxyClearSelectionButton_Click(object sender, RoutedEventArgs e)
-    {
-        foreach (var row in _proxyNodes) row.IsSelected = false;
-        UpdateProxySelectionSummary();
+        SetProxyBusy(true);
+        var deleted = 0;
+        try
+        {
+            foreach (var node in nodes)
+            {
+                await _proxyPoolStore.DeleteNodeAsync(node);
+                deleted++;
+            }
+            await LoadProxyNodesAsync();
+            SetProxyStatus($"批量删除完成：删除 {deleted} 个代理节点。", true);
+        }
+        catch (Exception ex)
+        {
+            await LoadProxyNodesAsync();
+            SetProxyStatus($"批量删除部分完成：已删除 {deleted} 个，错误：{CliDiagnostics.Sanitize(ex.Message)}", false);
+        }
+        finally { SetProxyBusy(false); }
     }
 
     private void ProxySourceBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -830,8 +1110,6 @@ public partial class ContentCollectionPage : UserControl
         if (!IsLoaded || e.AddedItems.Count == 0) return;
         _ = LoadProxyNodesAsync();
     }
-
-    private async void ProxyRefreshButton_Click(object sender, RoutedEventArgs e) => await LoadProxySourcesAsync();
 
     private async void ProxyFetchButton_Click(object sender, RoutedEventArgs e)
     {
@@ -966,6 +1244,13 @@ public partial class ContentCollectionPage : UserControl
         if (window.ShowDialog() != true) return;
         try
         {
+            if (window.DeleteRequested)
+            {
+                await _proxyPoolStore.DeleteCustomSourceAsync(source);
+                await LoadProxySourcesAsync();
+                SetProxyStatus("代理源已删除。", true);
+                return;
+            }
             await _proxyPoolStore.UpdateSourceAsync(source, window.SourceName, window.SourceUrl, window.SourceIsEnabled);
             await LoadProxySourcesAsync();
             SetProxyStatus("代理源已更新。", true);
@@ -973,19 +1258,19 @@ public partial class ContentCollectionPage : UserControl
         catch (Exception ex) { SetProxyStatus($"更新代理源失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
     }
 
-    private async void ProxyDeleteSourceButton_Click(object sender, RoutedEventArgs e)
+    private async void ProxyRowDeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        var source = SelectedProxySource;
-        if (source is null) { SetProxyStatus("请先选择代理源。", false); return; }
-        if (source.IsBuiltIn) { SetProxyStatus("系统代理源不能删除。", false); return; }
-        if (MessageBox.Show(Window.GetWindow(this), $"确定删除代理源“{source.DisplayName}”？其节点历史也会一并删除。", "删除代理源", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if ((sender as Button)?.DataContext is not ProxyNodeRow row) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除代理节点“{row.Address}”？", "删除代理节点", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        SetProxyBusy(true);
         try
         {
-            await _proxyPoolStore.DeleteCustomSourceAsync(source);
-            await LoadProxySourcesAsync();
-            SetProxyStatus("代理源已删除。", true);
+            await _proxyPoolStore.DeleteNodeAsync(row.Node);
+            await LoadProxyNodesAsync();
+            SetProxyStatus($"已删除代理节点：{row.Address}", true);
         }
-        catch (Exception ex) { SetProxyStatus($"删除代理源失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (Exception ex) { SetProxyStatus($"删除代理节点失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        finally { SetProxyBusy(false); }
     }
 
     #endregion

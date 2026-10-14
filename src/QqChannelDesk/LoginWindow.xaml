@@ -6,12 +6,12 @@
   <Grid Margin="24">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel>
-      <TextBlock Text="使用 QQ 扫码授权" FontSize="22" FontWeight="SemiBold" />
+      <TextBlock Text="使用 QQ 扫码授权" Style="{StaticResource PageTitle}" />
       <TextBlock Text="二维码由 tencent-channel-cli 官方登录流程生成；授权凭证由 CLI 本机管理。" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
     </StackPanel>
     <Grid Grid.Row="1" Margin="0,18">
       <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <Border Width="210" Height="210" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="8" HorizontalAlignment="Left">
+      <Border Width="210" Height="210" Style="{StaticResource Card}" Padding="8" HorizontalAlignment="Left">
         <Image x:Name="QrImage" Stretch="Uniform" />
       </Border>
       <StackPanel Grid.Column="1" Margin="20,4,0,0" VerticalAlignment="Center">
@@ -23,7 +23,7 @@
     </Grid>
     <DockPanel Grid.Row="2">
       <TextBlock x:Name="TimeRemaining" Text="授权有效期最长约 10 分钟" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-      <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="取消" Click="CancelButton_Click" />
+      <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="取消" Style="{StaticResource QuietButton}" Click="CancelButton_Click" />
     </DockPanel>
   </Grid>
 </Window>

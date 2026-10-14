@@ -210,7 +210,8 @@ public partial class MaterialEditorWindow : Window
         }
         var status = ResolveMaterialStatus(publishAt, _existing?.Status, DateTimeOffset.Now);
         var materialLink = status == "published" ? _existing?.Link ?? "" : "";
-        Material = new MaterialDraft(_existing?.Id, title, type, content, guild?.Id ?? "", guild?.Name ?? "", channel?.Id ?? "", channel?.Name ?? "", publishAt, status, materialLink, storedLinks);
+        Material = new MaterialDraft(_existing?.Id, title, type, content, guild?.Id ?? "", guild?.Name ?? "", channel?.Id ?? "", channel?.Name ?? "", publishAt, status, materialLink, storedLinks,
+            _existing?.SourceType ?? "手工添加", _existing?.SourceUrl ?? "");
         DialogResult = true;
     }
 

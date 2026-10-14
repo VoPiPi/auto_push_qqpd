@@ -6,6 +6,7 @@ namespace QqChannelDesk;
 public partial class ProxySourceEditorWindow : Window
 {
     private readonly ProxySource? _source;
+    public bool DeleteRequested { get; private set; }
     public string SourceName => NameBox.Text.Trim();
     public string SourceUrl => UrlBox.Text.Trim();
     public bool SourceIsEnabled => EnabledBox.IsChecked == true;
@@ -20,6 +21,7 @@ public partial class ProxySourceEditorWindow : Window
             NameBox.Text = source.DisplayName;
             UrlBox.Text = source.SourceUrl;
             EnabledBox.IsChecked = source.IsEnabled;
+            DeleteSourceButton.Visibility = source.IsBuiltIn ? Visibility.Collapsed : Visibility.Visible;
         }
         NameBox.Focus();
     }
@@ -49,4 +51,12 @@ public partial class ProxySourceEditorWindow : Window
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+
+    private void DeleteSourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_source is null || _source.IsBuiltIn) return;
+        if (MessageBox.Show(this, $"确定删除代理源“{_source.DisplayName}”？其节点历史也会一并删除。", "删除代理源", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        DeleteRequested = true;
+        DialogResult = true;
+    }
 }
