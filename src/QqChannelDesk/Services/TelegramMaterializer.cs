@@ -6,16 +6,23 @@ public sealed class TelegramMaterializer
     private readonly TelegramCollectorService _collector;
     private readonly ContentLibraryStore _library;
     private readonly Func<TelegramChannelMessage, string, CancellationToken, Task<TelegramDraftResult>> _draftAsync;
+    private readonly MediaStorageService _mediaStorage;
+    private readonly Func<IReadOnlyList<string>, CancellationToken, Task> _cleanupStagingAsync;
 
     public TelegramMaterializer(
         TelegramCollectorService collector,
         ContentLibraryStore library,
-        Func<TelegramChannelMessage, string, CancellationToken, Task<TelegramDraftResult>>? draftAsync = null)
+        Func<TelegramChannelMessage, string, CancellationToken, Task<TelegramDraftResult>>? draftAsync = null,
+        MediaStorageService? mediaStorage = null,
+        Func<IReadOnlyList<string>, CancellationToken, Task>? cleanupStagingAsync = null)
     {
         _collector = collector;
         _library = library;
         _draftAsync = draftAsync ?? ((message, cookie, cancellationToken) =>
             _collector.DraftMessageAsync(message, cookie, cancellationToken: cancellationToken));
+        _mediaStorage = mediaStorage ?? new MediaStorageService();
+        _cleanupStagingAsync = cleanupStagingAsync ?? ((paths, cancellationToken) =>
+            _mediaStorage.DeleteOrphanStagingAsync(paths, cancellationToken: cancellationToken));
     }
 
     public async Task<TelegramMaterializationResult> MaterializeAsync(
@@ -32,9 +39,19 @@ public sealed class TelegramMaterializer
         if (draft.MediaPaths.Count == 0 && string.IsNullOrWhiteSpace(message.Title) && string.IsNullOrWhiteSpace(message.Text))
             return new(null, draft.Directory, draft.MediaPaths, draft.Failed, true, "媒体全部下载失败，未创建空白素材。", false, false);
 
+        if (draft.Failed > 0)
+        {
+            // 未入库就不留暂存文件，否则 temp/telegram 会堆积没有素材引用的孤儿媒体。
+            await DiscardStagingAsync(draft, cancellationToken);
+            return new(null, draft.Directory, draft.MediaPaths, draft.Failed, false, $"媒体下载失败 {draft.Failed} 个,未创建素材。", false, false);
+        }
+
         var type = MaterialMediaValidator.InferType(draft.MediaPaths) ?? (draft.MediaPaths.Count == 0 ? "text" : "");
         if (type.Length == 0)
+        {
+            await DiscardStagingAsync(draft, cancellationToken);
             return new(null, draft.Directory, draft.MediaPaths, draft.Failed, false, "媒体类型无法识别。", false, false);
+        }
 
         // Telegram materials intentionally keep the title field empty. The message
         // body remains the publishing content and the field is reserved for later use.
@@ -44,6 +61,19 @@ public sealed class TelegramMaterializer
             targetRule?.ChannelId ?? "", targetRule?.ChannelName ?? "", null, "waitsend", "",
             draft.MediaPaths, "TG采集", message.Url), cancellationToken);
         return new(id, draft.Directory, draft.MediaPaths, draft.Failed, false, "", true, false);
+    }
+
+    private async Task DiscardStagingAsync(TelegramDraftResult draft, CancellationToken cancellationToken)
+    {
+        if (draft.MediaPaths.Count == 0) return;
+        try
+        {
+            await _cleanupStagingAsync(draft.MediaPaths, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLogger.Instance.Warning($"TG 暂存媒体清理失败：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
     }
 }
 

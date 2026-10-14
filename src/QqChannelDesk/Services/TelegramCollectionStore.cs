@@ -537,6 +537,7 @@ public sealed record TelegramCollectionSchedule(
         }
     }
     public string CronDisplay => EffectiveCronExpression.Length == 0 ? "兼容旧频率" : EffectiveCronExpression;
+    public string MessageLimitDisplay => MessageLimit <= 0 ? "不限" : $"{MessageLimit} 条";
     public string DistributionDisplay { get; init; } = "未配置规则";
     public string ResultDisplay => LastStatus == "从未采集" ? "-" : $"{LastStatus}，新增 {LastAddedCount} 条";
 }

@@ -327,11 +327,13 @@ public partial class MaterialsPage : UserControl
     private IReadOnlyList<MaterialRecord> GetSelectedMaterials() =>
         _allMaterials.Where(material => material.IsSelected).ToArray();
 
+    private void MaterialSelectionCheckBox_Click(object sender, RoutedEventArgs e) => UpdateSelectionCount();
+
     private void UpdateSelectionCount()
     {
         if (SelectedCountText is null) return;
         var selected = _allMaterials.Count(material => material.IsSelected);
-        SelectedCountText.Text = $"已选 {selected} / 共 {_allMaterials.Count}";
+        SelectedCountText.Text = $"已选 {selected} 个";
     }
 
     private void SelectAll()

@@ -17,8 +17,14 @@
         <Button Content="手动添加素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click"/>
       </WrapPanel>
       <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-          <TextBlock x:Name="SelectedCountText" Text="已选 0 个" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" HorizontalAlignment="Left" Background="{StaticResource AccentSoft}" CornerRadius="9" Padding="9,2" VerticalAlignment="Center">
+          <TextBlock x:Name="SelectedCountText" Text="已选 0 个" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+        </Border>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <ComboBox x:Name="BatchActionBox" Width="176" SelectedIndex="0" SelectionChanged="BatchActionBox_SelectionChanged">
             <ComboBoxItem Content="批量操作" IsEnabled="False"/>
             <ComboBoxItem Content="全选" Tag="select-all"/>
@@ -42,7 +48,13 @@
                 VerticalScrollBarVisibility="Auto"
                 RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>
-          <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="42"/>
+          <DataGridTemplateColumn Header="选" Width="42" IsReadOnly="False">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" Focusable="False" Click="MaterialSelectionCheckBox_Click" ToolTip="选择此素材"/>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
           <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="52" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="标题/正文" Binding="{Binding TitleContentDisplay}" Width="2*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="48" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>

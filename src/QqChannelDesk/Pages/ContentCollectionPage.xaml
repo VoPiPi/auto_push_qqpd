@@ -104,7 +104,7 @@
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <ComboBox x:Name="TgChannelBox" IsEditable="True" VerticalContentAlignment="Center" ToolTip="输入 tg 频道地址或 @频道名，如 t.me/频道名"/>
-                <TextBox x:Name="TgLimitBox" Grid.Column="1" Width="64" VerticalContentAlignment="Center" ToolTip="单次采集数量上限，留空为全部" Margin="8,0,0,0"/>
+                <TextBox x:Name="TgLimitBox" Grid.Column="1" Width="64" VerticalContentAlignment="Center" ToolTip="每次采集数量：默认 20 条；填写 0 或留空表示不限制" Margin="8,0,0,0"/>
                 <ComboBox x:Name="TgProxyBox" Grid.Column="2" Width="180" IsEditable="True" IsTextSearchEnabled="False" VerticalContentAlignment="Center" DisplayMemberPath="DisplayName" SelectedValuePath="Value" ToolTip="选择系统网页代理，或输入自定义代理地址" Margin="8,0,0,0"/>
                 <TextBox x:Name="TgKeywordBox" Grid.Column="3" Width="150" VerticalContentAlignment="Center" ToolTip="关键词过滤：标题或正文包含才入列，留空为不过滤" Margin="8,0,0,0"/>
                 <Button x:Name="TgCollectButton" Grid.Column="4" Content="开始采集" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="TgCollectButton_Click"/>
@@ -176,8 +176,8 @@
                   <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <ComboBox x:Name="TgScheduleChannelBox" VerticalContentAlignment="Center" ToolTip="TG 频道地址：输入公开频道，例如 @频道名、t.me/频道名或 t.me/s/频道名"/>
-                <TextBox x:Name="TgScheduleLimitBox" Grid.Column="1" Margin="10,0,0,0" VerticalContentAlignment="Center" ToolTip="每次采集数量：默认 20 条；填写 0 或留空表示不限制，最多 500 条"/>
+                <ComboBox x:Name="TgScheduleChannelBox" IsEditable="True" IsTextSearchEnabled="False" VerticalContentAlignment="Center" ToolTip="TG 频道地址：输入公开频道，例如 @频道名、t.me/频道名或 t.me/s/频道名"/>
+                <TextBox x:Name="TgScheduleLimitBox" Grid.Column="1" Margin="10,0,0,0" VerticalContentAlignment="Center" ToolTip="每次采集数量：默认 20 条；填写 0 或留空表示不限制"/>
                 <ComboBox x:Name="TgScheduleProxyBox" Grid.Column="2" Margin="10,0,0,0" IsEditable="True" IsTextSearchEnabled="False" DisplayMemberPath="DisplayName" SelectedValuePath="Value" VerticalContentAlignment="Center" ToolTip="网页代理：选择系统代理或输入自定义代理地址"/>
                 <Button x:Name="TgScheduleSaveButton" Grid.Column="3" Content="保存配置" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="TgScheduleSaveButton_Click"/>
                 <Button x:Name="TgScheduleAdvancedButton" Grid.Column="4" Content="高级设置" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgScheduleAdvancedButton_Click"/>
@@ -187,16 +187,17 @@
               <TextBlock Grid.Row="1" Text="调度器每 2 分钟检查一次；新增消息会下载媒体并直接进入素材仓库，已入库的原帖会自动跳过。" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
             </StackPanel>
           </Border>
-          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HeadersVisibility="Column" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
             <DataGrid.Columns>
               <DataGridTextColumn Header="采集地址" Binding="{Binding ChannelUrl}" Width="1.7*" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="Cron" Binding="{Binding CronDisplay}" Width="1.1*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="采集数量" Binding="{Binding MessageLimitDisplay}" Width="88" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="分发目标" Binding="{Binding DistributionDisplay}" Width="1.3*" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTemplateColumn Header="状态" Width="86"><DataGridTemplateColumn.CellTemplate><DataTemplate><Border Style="{StaticResource StatusPill}" Background="{Binding EnabledLabel, Converter={StaticResource StatusSoftBrushConverter}}"><TextBlock Text="{Binding EnabledLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding EnabledLabel, Converter={StaticResource StatusStrongBrushConverter}}"/></Border></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
               <DataGridTextColumn Header="下次执行" Binding="{Binding NextRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="最近采集" Binding="{Binding LastRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="结果" Binding="{Binding ResultDisplay}" Width="1.5*" ElementStyle="{StaticResource DataGridCellText}"/>
-              <DataGridTemplateColumn Header="操作" Width="280"><DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal"><Button Content="立即采集" Style="{StaticResource TableLinkButton}" Click="TgScheduleRunButton_Click"/><Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleEditButton_Click"/><Button Content="{Binding ToggleLabel}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleToggleButton_Click" ToolTip="暂停或恢复该频道的定时采集"/><Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleDeleteButton_Click"/></StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="操作" Width="280"><DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal"><Button Content="{Binding RunLabel}" IsEnabled="{Binding CanRun}" Style="{StaticResource TableLinkButton}" Click="TgScheduleRunButton_Click" ToolTip="开始对该频道执行一次采集；进行中再次点击可取消"/><Button Content="编辑" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleEditButton_Click"/><Button Content="{Binding ToggleLabel}" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleToggleButton_Click" ToolTip="暂停或恢复该频道的定时采集"/><Button Content="删除" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleDeleteButton_Click"/></StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
             </DataGrid.Columns>
           </DataGrid>
           <Grid Grid.Row="2" Margin="0,10,0,0">

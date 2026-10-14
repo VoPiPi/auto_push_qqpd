@@ -59,6 +59,7 @@ public sealed class PublishExecutionService : IPublishExecutor
         }
 
         var jobPaths = new List<string>();
+        var stagingPaths = new List<string>();
         try
         {
             var publishPaths = new List<string>(sourceRequest.MediaPaths.Count);
@@ -70,6 +71,13 @@ public sealed class PublishExecutionService : IPublishExecutor
                     if (!File.Exists(source))
                         throw new FileNotFoundException($"素材仓库原件已不存在：{Path.GetFileName(source)}。", source);
                     publishPaths.Add(source);
+                }
+                else if (MaterialMediaValidator.IsLocalPath(source) && MediaStorageService.IsTelegramStagingPath(source))
+                {
+                    if (!File.Exists(source))
+                        throw new FileNotFoundException($"TG 暂存媒体已不存在：{Path.GetFileName(source)}。", source);
+                    publishPaths.Add(source);
+                    stagingPaths.Add(source);
                 }
                 else if (MaterialMediaValidator.IsLocalPath(source))
                 {
@@ -101,7 +109,10 @@ public sealed class PublishExecutionService : IPublishExecutor
 
             await _historyStore.CompleteAsync(recordId, result, cancellationToken);
             if (result.Succeeded)
+            {
                 await _mediaStorage.CompleteSuccessfulJobAsync(jobPaths, cancellationToken);
+                await _mediaStorage.DeleteTelegramStagingAsync(stagingPaths, cancellationToken: cancellationToken);
+            }
 
             return new PublishExecutionOutcome(result, recordId);
         }

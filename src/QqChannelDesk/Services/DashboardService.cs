@@ -98,7 +98,7 @@ public sealed class DashboardService
                 }, record.CompletedAt ?? record.StartedAt))
             .Concat(schedules.Where(item => item.Status == ScheduleExecutionStatus.Running)
                 .Select(item => new DashboardActivity(
-                    item.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm"), $"计划执行中 · {item.Title}", "info", item.UpdatedAt)))
+                    item.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm"), $"计划执行中 · {item.TitleContentDisplay}", "info", item.UpdatedAt)))
             .OrderByDescending(item => item.SortAt)
             .Take(8)
             .ToArray();
@@ -115,7 +115,7 @@ public sealed class DashboardService
                 var elapsed = now - started;
                 if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
                 return new DashboardRunningTask(
-                    string.IsNullOrWhiteSpace(item.Title) ? $"素材 #{item.MaterialId}" : item.Title,
+                    item.TitleContentDisplay,
                     item.TypeLabel,
                     item.TargetDisplay,
                     started.ToLocalTime().ToString("HH:mm:ss"),

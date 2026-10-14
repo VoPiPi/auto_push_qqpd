@@ -238,6 +238,23 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public async Task ScheduleExecution_DisplaysContentAndMediaWhenTitleIsEmpty()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-schedule-display-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var scheduledAt = DateTimeOffset.Now.AddHours(1);
+        var textId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "", "text", "正文内容", "guild", "频道", "channel", "版块", null, "waitsend", "", []));
+        var imageId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "", "image", "", "guild", "频道", "channel", "版块", null, "waitsend", "", ["https://example.com/a.jpg", "https://example.com/b.jpg"]));
+        await store.QueueMaterialsForPublishAsync([textId, imageId], scheduledAt);
+
+        var executions = (await store.GetScheduleExecutionsAsync()).OrderBy(item => item.MaterialId).ToArray();
+
+        Assert.Equal("正文内容", executions[0].TitleContentDisplay);
+        Assert.Equal("媒体 · 2 张", executions[1].TitleContentDisplay);
+    }
+    [Fact]
     public async Task MaterialStore_ReturnsScheduledMaterialsInPublishOrderAndCanCancelSchedule()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-schedule-{Guid.NewGuid():N}.db");

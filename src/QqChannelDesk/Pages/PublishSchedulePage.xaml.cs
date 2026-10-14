@@ -119,7 +119,7 @@ public partial class PublishSchedulePage : UserControl
         }
         var owner = Window.GetWindow(this);
         if (MessageBox.Show(owner,
-                $"确定取消“{record.Title}”的发布时间计划吗？\n\n取消后素材会回到“待发布”，不会删除素材。",
+                $"确定取消“{record.TitleContentDisplay}”的发布时间计划吗？\n\n取消后素材会回到“待发布”，不会删除素材。",
                 "取消发布计划", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
 

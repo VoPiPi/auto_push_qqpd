@@ -25,7 +25,7 @@
           <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}" />
           <DataGridTemplateColumn Header="标题/正文" Width="1.25*">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <TextBlock Text="{Binding Title}" ToolTip="{Binding Title}" Style="{StaticResource DataGridCellText}" />
+              <TextBlock Text="{Binding TitleContentDisplay}" ToolTip="{Binding TitleContentDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="55" ElementStyle="{StaticResource DataGridCellText}" />

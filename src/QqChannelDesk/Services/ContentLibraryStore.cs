@@ -887,7 +887,8 @@ public sealed class ContentLibraryStore
         command.CommandText = """
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
-                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
+                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
+                   m.Content, m.MediaJson
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
             WHERE ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
@@ -958,7 +959,8 @@ public sealed class ContentLibraryStore
         fetch.CommandText = """
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
-                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
+                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
+                   m.Content, m.MediaJson
             FROM ScheduleExecutions e
             INNER JOIN Materials m ON m.Id=e.MaterialId
             WHERE e.Id=$id AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL;
@@ -992,7 +994,8 @@ public sealed class ContentLibraryStore
         command.CommandText = """
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
-                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link
+                   m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
+                   m.Content, m.MediaJson
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
             WHERE e.MaterialId=$materialId AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
@@ -1223,7 +1226,9 @@ public sealed class ContentLibraryStore
         reader.IsDBNull(10) ? "" : reader.GetString(10), reader.IsDBNull(11) ? "" : reader.GetString(11),
         reader.IsDBNull(12) ? "" : reader.GetString(12), reader.IsDBNull(13) ? "" : reader.GetString(13),
         reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14)),
-        reader.IsDBNull(15) ? "" : reader.GetString(15));
+        reader.IsDBNull(15) ? "" : reader.GetString(15),
+        reader.IsDBNull(16) ? "" : reader.GetString(16),
+        reader.IsDBNull(17) ? [] : (JsonSerializer.Deserialize<string[]>(reader.GetString(17)) ?? []));
 
     private async Task CancelPendingExecutionsAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, string now, string accountKey, CancellationToken cancellationToken)
     {
@@ -1364,7 +1369,8 @@ public sealed record ScheduleExecutionRecord(
     long Id, long MaterialId, DateTimeOffset ScheduledAt, ScheduleExecutionStatus Status,
     DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, string LastError, long? PublishRecordId,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string Title, string Type, string GuildName,
-    string ChannelName, DateTimeOffset? MaterialPublishAt, string MaterialLink)
+    string ChannelName, DateTimeOffset? MaterialPublishAt, string MaterialLink,
+    string Content, IReadOnlyList<string> MediaLinks)
 {
     public string TypeLabel => Type switch { "image" => "图片", "video" => "视频", _ => "文本" };
     public string StatusLabel => Status switch
@@ -1378,6 +1384,17 @@ public sealed record ScheduleExecutionRecord(
         _ => "已取消"
     };
     public string TargetDisplay => string.IsNullOrWhiteSpace(GuildName) || string.IsNullOrWhiteSpace(ChannelName) ? "-" : $"{GuildName}/{ChannelName}";
+    public string TitleContentDisplay
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Title)) return Title.Trim();
+            if (!string.IsNullOrWhiteSpace(Content)) return Content.Trim();
+            if (Type == "image") return $"媒体 · {MediaLinks.Count} 张";
+            if (Type == "video") return $"媒体 · {MediaLinks.Count} 个";
+            return "（无内容）";
+        }
+    }
     public string ScheduledAtDisplay => ScheduledAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string ErrorDisplay => Status switch
     {

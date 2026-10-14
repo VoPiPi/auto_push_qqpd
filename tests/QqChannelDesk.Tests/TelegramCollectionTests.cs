@@ -194,6 +194,27 @@ public sealed class TelegramCollectionTests : IDisposable
     }
 
     [Fact]
+    public async Task Materializer_DoesNotSaveMaterialWhenAnyMediaDownloadFails()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var message = Message("https://t.me/channel/44", "", "需要保留正文,但媒体必须完整");
+        var materializer = new TelegramMaterializer(new TelegramCollectorService(), library, (_, _, _) =>
+            Task.FromResult(new TelegramDraftResult(
+                Path.Combine(_directory, "temp"),
+                [Path.Combine(_directory, "temp", "image.jpg")],
+                1)));
+
+        var result = await materializer.MaterializeAsync(message, "");
+
+        Assert.False(result.Succeeded);
+        Assert.False(result.SkippedEmpty);
+        Assert.Null(result.MaterialId);
+        Assert.Equal(1, result.FailedMediaCount);
+        Assert.Contains("未创建素材", result.Error);
+        Assert.Empty(await library.GetMaterialsAsync());
+    }
+
+    [Fact]
     public void MaterialRecord_UsesTitleThenBodyThenMediaForDisplay()
     {
         var now = DateTimeOffset.Now;
@@ -213,6 +234,33 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Equal("TG采集：https://t.me/channel/42", telegram.SourceDisplay);
     }
 
+    [Fact]
+    public async Task Materializer_DiscardsStagedMediaWhenNothingIsSaved()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var channelDirectory = Path.Combine(_directory, "temp", "telegram", "20261013", "channel");
+        Directory.CreateDirectory(channelDirectory);
+        var stagedVideo = Path.Combine(channelDirectory, "video.mp4");
+        File.WriteAllBytes(stagedVideo, [7, 7, 7]);
+        var cleaned = new List<string>();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            (_, _, _) => Task.FromResult(new TelegramDraftResult(channelDirectory, [stagedVideo], 1)),
+            cleanupStagingAsync: (paths, _) =>
+            {
+                cleaned.AddRange(paths);
+                return Task.CompletedTask;
+            });
+        var message = Message("https://t.me/channel/45", "", "正文");
+
+        var result = await materializer.MaterializeAsync(message, "");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, result.FailedMediaCount);
+        Assert.Equal([stagedVideo], cleaned);
+        Assert.Empty(await library.GetMaterialsAsync());
+    }
     private static TelegramChannelMessage Message(string url, string title, string text) =>
         new(url, "t.me", DateTimeOffset.Now, title, text, [], "");
 

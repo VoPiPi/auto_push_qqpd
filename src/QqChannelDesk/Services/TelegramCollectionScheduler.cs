@@ -14,7 +14,9 @@ public sealed class TelegramCollectionScheduler
     private readonly AppLogger _logger;
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private readonly object _stateLock = new();
+    private readonly object _runCancelLock = new();
     private CancellationTokenSource? _stopSource;
+    private CancellationTokenSource? _activeRunSource;
     private Task? _loopTask;
 
     public TelegramCollectionScheduler(
@@ -55,6 +57,7 @@ public sealed class TelegramCollectionScheduler
         Task? task;
         lock (_stateLock)
         {
+            CancelCurrentRun();
             source = _stopSource;
             task = _loopTask;
             if (source is null || task is null) return true;
@@ -91,6 +94,25 @@ public sealed class TelegramCollectionScheduler
         finally { _runLock.Release(); }
     }
 
+    /// <summary>
+    /// 中断当前正在执行的采集（无论是页面手动触发还是后台调度触发）。
+    /// 返回是否确实存在可取消的采集任务。
+    /// </summary>
+    public bool CancelCurrentRun()
+    {
+        lock (_runCancelLock)
+        {
+            var source = _activeRunSource;
+            if (source is null) return false;
+            try
+            {
+                source.Cancel();
+                return true;
+            }
+            catch (ObjectDisposedException) { return false; }
+        }
+    }
+
     public async Task<TelegramCollectionRunResult> RunNowAsync(long scheduleId, CancellationToken cancellationToken = default)
     {
         await _runLock.WaitAsync(cancellationToken);
@@ -109,7 +131,15 @@ public sealed class TelegramCollectionScheduler
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await CheckNowAsync(cancellationToken);
+                try
+                {
+                    await CheckNowAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // 用户取消了某次后台采集，调度循环本身继续运行。
+                    StatusChanged?.Invoke("TG 定时采集已取消，调度器继续运行");
+                }
                 await Task.Delay(TimeSpan.FromMinutes(2), cancellationToken);
             }
         }
@@ -134,6 +164,24 @@ public sealed class TelegramCollectionScheduler
     }
 
     private async Task<TelegramCollectionRunResult> RunScheduleAsync(TelegramCollectionSchedule schedule, CancellationToken cancellationToken)
+    {
+        // 用链接令牌包一层，让页面上的“取消采集”可以中断后台调度触发的采集。
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_runCancelLock) { _activeRunSource = linked; }
+        try
+        {
+            return await ExecuteScheduleAsync(schedule, linked.Token);
+        }
+        finally
+        {
+            lock (_runCancelLock)
+            {
+                if (ReferenceEquals(_activeRunSource, linked)) _activeRunSource = null;
+            }
+        }
+    }
+
+    private async Task<TelegramCollectionRunResult> ExecuteScheduleAsync(TelegramCollectionSchedule schedule, CancellationToken cancellationToken)
     {
         var started = DateTimeOffset.Now;
         var added = 0;
@@ -176,15 +224,13 @@ public sealed class TelegramCollectionScheduler
                 failedMedia += materialized.FailedMediaCount;
                 if (materialized.SkippedDuplicate || materialized.SkippedEmpty)
                     skipped++;
-                else if (materialized.Succeeded)
+                else if (materialized.Succeeded && materialized.FailedMediaCount == 0)
                     added++;
                 else
                     skipped++;
 
-                var itemResult = materialized.Succeeded
-                    ? materialized.FailedMediaCount > 0
-                        ? $"第 {index + 1}/{preview.Messages.Count} 条已入库，但有 {materialized.FailedMediaCount} 个媒体下载失败。"
-                        : $"第 {index + 1}/{preview.Messages.Count} 条已入库。"
+                var itemResult = materialized.Succeeded && materialized.FailedMediaCount == 0
+                    ? $"第 {index + 1}/{preview.Messages.Count} 条已入库。"
                     : $"第 {index + 1}/{preview.Messages.Count} 条已跳过：{materialized.Error}";
                 Report(schedule, "写入素材", index + 1, preview.Messages.Count, itemResult);
             }
@@ -197,6 +243,8 @@ public sealed class TelegramCollectionScheduler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // 用户取消或调度器停止时，仍然发一次终态，让界面能复位行状态。
+            Report(schedule, "失败", 0, 0, $"采集已取消（已新增 {added} 条，已跳过 {skipped} 条）。");
             throw;
         }
         catch (Exception ex)
