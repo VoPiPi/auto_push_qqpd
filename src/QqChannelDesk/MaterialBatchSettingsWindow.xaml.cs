@@ -62,7 +62,7 @@ public partial class MaterialBatchSettingsWindow : Window
             var guilds = await _channelSync.GetCachedGuildsAsync();
             if (guilds.Count == 0)
             {
-                FormMessage.Text = "当前账号没有频道缓存,请先同步频道数据。";
+            FormMessage.Text = "未获取到频道数据，请先刷新频道。";
                 return;
             }
 
@@ -71,7 +71,7 @@ public partial class MaterialBatchSettingsWindow : Window
         }
         catch (Exception ex)
         {
-            FormMessage.Text = $"读取频道缓存失败:{CliDiagnostics.Sanitize(ex.Message)}";
+            FormMessage.Text = $"未能读取频道数据：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally
         {
@@ -98,7 +98,7 @@ public partial class MaterialBatchSettingsWindow : Window
         }
         catch (Exception ex)
         {
-            FormMessage.Text = $"读取版块缓存失败:{CliDiagnostics.Sanitize(ex.Message)}";
+            FormMessage.Text = $"未能读取版块数据：{CliDiagnostics.Sanitize(ex.Message)}";
         }
     }
 

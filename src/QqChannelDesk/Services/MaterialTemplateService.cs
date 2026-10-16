@@ -15,9 +15,11 @@ public static class MaterialTemplateService
 {
     public static readonly string[] Headers =
     [
-        "标题", "正文", "媒体文件或链接", "发布时间", "频道名称", "板块名称"
+        "标题", "正文", "媒体文件或链接", "发布时间", "频道名称", "版块名称"
     ];
 
+    private const string ChannelHeader = "版块名称";
+    private const string LegacyChannelHeader = "板块名称";
     private const string ImportSheetName = "素材导入";
     private const string DataSourceSheetName = "数据源";
     private const string DropdownSourceSheetName = "下拉源";
@@ -29,7 +31,7 @@ public static class MaterialTemplateService
     {
         ArgumentNullException.ThrowIfNull(targets);
         if (targets.Count == 0 || targets.All(target => target.Channels.Count == 0))
-            throw new InvalidOperationException("当前账号没有可用的频道和板块，请先同步频道数据。");
+            throw new InvalidOperationException("当前账号没有可用的频道和版块，请先刷新频道。");
 
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add(ImportSheetName);
@@ -65,7 +67,7 @@ public static class MaterialTemplateService
             .DefaultIfEmpty()
             .Max();
         if (maximumChannelCount == 0)
-            throw new InvalidOperationException("当前账号没有可用的频道和板块，请先同步频道数据。");
+            throw new InvalidOperationException("当前账号没有可用的频道和版块，请先刷新频道。");
 
         var dataSourceMatrixEndColumn = GetColumnLetter(7 + uniqueTargets.Length);
         var dataSourceMatrixEndRow = maximumChannelCount + 1;
@@ -142,12 +144,24 @@ public static class MaterialTemplateService
         if (sheet is null)
             return new([], [$"模板缺少“{ImportSheetName}”工作表。"]);
 
-        var headerErrors = Headers
-            .Select((header, index) => (header, index))
-            .Where(item => !string.Equals(sheet.Cell(1, item.index + 1).GetString().Trim(), item.header, StringComparison.Ordinal))
-            .Select(item => $"第 1 行第 {item.index + 1} 列应为“{item.header}”。")
-            .ToArray();
-        if (headerErrors.Length > 0) return new([], headerErrors);
+        var headerErrors = new List<string>();
+        for (var index = 0; index < Headers.Length; index++)
+        {
+            var actual = sheet.Cell(1, index + 1).GetString().Trim();
+            if (index == 5)
+            {
+                if (string.Equals(actual, ChannelHeader, StringComparison.Ordinal) ||
+                    string.Equals(actual, LegacyChannelHeader, StringComparison.Ordinal))
+                    continue;
+
+                headerErrors.Add("请检查模板，需包含“版块名称”列。");
+                continue;
+            }
+
+            if (!string.Equals(actual, Headers[index], StringComparison.Ordinal))
+                headerErrors.Add($"第 1 行第 {index + 1} 列应为“{Headers[index]}”。");
+        }
+        if (headerErrors.Count > 0) return new([], headerErrors);
 
         var templateErrors = new List<string>();
         var dropdownSource = workbook.Worksheets.FirstOrDefault(item =>
@@ -156,7 +170,7 @@ public static class MaterialTemplateService
         if (storedSignature.Length == 0
             || !string.Equals(storedSignature, ComputeTargetSignature(currentTargets), StringComparison.OrdinalIgnoreCase))
         {
-            templateErrors.Add("模板已过期：频道或板块数据已发生变化，请重新下载模板。");
+            templateErrors.Add("模板已过期：频道或版块数据已变化，请重新下载模板。");
         }
 
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 1;
@@ -364,7 +378,7 @@ public static class MaterialTemplateService
     private static void WriteDataSource(IXLWorksheet sheet, IReadOnlyList<MaterialTemplateTarget> targets)
     {
         sheet.Cell(1, 1).Value = "频道名称";
-        sheet.Cell(1, 2).Value = "板块名称";
+        sheet.Cell(1, 2).Value = ChannelHeader;
         sheet.Range(1, 1, 1, 2).Style.Font.Bold = true;
         sheet.Range(1, 1, 1, 2).Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
         var row = 2;
@@ -430,7 +444,7 @@ public static class MaterialTemplateService
         }
         if (channelName.Length == 0)
         {
-            errors.Add("板块名称不能为空");
+            errors.Add("版块名称不能为空");
             return null;
         }
 
@@ -451,12 +465,12 @@ public static class MaterialTemplateService
             .ToArray();
         if (channels.Length == 0)
         {
-            errors.Add($"频道“{guildName}”中找不到板块“{channelName}”");
+            errors.Add($"频道“{guildName}”中找不到版块“{channelName}”");
             return null;
         }
         if (channels.Length > 1)
         {
-            errors.Add($"板块“{channelName}”名称不唯一");
+            errors.Add($"版块“{channelName}”名称不唯一");
             return null;
         }
         return guilds[0] with { Channels = [channels[0]] };

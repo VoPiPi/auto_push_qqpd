@@ -628,8 +628,8 @@ public sealed class ContentLibraryStore
         ArgumentNullException.ThrowIfNull(materialIds);
         if (string.IsNullOrWhiteSpace(guildId)) throw new ArgumentException("目标频道不能为空。", nameof(guildId));
         if (string.IsNullOrWhiteSpace(guildName)) throw new ArgumentException("目标频道名称不能为空。", nameof(guildName));
-        if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("目标板块不能为空。", nameof(channelId));
-        if (string.IsNullOrWhiteSpace(channelName)) throw new ArgumentException("目标板块名称不能为空。", nameof(channelName));
+        if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("目标版块不能为空。", nameof(channelId));
+        if (string.IsNullOrWhiteSpace(channelName)) throw new ArgumentException("目标版块名称不能为空。", nameof(channelName));
 
         var ids = materialIds.Where(id => id > 0).Distinct().ToArray();
         if (ids.Length == 0) return new([], [], [], []);
@@ -1376,10 +1376,10 @@ public sealed record ScheduleExecutionRecord(
     public string StatusLabel => Status switch
     {
         ScheduleExecutionStatus.Pending when ScheduledAt <= DateTimeOffset.Now => "已逾期",
-        ScheduleExecutionStatus.Pending => "等待执行",
-        ScheduleExecutionStatus.Running => "执行中",
-        ScheduleExecutionStatus.Succeeded => "成功",
-        ScheduleExecutionStatus.Failed => "失败",
+        ScheduleExecutionStatus.Pending => "等待发布",
+        ScheduleExecutionStatus.Running => "发布中",
+        ScheduleExecutionStatus.Succeeded => "发布成功",
+        ScheduleExecutionStatus.Failed => "发布未完成",
         ScheduleExecutionStatus.NeedsVerification => "待核实",
         _ => "已取消"
     };
@@ -1399,7 +1399,7 @@ public sealed record ScheduleExecutionRecord(
     public string ErrorDisplay => Status switch
     {
         ScheduleExecutionStatus.Succeeded => string.IsNullOrWhiteSpace(MaterialLink) ? "发布成功" : MaterialLink,
-        ScheduleExecutionStatus.Failed => string.IsNullOrWhiteSpace(LastError) ? "发布失败" : LastError,
+        ScheduleExecutionStatus.Failed => string.IsNullOrWhiteSpace(LastError) ? "发布未完成，请查看失败原因后重试" : LastError,
         ScheduleExecutionStatus.NeedsVerification => string.IsNullOrWhiteSpace(LastError) ? "请核实频道是否已发布" : LastError,
         ScheduleExecutionStatus.Pending => ScheduledAt <= DateTimeOffset.Now ? "已逾期，等待执行" : "等待执行",
         ScheduleExecutionStatus.Running => "执行中",

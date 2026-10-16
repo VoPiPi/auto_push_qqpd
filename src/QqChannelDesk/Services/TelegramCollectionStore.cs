@@ -264,7 +264,7 @@ public sealed class TelegramCollectionStore
         {
             var rule = rules[index];
             if (rule.MessageType is not ("text" or "image" or "video")) throw new ArgumentException("分发规则消息类型无效。", nameof(rules));
-            if (string.IsNullOrWhiteSpace(rule.ChannelId) || string.IsNullOrWhiteSpace(rule.GuildId)) throw new ArgumentException("分发规则必须选择频道和板块。", nameof(rules));
+            if (string.IsNullOrWhiteSpace(rule.ChannelId) || string.IsNullOrWhiteSpace(rule.GuildId)) throw new ArgumentException("分发规则必须选择频道和版块。", nameof(rules));
             await using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
@@ -399,7 +399,7 @@ public sealed class TelegramCollectionStore
         var trimmed = value?.Trim() ?? "";
         if (trimmed.Length > 0)
         {
-            if (!TelegramCronSchedule.TryParse(trimmed, out var parsed, out var error)) throw new ArgumentException($"Cron 表达式无效：{error}", nameof(value));
+            if (!TelegramCronSchedule.TryParse(trimmed, out var parsed, out var error)) throw new ArgumentException($"计划表达式无效：{error}", nameof(value));
             return parsed.Expression;
         }
         var time = NormalizeTriggerTime(triggerTime).Split(':');

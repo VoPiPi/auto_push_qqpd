@@ -43,7 +43,7 @@
                        Margin="0,0,0,6"/>
             <TextBox x:Name="RuleKeywordBox" VerticalContentAlignment="Center"
                      ToolTip="留空匹配该类型全部消息；多个关键词用 | 分隔"/>
-            <TextBlock Text="多个关键词使用 | 分隔并按 OR 匹配。"
+            <TextBlock Text="多个关键词用 | 分隔，命中任意一个即可。"
                        Foreground="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"/>
           </StackPanel>
 
@@ -57,12 +57,12 @@
                       VerticalContentAlignment="Center" ToolTip="输入名称可快速搜索频道"/>
           </StackPanel>
           <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,16,0,0">
-            <TextBlock Text="目标板块" Foreground="{StaticResource Muted}" FontSize="12"
+            <TextBlock Text="目标版块" Foreground="{StaticResource Muted}" FontSize="12"
                        Margin="0,0,0,6"/>
             <ComboBox x:Name="RuleChannelBox" DisplayMemberPath="DisplayName"
                       IsEditable="True" IsTextSearchEnabled="True" StaysOpenOnEdit="True"
                       TextSearch.TextPath="DisplayName"
-                      VerticalContentAlignment="Center" ToolTip="输入名称可快速搜索板块"/>
+                      VerticalContentAlignment="Center" ToolTip="输入名称可快速搜索版块"/>
           </StackPanel>
 
           <Border Grid.Row="2" Grid.ColumnSpan="2" Background="{StaticResource InfoSoft}"

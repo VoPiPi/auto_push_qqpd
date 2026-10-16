@@ -96,7 +96,7 @@
                             <ColumnDefinition Width="112" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="储存路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                        <TextBlock Text="存储路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
                         <Grid Grid.Column="1">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -127,7 +127,7 @@
                         </Grid>
                         <TextBlock x:Name="FfmpegPathStatus" Grid.Row="4" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </Grid>
-                    <TextBlock Grid.Row="3" Text="素材仓库原件不会因任务清理被删除；失败或超时任务副本会保留，便于排查。更换目录不会自动迁移已有文件。FFmpeg 优先使用此处指定路径，其次使用系统 FFmpeg，最后使用项目 tools 目录版本。"
+                    <TextBlock Grid.Row="3" Text="原件保留；失败任务副本便于排查。更换目录不会迁移已有文件。优先使用指定 FFmpeg。"
                                Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,12,0,0" />
                 </Grid>
             </Border>

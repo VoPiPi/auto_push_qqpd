@@ -6,17 +6,17 @@
     <DockPanel Grid.Row="0" Margin="0,0,0,16">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
         <Button Content="立即检查" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Click="CheckNowButton_Click" />
-        <Button Content="刷新计划" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
+        <Button Content="刷新" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
       </StackPanel>
       <StackPanel>
         <TextBlock Text="发布计划" Style="{StaticResource PageTitle}" />
-        <TextBlock Text="管理已授权的定时发布，计划到期后按设置自动执行。" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
+        <TextBlock Text="到期后自动发布。保存计划即表示授权。" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
       </StackPanel>
     </DockPanel>
     <Border Grid.Row="1" Background="{StaticResource AccentSoft}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,14">
       <StackPanel>
-        <TextBlock x:Name="SchedulerStatusText" Text="计划执行器尚未启动" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
-        <TextBlock Text="计划保存即视为授权。失败和超时不会自动重试；取消计划不会删除素材、媒体文件或发布记录。" Foreground="{StaticResource Ink}" TextWrapping="Wrap" Margin="0,5,0,0" />
+        <TextBlock x:Name="SchedulerStatusText" Text="计划尚未启动" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
+        <TextBlock Text="失败或超时不会自动重试。取消计划不会删除素材和发布记录。" Foreground="{StaticResource Ink}" TextWrapping="Wrap" Margin="0,5,0,0" />
       </StackPanel>
     </Border>
     <Grid Grid.Row="2">
@@ -49,10 +49,10 @@
               <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="发布记录" Binding="{Binding PublishRecordDisplay}" Width="75" ElementStyle="{StaticResource DataGridCellText}" />
+          <DataGridTextColumn Header="记录" Binding="{Binding PublishRecordDisplay}" Width="75" ElementStyle="{StaticResource DataGridCellText}" />
           <DataGridTemplateColumn Header="操作" Width="90">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <Button Content="取消计划" Style="{StaticResource TableLinkButton}" Click="CancelScheduleButton_Click" />
+              <Button Content="取消" Style="{StaticResource TableLinkButton}" Click="CancelScheduleButton_Click" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
         </DataGrid.Columns>
@@ -60,7 +60,7 @@
       <Border x:Name="EmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}" CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <TextBlock x:Name="EmptyTitle" Text="暂无发布计划" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
-          <TextBlock x:Name="EmptyMessage" Text="在素材仓库设置未来发布时间后，计划会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" Margin="0,7,0,0" />
+          <TextBlock x:Name="EmptyMessage" Text="在素材中设置发布时间后，计划会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" Margin="0,7,0,0" />
         </StackPanel>
       </Border>
     </Grid>

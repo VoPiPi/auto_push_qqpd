@@ -257,7 +257,7 @@ public sealed record PublishRecord(
         PublishRecordStatus.Processing => "处理中",
         PublishRecordStatus.Succeeded => "成功",
         PublishRecordStatus.NeedsVerification => "待核实",
-        _ => "失败"
+        _ => "发布未完成"
     };
     public string Target => $"{GuildName}/{ChannelName}";
 }

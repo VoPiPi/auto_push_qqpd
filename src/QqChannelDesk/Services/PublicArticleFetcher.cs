@@ -35,18 +35,18 @@ public sealed class PublicArticleFetcher
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (IsRedirect(response.StatusCode))
                 {
-                    if (redirect == MaximumRedirects) return Failed("网页重定向次数过多。");
+                    if (redirect == MaximumRedirects) return Failed("网页跳转次数过多，请换一个链接。");
                     var location = response.Headers.Location;
-                    if (location is null) return Failed("网页返回了无效的重定向地址。");
+                    if (location is null) return Failed("网页跳转地址无效，请换一个链接。");
                     var next = location.IsAbsoluteUri ? location : new Uri(current, location);
                     if (!TryNormalizePublicUrl(next.AbsoluteUri, out current, out error)) return Failed(error);
                     continue;
                 }
-                if (!response.IsSuccessStatusCode) return Failed($"网页返回 HTTP {(int)response.StatusCode}，无法读取内容。");
+                if (!response.IsSuccessStatusCode) return Failed($"网页无法打开（HTTP {(int)response.StatusCode}），请检查链接后重试。");
                 if (response.Content.Headers.ContentType?.MediaType is not { } mediaType ||
                     !(mediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase) || mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase)))
-                    return Failed("链接不是 HTML 网页，无法提取文章内容。");
-                if (response.Content.Headers.ContentLength > MaximumBytes) return Failed("网页内容超过 2 MB，已停止读取。");
+                    return Failed("该链接不是网页，请使用公开网页链接。");
+                if (response.Content.Headers.ContentLength > MaximumBytes) return Failed("网页内容过大，已停止读取，请换一个页面。");
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var buffer = new MemoryStream();
                 var chunk = new byte[16 * 1024];
@@ -54,23 +54,23 @@ public sealed class PublicArticleFetcher
                 {
                     var read = await stream.ReadAsync(chunk, cancellationToken);
                     if (read == 0) break;
-                    if (buffer.Length + read > MaximumBytes) return Failed("网页内容超过 2 MB，已停止读取。");
+                    if (buffer.Length + read > MaximumBytes) return Failed("网页内容过大，已停止读取，请换一个页面。");
                     buffer.Write(chunk, 0, read);
                 }
                 var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"', '\'');
                 var encoding = TryEncoding(charset);
                 var html = encoding.GetString(buffer.ToArray());
                 var parsed = await Task.Run(() => ParseHtml(html), cancellationToken);
-                if (parsed.Title.Length == 0 && parsed.Content.Length == 0) return Failed("网页没有识别到可用标题或正文。");
+                if (parsed.Title.Length == 0 && parsed.Content.Length == 0) return Failed("网页没有可用标题或正文，请换一个链接。");
                 return new(true, current.AbsoluteUri, current.DnsSafeHost, parsed.Title, parsed.Content, "");
             }
-            return Failed("无法读取该网页。");
+            return Failed("无法读取网页，请检查链接或网络后重试。");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Failed("读取网页超时（最长 20 秒）。"); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Failed("读取网页超时，请重试。"); }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or InvalidOperationException)
         {
-            return Failed($"读取网页失败：{ex.Message}");
+            return Failed($"读取网页失败，请检查网络后重试：{ex.Message}");
         }
     }
 
@@ -103,16 +103,16 @@ public sealed class PublicArticleFetcher
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (IsRedirect(response.StatusCode))
             {
-                if (redirect == MaximumRedirects || response.Headers.Location is null) throw new InvalidOperationException("媒体链接重定向无效或次数过多。");
+                if (redirect == MaximumRedirects || response.Headers.Location is null) throw new InvalidOperationException("媒体链接跳转无效或次数过多，请更换链接。");
                 var next = response.Headers.Location.IsAbsoluteUri ? response.Headers.Location : new Uri(current, response.Headers.Location);
                 if (!TryNormalizePublicUrl(next.AbsoluteUri, out current, out error)) throw new InvalidOperationException(error);
                 continue;
             }
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"媒体服务器返回 HTTP {(int)response.StatusCode}。");
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"媒体下载未完成（HTTP {(int)response.StatusCode}），请稍后重试。");
             var mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
-            if (expectedType == "image" && !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("图片链接没有返回 image/* 媒体类型。");
-            if (expectedType == "video" && !mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("视频链接没有返回 video/* 媒体类型。");
-            if (response.Content.Headers.ContentLength is > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB 限制。");
+            if (expectedType == "image" && !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("该链接不是图片，请更换链接。");
+            if (expectedType == "video" && !mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("该链接不是视频，请更换链接。");
+            if (response.Content.Headers.ContentLength is > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB，请压缩或更换文件。");
             var extension = Path.GetExtension(current.AbsolutePath);
             if (extension.Length is < 2 or > 8 || extension.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch != '.')) extension = expectedType == "image" ? ".img" : ".video";
             Directory.CreateDirectory(saveDirectory);
@@ -128,7 +128,7 @@ public sealed class PublicArticleFetcher
                     var read = await inputStream.ReadAsync(buffer, cancellationToken);
                     if (read == 0) break;
                     total += read;
-                    if (total > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB 限制。");
+                    if (total > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB，请压缩或更换文件。");
                     await outputStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                 }
                 return path;
@@ -139,7 +139,7 @@ public sealed class PublicArticleFetcher
                 throw;
             }
         }
-        throw new InvalidOperationException("无法下载媒体链接。");
+        throw new InvalidOperationException("无法下载媒体，请检查链接或网络后重试。");
     }
 
     public static bool TryNormalizePublicUrl(string input, out Uri uri, out string error)

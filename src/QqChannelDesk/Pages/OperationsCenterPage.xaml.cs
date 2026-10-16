@@ -95,7 +95,7 @@ public partial class OperationsCenterPage : UserControl
         DashboardInstallCliButton.Visibility = report.Cli.State == DiagnosticState.Ready || report.Node.State != DiagnosticState.Ready
             ? Visibility.Collapsed : Visibility.Visible;
         DashboardInstallCliButton.IsEnabled = !Installing;
-        LoginValue.Text = report.Login.State == DiagnosticState.Ready ? "CLI 授权有效，服务连通正常" : report.Login.Detail;
+        LoginValue.Text = report.Login.State == DiagnosticState.Ready ? "登录有效，服务正常" : report.Login.Detail;
         SetState(LoginBadge, report.Login);
         SetDashboardState(DashboardLoginBadge, DashboardLoginValue, report.Login);
         LoginAction.Visibility = report.Cli.State == DiagnosticState.Ready && report.Login.State == DiagnosticState.Warning && report.Login.StateLabel == "未登录"
@@ -110,7 +110,7 @@ public partial class OperationsCenterPage : UserControl
         DashboardInstallFfmpegButton.Visibility = InstallFfmpegButton.Visibility;
         DashboardInstallFfmpegButton.IsEnabled = !Installing;
         if (!_manualPublishing && string.IsNullOrWhiteSpace(ManualResultText.Text))
-            ManualResultText.Text = report.Cli.StateLabel == "已就绪" ? "频道 CLI 已就绪，可以发布。" : $"频道 CLI：{report.Cli.StateLabel}";
+            ManualResultText.Text = report.Cli.StateLabel == "已就绪" ? "频道工具已就绪，可以发布。" : $"频道工具：{report.Cli.StateLabel}";
     }
 
     public void SetAccountDisplay(string nickname)
@@ -193,7 +193,7 @@ public partial class OperationsCenterPage : UserControl
         ManualChannelCombo.IsEnabled = false;
         ManualRefreshChannelsButton.IsEnabled = false;
         ManualPublishButton.IsEnabled = false;
-        ManualResultText.Text = "正在读取频道缓存…";
+        ManualResultText.Text = "正在读取频道数据…";
         try
         {
             var guilds = await _channelSync.GetCachedGuildsAsync();
@@ -203,18 +203,18 @@ public partial class OperationsCenterPage : UserControl
             {
                 await LoadManualChannelsAsync(guild);
                 ManualResultText.Text = guilds.Count == 0
-                    ? "暂无可用频道，请先完成登录并刷新频道数据。"
-                    : ManualChannelCombo.Items.Count == 0 ? "当前频道没有可发布版块。" : "频道缓存已载入，可以编辑内容。";
+                    ? "暂无频道，请先登录并刷新频道。"
+                    : ManualChannelCombo.Items.Count == 0 ? "当前频道没有可发布版块。" : "频道已加载，可以编辑内容。";
             }
             else
             {
                 ManualChannelCombo.ItemsSource = null;
-                ManualResultText.Text = "暂无可用频道，请先完成登录并刷新频道数据。";
+                ManualResultText.Text = "暂无频道，请先登录并刷新频道。";
             }
         }
         catch (Exception ex)
         {
-            ManualResultText.Text = $"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ManualResultText.Text = $"频道数据读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally
         {
@@ -241,7 +241,7 @@ public partial class OperationsCenterPage : UserControl
         catch (Exception ex)
         {
             ManualChannelCombo.ItemsSource = null;
-            ManualResultText.Text = $"读取版块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ManualResultText.Text = $"版块读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally { _manualLoadingChannels = false; }
     }
@@ -256,21 +256,21 @@ public partial class OperationsCenterPage : UserControl
     private async void ManualRefreshChannelsButton_Click(object sender, RoutedEventArgs e)
     {
         ManualRefreshChannelsButton.IsEnabled = false;
-        ManualResultText.Text = "正在从 CLI 刷新频道和版块…";
+        ManualResultText.Text = "正在刷新频道和版块…";
         try
         {
             var sync = await _channelSync.SynchronizeAsync(new Progress<string>(message => ManualResultText.Text = message));
             if (!sync.Succeeded)
             {
-                ManualResultText.Text = "刷新失败，旧缓存已保留。";
+                ManualResultText.Text = "刷新未完成，继续使用原频道数据。";
                 return;
             }
             await RefreshManualChannelsAsync();
-            ManualResultText.Text = $"刷新成功：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块。";
+            ManualResultText.Text = $"已刷新：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块。";
         }
         catch (Exception ex)
         {
-            ManualResultText.Text = $"刷新频道数据失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ManualResultText.Text = $"频道刷新失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally { ManualRefreshChannelsButton.IsEnabled = true; }
     }
@@ -326,7 +326,7 @@ public partial class OperationsCenterPage : UserControl
         if (_manualPublishing) return;
         if (LoginState != "已登录")
         {
-            ManualResultText.Text = "请先在“环境检查”中完成 CLI 官方扫码登录，再发布。";
+            ManualResultText.Text = "请先在“环境检查”中扫码登录，再发布。";
             return;
         }
 
@@ -357,7 +357,7 @@ public partial class OperationsCenterPage : UserControl
             if (!string.IsNullOrWhiteSpace(result.PostId)) details += $" · 帖子 ID：{result.PostId}";
             ManualResultText.Text = result.Succeeded
                 ? $"发布成功：{CliDiagnostics.Sanitize(details)}"
-                : $"发布失败（{result.Category}）：{CliDiagnostics.Sanitize(details)}";
+                : $"发布未完成（{result.Category}）：{CliDiagnostics.Sanitize(details)}";
             if (result.Succeeded)
             {
                 _manualMediaPaths.Clear();
@@ -372,7 +372,7 @@ public partial class OperationsCenterPage : UserControl
         {
             ManualProgress.IsIndeterminate = false;
             ManualProgress.Value = 0;
-            ManualResultText.Text = $"发布执行异常：{CliDiagnostics.Sanitize(ex.Message)}";
+            ManualResultText.Text = $"发布结果待确认，请先核实频道。\n{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally
         {

@@ -36,20 +36,20 @@ public sealed class CliDiagnostics
         var nodeTask = CheckIndependentlyAsync(
             "Node.js",
             () => CheckNodeAsync(cancellationToken),
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "Node.js 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "Node.js 检查失败，请重新检查或查看运行日志。"),
             nodeLog);
 
         var cliTask = CheckIndependentlyAsync(
-            "CLI",
+            "频道工具",
             async () =>
             {
                 cliPath = _cliEntryPoint ?? await FindCliEntryPointAsync(cancellationToken);
                 if (cliPath is null)
-                    return new DiagnosticItem(DiagnosticState.Warning, "未安装", "未找到全局或当前目录的 tencent-channel-cli NPM 包");
+                    return new DiagnosticItem(DiagnosticState.Warning, "未安装", "未找到 tencent-channel-cli，请安装后重新检查。");
 
                 var versionResult = await RunNodeScriptAsync(cliPath, ["version"], cancellationToken);
                 if (!versionResult.Started)
-                    return new DiagnosticItem(DiagnosticState.Error, "无法启动", Sanitize(versionResult.ErrorMessage));
+                    return new DiagnosticItem(DiagnosticState.Error, "无法启动", $"{Sanitize(versionResult.ErrorMessage)} 请重新检查或重新安装频道工具。");
 
                 var version = ExtractVersion(versionResult.CombinedOutput);
                 var parsedVersion = ParseVersion(version);
@@ -57,9 +57,9 @@ public sealed class CliDiagnostics
                 return new DiagnosticItem(
                     versionOk ? DiagnosticState.Ready : DiagnosticState.Warning,
                     versionOk ? "可用" : "需升级或无法识别",
-                    string.IsNullOrWhiteSpace(version) ? "版本命令没有返回可识别信息" : $"版本 {version}（最低要求 {MinimumCliVersion}）");
+                    string.IsNullOrWhiteSpace(version) ? "无法读取频道工具版本，请重新检查或重新安装。" : $"版本 {version}（最低要求 {MinimumCliVersion}）");
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "CLI 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "频道工具检查失败，请重新检查或查看运行日志。"),
             cliLog);
 
         var ffmpegTask = CheckIndependentlyAsync(
@@ -72,7 +72,7 @@ public sealed class CliDiagnostics
                     result.StateLabel,
                     result.Detail);
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "FFmpeg 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "FFmpeg 检查失败，请重新检查或查看运行日志。"),
             ffmpegLog);
 
         await Task.WhenAll(nodeTask, cliTask, ffmpegTask);
@@ -88,19 +88,19 @@ public sealed class CliDiagnostics
             async () =>
             {
                 if (cliPath is null || cli.State != DiagnosticState.Ready)
-                    return new DiagnosticItem(DiagnosticState.Unknown, "未检查", "CLI 未通过检查，无法检查登录状态");
+                    return new DiagnosticItem(DiagnosticState.Unknown, "未检查", "频道工具不可用，无法检查登录状态。请先处理频道工具问题。");
 
                 var statusResult = await RunNodeScriptAsync(cliPath, ["login", "status"], cancellationToken);
                 return ClassifyLoginStatus(statusResult.ExitCode, statusResult.CombinedOutput, statusResult.ErrorMessage);
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "登录状态检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "登录状态检查失败，请重试。"),
             log);
 
         var overallMessage = login.State == DiagnosticState.Ready
             ? "运行环境检查通过。"
             : cli.State != DiagnosticState.Ready
-                ? "频道 CLI 未通过检查。"
-                : "请按 CLI 官方扫码授权流程登录，然后重新检查";
+                ? "频道工具未通过检查。请先处理检测项。"
+                : "请使用频道工具官方扫码授权流程登录，然后重新检查。";
         return new DiagnosticReport(node, cli, ffmpeg, login, log, overallMessage);
     }
 
@@ -404,27 +404,27 @@ public sealed class CliDiagnostics
         var text = Sanitize(string.IsNullOrWhiteSpace(message) ? rawText : message);
         if (exitCode is null)
         {
-            return new DiagnosticItem(DiagnosticState.Error, "检查失败", "CLI 未能返回有效状态");
+            return new DiagnosticItem(DiagnosticState.Error, "检查未通过", "频道工具未返回登录状态，请重新检查。");
         }
 
         if (ContainsAny(text, "未登录", "not logged in", "unauthorized", "未授权", "login required", "8011"))
         {
-            return new DiagnosticItem(DiagnosticState.Warning, "未登录", "请使用 CLI 官方扫码授权流程登录");
+            return new DiagnosticItem(DiagnosticState.Warning, "未登录", "请使用频道工具官方扫码授权流程登录");
         }
 
         if (ContainsAny(text, "expired", "过期", "token"))
         {
-            return new DiagnosticItem(DiagnosticState.Warning, "授权可能过期", "请使用 CLI 官方流程重新授权");
+            return new DiagnosticItem(DiagnosticState.Warning, "授权可能过期", "登录凭证可能已过期，请使用频道工具重新授权。");
         }
 
         var successFlag = TryReadSuccessFlag(rawText);
         if (successFlag == false || exitCode != 0)
-            return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "CLI 未能确认当前登录状态，请重新检查或扫码登录");
+            return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "无法确认登录状态，请重新检查或扫码登录。");
 
         if (successFlag == true || ContainsAny(text, "logged in", "已登录", "登录状态正常", "authenticated", "authorized", "授权有效"))
-            return new DiagnosticItem(DiagnosticState.Ready, "已登录", FirstUsefulLine(text, "CLI 登录状态正常"));
+            return new DiagnosticItem(DiagnosticState.Ready, "已登录", FirstUsefulLine(text, "频道工具登录状态正常"));
 
-        return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "CLI 未能确认当前登录状态，请重新检查或扫码登录");
+        return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "无法确认登录状态，请重新检查或扫码登录。");
     }
 
     private static bool? TryReadSuccessFlag(string text)
@@ -474,13 +474,13 @@ public sealed class CliDiagnostics
         var result = await RunCommandAsync("node", ["--version"], cancellationToken);
         if (!result.Started)
         {
-            return new DiagnosticItem(DiagnosticState.Error, "未安装", "PATH 中未找到 Node.js");
+            return new DiagnosticItem(DiagnosticState.Error, "未安装", "未找到 Node.js，请安装后重新检查。");
         }
 
         var version = FirstUsefulLine(result.CombinedOutput);
         return result.ExitCode == 0
             ? new DiagnosticItem(DiagnosticState.Ready, "可用", string.IsNullOrWhiteSpace(version) ? "Node.js 已启动" : version)
-            : new DiagnosticItem(DiagnosticState.Error, "异常", FirstUsefulLine(result.CombinedOutput, "Node.js 检查失败"));
+            : new DiagnosticItem(DiagnosticState.Error, "异常", FirstUsefulLine(result.CombinedOutput, "Node.js 检查未通过，请重新检查或查看运行日志。"));
     }
 
     private async Task<string?> FindCliEntryPointAsync(CancellationToken cancellationToken)

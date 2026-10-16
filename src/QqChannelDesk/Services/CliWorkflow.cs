@@ -35,7 +35,7 @@ public sealed class CliWorkflow
         _logger.CliResult("启动扫码授权", result.ExitCode, result.StandardOutput, result.StandardError);
         if (result.ExitCode != 0)
         {
-            var error = ParseCliError(result.StandardOutput, result.StandardError, "无法启动扫码授权");
+            var error = ParseCliError(result.StandardOutput, result.StandardError, "无法启动扫码授权，请检查频道工具后重试。");
             _logger.Warning($"CLI 扫码授权未能启动：{error}");
             throw new InvalidOperationException(error);
         }
@@ -46,7 +46,7 @@ public sealed class CliWorkflow
         var uri = ReadString(data, "verification_uri");
         if (qr.Length == 0 || uri.Length == 0)
         {
-            throw new InvalidOperationException("CLI 未返回有效的授权二维码或授权链接。");
+            throw new InvalidOperationException("频道工具未返回授权二维码或链接，请重新发起登录。");
         }
 
         return new LoginChallenge(qr, uri);
@@ -63,7 +63,7 @@ public sealed class CliWorkflow
         if (result.TimedOut)
         {
             _logger.Warning("CLI 扫码授权等待超过 10 分钟时限。");
-            return new LoginResult(false, "扫码授权等待超过 CLI 的 10 分钟时限。", false);
+            return new LoginResult(false, "扫码授权已超时，请重新发起登录。", false);
         }
 
         if (result.ExitCode == 0 && TryReadSuccess(result.StandardOutput))
@@ -87,7 +87,7 @@ public sealed class CliWorkflow
             return new CliActionResult(true, "已退出登录。");
         }
 
-        var message = ParseCliError(result.StandardOutput, result.StandardError, "退出登录失败");
+        var message = ParseCliError(result.StandardOutput, result.StandardError, "退出登录未完成，请重试。");
         _logger.Warning($"退出登录失败：{message}");
         return new CliActionResult(false, message);
     }
@@ -96,7 +96,7 @@ public sealed class CliWorkflow
     {
         var result = await RunCliAsync(["manage", "get-my-join-guild-info", "--json"], ShortTimeout, cancellationToken);
         _logger.CliResult("读取频道列表", result.ExitCode, result.StandardOutput, result.StandardError);
-        if (result.ExitCode != 0) throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取频道列表失败"));
+        if (result.ExitCode != 0) throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取频道列表失败，请刷新频道后重试。"));
         using var json = ParseLastJson(result.StandardOutput);
         var data = GetData(json.RootElement);
         var choices = new List<ChannelChoice>();
@@ -120,7 +120,7 @@ public sealed class CliWorkflow
         if (!Regex.IsMatch(guildId.Trim(), @"^\d+$")) throw new ArgumentException("频道 ID 无效。", nameof(guildId));
         var result = await RunCliAsync(["manage", "get-guild-channel-list", "--guild-id", guildId.Trim(), "--json"], ShortTimeout, cancellationToken);
         //_logger.CliResult("读取版块列表", result.ExitCode, result.StandardOutput, result.StandardError);
-        if (result.ExitCode != 0) throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取版块列表失败"));
+        if (result.ExitCode != 0) throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取版块列表失败，请刷新频道后重试。"));
         using var json = ParseLastJson(result.StandardOutput);
         var data = GetData(json.RootElement);
         if (!data.TryGetProperty("channels", out var channels) || channels.ValueKind != JsonValueKind.Array) return [];
@@ -135,7 +135,7 @@ public sealed class CliWorkflow
         var result = await RunCliAsync(["manage", "get-user-info", "--json"], ShortTimeout, cancellationToken);
         if (result.ExitCode != 0)
         {
-            throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取当前账号失败"));
+            throw new InvalidOperationException(ParseCliError(result.StandardOutput, result.StandardError, "读取当前账号失败，请重新登录后重试。"));
         }
 
         using var json = ParseLastJson(result.StandardOutput);
@@ -274,7 +274,7 @@ public sealed class CliWorkflow
 
     public static PublishResult ParsePublishResult(int? exitCode, string output, string error = "")
     {
-        var message = ParseCliError(output, error, "CLI 未返回可识别结果");
+        var message = ParseCliError(output, error, "频道工具未返回可识别结果，请重试或查看运行日志。");
         var parsed = TryParseJson(output);
         if (exitCode == 0 && parsed is not null && IsSuccess(parsed.RootElement))
         {
@@ -342,7 +342,7 @@ public sealed class CliWorkflow
     private async Task<ProcessResult> RunCliAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var cli = _cliEntryPoint ?? await FindCliEntryPointAsync(cancellationToken);
-        if (cli is null) return new ProcessResult(null, "", "未找到 tencent-channel-cli。", false);
+        if (cli is null) return new ProcessResult(null, "", "未找到频道工具（tencent-channel-cli），请先安装后重试。", false);
         var info = new ProcessStartInfo
         {
             FileName = _nodeExecutable,
@@ -364,7 +364,7 @@ public sealed class CliWorkflow
         using var process = new Process { StartInfo = info };
         try
         {
-            if (!process.Start()) return new ProcessResult(null, "", "无法启动 CLI。", false);
+            if (!process.Start()) return new ProcessResult(null, "", "频道工具启动失败，请检查安装后重试。", false);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -424,7 +424,7 @@ public sealed class CliWorkflow
     }
 
     private static JsonDocument ParseLastJson(string output) => TryParseJson(output) ??
-        throw new InvalidOperationException("CLI 授权输出格式无法识别。");
+        throw new InvalidOperationException("频道工具返回格式无法识别，请重新登录或查看运行日志。");
 
     private static JsonDocument? TryParseJson(string output)
     {

@@ -181,11 +181,11 @@ public sealed class ChannelCacheStore
         }
         catch (JsonException)
         {
-            return new(accountKey, false, null, "频道同步状态文件无效，请重新刷新频道数据");
+            return new(accountKey, false, null, "频道同步状态异常，请刷新频道后重试。");
         }
         catch (IOException)
         {
-            return new(accountKey, false, null, "无法读取频道同步状态，请重新刷新频道数据");
+            return new(accountKey, false, null, "无法读取频道同步状态，请刷新频道后重试。");
         }
     }
 

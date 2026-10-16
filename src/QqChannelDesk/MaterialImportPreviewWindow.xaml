@@ -32,11 +32,11 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="板块" Width="170">
+        <DataGridTemplateColumn Header="版块" Width="170">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <ComboBox ItemsSource="{Binding ChannelOptions}" SelectedItem="{Binding ChannelName, UpdateSourceTrigger=PropertyChanged}"
-                        SelectionChanged="ChannelComboBox_SelectionChanged" ToolTip="板块选项随频道变化"/>
+                        SelectionChanged="ChannelComboBox_SelectionChanged" ToolTip="版块选项随频道变化"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
@@ -48,7 +48,7 @@
     <DockPanel Grid.Row="3" Margin="0,14,0,0">
       <TextBlock x:Name="HintText" VerticalAlignment="Center" Foreground="{StaticResource Warn}" TextWrapping="Wrap"/>
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-        <Button x:Name="ExportErrorsButton" Content="导出错误行" Style="{StaticResource QuietButton}" Click="ExportErrorsButton_Click" Width="104"/>
+        <Button x:Name="ExportErrorsButton" Content="导出失败项" Style="{StaticResource QuietButton}" Click="ExportErrorsButton_Click" Width="104"/>
         <Button Content="取消" Style="{StaticResource QuietButton}" IsCancel="True" Margin="8,0,0,0" Width="86"/>
         <Button x:Name="ConfirmButton" Content="确认导入" Style="{StaticResource PrimaryButton}" Click="ConfirmButton_Click" Margin="8,0,0,0" Width="100"/>
       </StackPanel>

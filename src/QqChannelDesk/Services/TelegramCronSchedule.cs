@@ -31,7 +31,7 @@ public sealed class TelegramCronSchedule
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != 5)
         {
-            error = "Cron 表达式必须是 5 段：分 时 日 月 周。";
+            error = "计划表达式必须是 5 段：分 时 日 月 周。";
             return false;
         }
 

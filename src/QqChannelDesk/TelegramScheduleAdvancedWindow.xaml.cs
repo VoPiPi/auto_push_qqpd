@@ -36,7 +36,7 @@ public partial class TelegramScheduleAdvancedWindow : Window
         if (_channelSync is null)
         {
             NewRuleButton.IsEnabled = false;
-            ShowFormMessage("暂无频道缓存，请先同步频道数据后再配置分发规则。");
+            ShowFormMessage("暂无频道数据，请先刷新频道后再配置分发规则。");
             return;
         }
         try
@@ -45,7 +45,7 @@ public partial class TelegramScheduleAdvancedWindow : Window
             if (guilds.Count == 0)
             {
                 NewRuleButton.IsEnabled = false;
-                ShowFormMessage("暂无频道缓存，请先同步频道数据后再配置分发规则。");
+                ShowFormMessage("暂无频道数据，请先刷新频道后再配置分发规则。");
             }
             else
             {
@@ -56,7 +56,7 @@ public partial class TelegramScheduleAdvancedWindow : Window
         catch (Exception ex)
         {
             NewRuleButton.IsEnabled = false;
-            ShowFormMessage($"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            ShowFormMessage($"读取频道数据失败：{CliDiagnostics.Sanitize(ex.Message)}");
         }
     }
 

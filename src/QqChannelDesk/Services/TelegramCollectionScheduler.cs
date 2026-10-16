@@ -212,7 +212,7 @@ public sealed class TelegramCollectionScheduler
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var message = preview.Messages[index];
-                Report(schedule, "写入素材", index, preview.Messages.Count, $"正在处理第 {index + 1}/{preview.Messages.Count} 条，下载媒体并写入素材仓库…");
+                Report(schedule, "写入素材", index, preview.Messages.Count, $"正在处理第 {index + 1}/{preview.Messages.Count} 条，下载媒体并写入素材库…");
                 if (await _library.HasMaterialSourceAsync("TG采集", message.Url, cancellationToken))
                 {
                     skipped++;
@@ -254,7 +254,7 @@ public sealed class TelegramCollectionScheduler
             try { await _store.UpdateResultAsync(schedule.Id, started, false, added, detail, cancellationToken); }
             catch (Exception updateEx) { _logger.Error($"保存 TG 定时采集失败状态失败：{CliDiagnostics.Sanitize(updateEx.Message)}"); }
             _logger.Warning($"TG 定时采集 {schedule.ChannelUrl} 失败：{detail}");
-            Report(schedule, "失败", 0, 0, $"采集失败：{detail}");
+            Report(schedule, "失败", 0, 0, $"采集未完成，请检查网络、代理或节点后重试：{detail}");
             return new(schedule.Id, false, added, skipped, matched, unmatched, failedMedia, detail);
         }
     }

@@ -48,7 +48,7 @@ public partial class DiagnosticsPage : UserControl
         InstallNodeButton.IsEnabled = !Installing;
         InstallCliButton.Visibility = report.Cli.State == DiagnosticState.Warning && report.Node.State == DiagnosticState.Ready ? Visibility.Visible : Visibility.Collapsed;
         InstallCliButton.IsEnabled = !Installing;
-        LoginValue.Text = report.Login.State == DiagnosticState.Ready ? "CLI 授权有效，服务连通正常" : report.Login.Detail;
+        LoginValue.Text = report.Login.State == DiagnosticState.Ready ? "登录有效，服务正常" : report.Login.Detail;
         SetState(LoginBadge, report.Login);
         LoginAction.Visibility = report.Cli.State == DiagnosticState.Ready && report.Login.State == DiagnosticState.Warning && report.Login.StateLabel == "未登录"
             ? Visibility.Visible
@@ -69,7 +69,7 @@ public partial class DiagnosticsPage : UserControl
     public void SetFeedResult(FeedType type, PublishResult result)
     {
         var status = type switch { FeedType.Text => TextFeedStatus, FeedType.Image => ImageFeedStatus, _ => VideoFeedStatus };
-        status.Text = result.Succeeded ? $"已发布 · {DateTime.Now:HH:mm}" : $"验证失败 · {result.Category}";
+        status.Text = result.Succeeded ? $"已发布 · {DateTime.Now:HH:mm}" : $"发布未完成 · {result.Category}";
         status.Foreground = result.Succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Danger;
     }
 

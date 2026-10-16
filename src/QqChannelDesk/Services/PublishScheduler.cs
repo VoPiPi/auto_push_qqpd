@@ -86,7 +86,7 @@ public sealed class PublishScheduler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return new ScheduleCheckResult(false, 0, 0, "立即检查已取消");
+            return new ScheduleCheckResult(false, 0, 0, "已取消检查发布计划");
         }
         catch (Exception ex)
         {
@@ -305,7 +305,7 @@ public sealed class PublishScheduler
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
             _logger.Error($"计划 {execution.Id} 执行异常：{message}");
-            var failure = new PublishResult(false, PublishErrorCategory.Other, $"计划执行异常：{message}", null, null);
+            var failure = new PublishResult(false, PublishErrorCategory.Other, $"计划未执行，请稍后重试或查看运行日志：{message}", null, null);
             await CompleteExecutionSafelyAsync(execution.Id, null, failure).ConfigureAwait(false);
         }
     }

@@ -41,7 +41,7 @@ public sealed class CliDiagnosticsTests
 
         Assert.Equal(DiagnosticState.Warning, item.State);
         Assert.Equal("未登录", item.StateLabel);
-        Assert.Equal("请使用 CLI 官方扫码授权流程登录", item.Detail);
+        Assert.Equal("请使用频道工具官方扫码授权流程登录", item.Detail);
     }
 
     [Fact]
@@ -389,7 +389,7 @@ public sealed class CliWorkflowTests
     [Theory]
     [InlineData("abc", "123", "hello", "频道 ID 必须为数字。")]
     [InlineData("123", "abc", "hello", "版块 ID 必须为数字。")]
-    [InlineData("123", "456", "", "未提供图片或视频时，必须填写正文。")]
+    [InlineData("123", "456", "", "请填写正文，或添加图片或视频。")]
     public void ValidatesPublishRequest(string guildId, string channelId, string content, string expected)
     {
         Assert.Equal(expected, CliWorkflow.ValidatePublishRequest(new PublishRequest(guildId, channelId, content)));
@@ -480,7 +480,7 @@ public sealed class CliWorkflowTests
         {
             Assert.Empty(CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", Type: FeedType.Image, Files: [image])));
             Assert.Empty(CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", Type: FeedType.Video, Files: ["https://example.com/video.mp4"])));
-            Assert.Contains("必须填写正文", CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", "只有标题")));
+            Assert.Contains("请填写正文，或添加图片或视频", CliWorkflow.ValidatePublishRequest(new PublishRequest("1", "2", "", "只有标题")));
         }
         finally
         {

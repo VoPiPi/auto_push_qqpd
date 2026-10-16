@@ -86,7 +86,7 @@ public sealed class ChannelSyncService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            const string message = "频道数据同步已取消；发布已禁用，旧缓存保留。";
+            const string message = "同步已取消；旧频道数据保留，发布已暂停。请稍后刷新频道。";
             await TryMarkFailureAsync(message);
             _logger.Warning(message);
             progress?.Report(message);
@@ -96,8 +96,8 @@ public sealed class ChannelSyncService
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
             await TryMarkFailureAsync(message);
-            _logger.Error($"频道数据同步失败：{message}；旧缓存保留，等待手动刷新或下次超过 6 小时后重试。");
-            progress?.Report($"频道数据同步失败：{message}；旧缓存保留，等待手动刷新或下次超过 6 小时后重试。");
+            _logger.Error($"频道数据同步失败：{message}；旧数据保留，等待手动刷新或自动重试。");
+            progress?.Report($"频道同步失败，旧频道数据已保留，发布已暂停。请刷新频道后重试。{message}");
             return new ChannelSyncResult(false, 0, 0, message);
         }
     }

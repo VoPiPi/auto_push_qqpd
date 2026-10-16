@@ -26,12 +26,12 @@ public sealed class MediaStorageService
 
     public static async Task<StorageDirectoryResult> ValidateDirectoryAsync(string path, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(path)) return new(false, "素材文件储存路径不能为空。", "");
+        if (string.IsNullOrWhiteSpace(path)) return new(false, "请选择素材文件存储路径。", "");
         string fullPath;
         try { fullPath = Path.GetFullPath(path.Trim()); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return new(false, $"素材文件储存路径无效：{ex.Message}", "");
+            return new(false, $"素材存储路径无效，请重新选择：{ex.Message}", "");
         }
 
         try
@@ -45,7 +45,7 @@ public sealed class MediaStorageService
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            return new(false, $"素材目录不可写：{ex.Message}", fullPath);
+            return new(false, $"素材目录不可写，请检查权限或更换目录：{ex.Message}", fullPath);
         }
     }
 

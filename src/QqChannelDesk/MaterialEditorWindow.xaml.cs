@@ -67,7 +67,7 @@ public partial class MaterialEditorWindow : Window
             }
             else ChannelCombo.ItemsSource = null;
         }
-        catch (Exception ex) { FormMessage.Text = $"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { FormMessage.Text = $"未能读取频道数据：{CliDiagnostics.Sanitize(ex.Message)}"; }
         finally { _loading = false; }
     }
 
@@ -96,7 +96,7 @@ public partial class MaterialEditorWindow : Window
             return;
         }
         try { await LoadChannelsAsync(guild, selectFirstWhenMissing: true); }
-        catch (Exception ex) { FormMessage.Text = $"读取版块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { FormMessage.Text = $"未能读取版块数据：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -105,11 +105,11 @@ public partial class MaterialEditorWindow : Window
         {
             FormMessage.Text = "正在刷新频道和版块…";
             var result = await _channelSync.SynchronizeAsync();
-            if (!result.Succeeded) { FormMessage.Text = $"刷新失败：{result.Error}"; return; }
+            if (!result.Succeeded) { FormMessage.Text = $"刷新未完成：{result.Error}"; return; }
             await LoadGuildsAsync();
             FormMessage.Text = "频道数据已刷新。";
         }
-        catch (Exception ex) { FormMessage.Text = $"刷新失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { FormMessage.Text = $"刷新未完成：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
     private void MediaLinksBox_TextChanged(object sender, TextChangedEventArgs e) => InferTypeFromLinks();
@@ -185,7 +185,7 @@ public partial class MaterialEditorWindow : Window
         }
         catch (Exception ex)
         {
-            FormMessage.Text = $"保存媒体文件失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            FormMessage.Text = $"未能保存媒体文件：{CliDiagnostics.Sanitize(ex.Message)}";
             return;
         }
 

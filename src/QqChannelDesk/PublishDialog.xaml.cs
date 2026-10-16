@@ -43,7 +43,7 @@ public partial class PublishDialog : Window
         Description.Text = feedType switch
         {
             FeedType.Image => "可选择多张图片；媒体将作为帖子附件发布。",
-            FeedType.Video => "选择一个本地视频文件；CLI 首次处理视频可能会安装 ffmpeg。",
+            FeedType.Video => "选择一个本地视频文件；频道工具首次处理视频时，可能需要安装 FFmpeg。",
             _ => "标题可留空发布短贴；填写标题则发布长贴。"
         };
         MediaPanel.Visibility = feedType == FeedType.Text ? Visibility.Collapsed : Visibility.Visible;
@@ -83,7 +83,7 @@ public partial class PublishDialog : Window
         {
             TitleBox.Text = sourceMaterial.Title;
             ContentBox.Text = sourceMaterial.Content;
-            SourceInfo.Text = "素材仓库内容";
+            SourceInfo.Text = "素材库内容";
             SourceInfo.Visibility = Visibility.Visible;
             Heading.Text = "发布素材";
             Description.Text = "本地媒体将直接上传，公开链接会先下载为附件；发布前会再次确认内容和目标。";
@@ -112,7 +112,7 @@ public partial class PublishDialog : Window
         GuildCombo.IsEnabled = false;
         ChannelCombo.IsEnabled = false;
         PublishButton.IsEnabled = false;
-        FooterStatus.Text = "正在读取本地频道缓存…";
+        FooterStatus.Text = "正在读取已保存的频道数据…";
         try
         {
             var previous = _sourceMaterial?.GuildId ?? (GuildCombo.SelectedItem as ChannelChoice)?.Id;
@@ -125,24 +125,24 @@ public partial class PublishDialog : Window
             if (GuildCombo.SelectedItem is not ChannelChoice selected)
             {
                 ChannelCombo.ItemsSource = null;
-                FooterStatus.Text = "当前账号没有可用的频道";
+                FooterStatus.Text = "当前账号没有可用频道";
             }
             else
             {
                 await LoadCachedChannelsAsync(selected);
                 FooterStatus.Text = state.Succeeded
-                    ? $"已载入缓存：{guilds.Count} 个频道{(state.SyncedAt is null ? "" : $"，同步于 {state.SyncedAt.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}"
-                    : state.Error is null ? "频道缓存尚未成功同步，请刷新数据。" : $"上次同步失败：{state.Error}；请刷新数据。";
+                    ? $"已加载频道数据：{guilds.Count} 个频道{(state.SyncedAt is null ? "" : $"，上次刷新于 {state.SyncedAt.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}"
+                    : state.Error is null ? "频道数据尚未同步，请刷新频道。" : $"上次刷新失败：{state.Error}。已保留旧数据，发布已暂停；请刷新频道后重试。";
             }
             PublishButton.IsEnabled = state.Succeeded && guilds.Count > 0 && ChannelCombo.Items.Count > 0;
             if (_sourceMaterial is not null && ChannelCombo.ItemsSource is IEnumerable<ChannelChoice> channels)
                 ChannelCombo.SelectedItem = channels.FirstOrDefault(item => item.Id == _sourceMaterial.ChannelId) ?? ChannelCombo.SelectedItem;
-            DialogStatus.Text = state.Succeeded ? "频道和版块来自本地缓存。" : "当前缓存不可用于发布，请先成功刷新频道数据。";
+            DialogStatus.Text = state.Succeeded ? "频道和版块来自已保存数据。" : "频道数据不可用于发布，请刷新频道后重试。";
         }
         catch (Exception ex)
         {
-            FooterStatus.Text = $"读取本地缓存失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            DialogStatus.Text = "无法读取频道缓存，发布已禁用。";
+            FooterStatus.Text = $"频道数据读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            DialogStatus.Text = "频道数据读取失败，发布已暂停。请刷新频道后重试。";
         }
         finally
         {
@@ -154,13 +154,13 @@ public partial class PublishDialog : Window
     {
         RefreshButton.IsEnabled = false;
         PublishButton.IsEnabled = false;
-        FooterStatus.Text = "正在从 CLI 刷新频道和版块…";
+        FooterStatus.Text = "正在刷新频道和版块…";
         try
         {
             var sync = await _channelSync.SynchronizeAsync(new Progress<string>(message => FooterStatus.Text = message));
             if (!sync.Succeeded)
             {
-                DialogStatus.Text = "刷新失败；旧缓存已保留，但发布已禁用。";
+                DialogStatus.Text = "刷新未完成；已保留旧数据，发布已暂停。请重试刷新。";
                 await LoadCachedGuildsAsync();
                 PublishButton.IsEnabled = false;
                 return;
@@ -186,12 +186,12 @@ public partial class PublishDialog : Window
             ChannelCombo.ItemsSource = channels;
             ChannelCombo.SelectedItem = channels.FirstOrDefault();
             ChannelCombo.IsEnabled = channels.Count > 0;
-            if (channels.Count == 0) FooterStatus.Text = "该频道没有缓存的可用版块";
+            if (channels.Count == 0) FooterStatus.Text = "该频道没有可用版块";
         }
         catch (Exception ex)
         {
             ChannelCombo.ItemsSource = null;
-            FooterStatus.Text = $"读取本地版块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            FooterStatus.Text = $"版块数据读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally
         {
@@ -230,7 +230,7 @@ public partial class PublishDialog : Window
 
         var media = previewRequest.MediaPaths.Count == 0 ? "（无）" : string.Join("\n", previewRequest.MediaPaths.Select(DisplayMediaSource));
         var confirmation = MessageBox.Show(this,
-            $"将发布一条真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")} Feed：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{(string.IsNullOrWhiteSpace(previewRequest.Content) ? "（无正文）" : previewRequest.Content)}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
+            $"将发布真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")}帖子：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{(string.IsNullOrWhiteSpace(previewRequest.Content) ? "（无正文）" : previewRequest.Content)}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
             "确认真实发帖", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirmation != MessageBoxResult.Yes) return;
 
@@ -248,15 +248,15 @@ public partial class PublishDialog : Window
             if (!Result.Succeeded && Result.Category == PublishErrorCategory.Timeout)
                 details += "\n请先核实目标频道，不要立即重试。";
             DialogStatus.Text = details;
-            FooterStatus.Text = Result.Succeeded ? "发布成功" : $"发布失败：{Result.Category}";
+            FooterStatus.Text = Result.Succeeded ? "发布成功" : $"发布未完成：{Result.Category}";
             MessageBox.Show(this, details, Result.Succeeded ? "发布结果" : "发布未成功", MessageBoxButton.OK,
                 Result.Succeeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
             DialogResult = true;
         }
         catch (Exception ex)
         {
-            FooterStatus.Text = "发布执行异常；请先核实频道";
-            MessageBox.Show(this, $"{CliDiagnostics.Sanitize(ex.Message)}\n\n请先核实目标频道是否已出现帖子，不要立即重试。", "发布执行异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+            FooterStatus.Text = "发布结果待确认；请先核实频道。";
+            MessageBox.Show(this, $"发布结果尚未确认，请先核实目标频道是否已出现帖子。\n\n{CliDiagnostics.Sanitize(ex.Message)}\n\n不要立即重试。", "发布结果待确认", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
@@ -269,7 +269,7 @@ public partial class PublishDialog : Window
         if (_sourceDraft is not null)
             return string.IsNullOrWhiteSpace(_sourceDraft.SourceUrl) ? "手动草稿" : _sourceDraft.SourceUrl;
         if (_sourceMaterial is not null)
-            return "素材仓库";
+            return "素材库";
         return "（无）";
     }
 

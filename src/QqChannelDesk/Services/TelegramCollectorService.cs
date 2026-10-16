@@ -109,7 +109,7 @@ public sealed class TelegramCollectorService
                 failures.Add($"{provider.DisplayName}：{CliDiagnostics.Sanitize(ex.Message)}");
                 AppLogger.Instance.Warning($"tg 网页代理 {provider.DisplayName} 失败：{ex.Message}");
                 if (providers.Count == 1)
-                    return new TelegramChannelPreview([], "", 0, $"{provider.DisplayName} 请求失败：{CliDiagnostics.Sanitize(ex.Message)}", provider.Id, provider.DisplayName, failures);
+                    return new TelegramChannelPreview([], "", 0, $"{provider.DisplayName} 请求失败，请检查网络或更换代理后重试：{CliDiagnostics.Sanitize(ex.Message)}", provider.Id, provider.DisplayName, failures);
             }
         }
 
@@ -118,9 +118,9 @@ public sealed class TelegramCollectorService
         {
             var provider = providers.FirstOrDefault();
             var name = provider?.DisplayName ?? "当前网页代理";
-            return new TelegramChannelPreview([], "", 0, $"{name} 请求失败：{detail}", provider?.Id ?? "", name, failures);
+            return new TelegramChannelPreview([], "", 0, $"{name} 请求失败，请检查网络或更换代理后重试：{detail}", provider?.Id ?? "", name, failures);
         }
-        return new TelegramChannelPreview([], "", 0, $"所有网页代理均不可用：{detail}", "", "", failures);
+        return new TelegramChannelPreview([], "", 0, $"网页代理均不可用，请更换代理或稍后重试：{detail}", "", "", failures);
     }
 
     /// <summary>

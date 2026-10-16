@@ -97,7 +97,7 @@ public partial class ContentCollectionPage : UserControl
             _allItems = [];
             ItemsGrid.ItemsSource = null;
             UpdateItemsPagination();
-            ItemsStatus.Text = $"读取收件箱失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ItemsStatus.Text = $"未能读取收件箱，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally { _loading = false; }
     }
@@ -144,7 +144,7 @@ public partial class ContentCollectionPage : UserControl
         }
         if (TelegramChannelParser.IsTelegramHost(normalized.Host))
         {
-            var answer = MessageBox.Show(Window.GetWindow(this), "tg 频道和消息请使用「TG采集」页签采集：\n\n结果先临时展示在列表中，确认后下载媒体并直接加入素材仓库。\n\n是否立即切换到该页签？", "请使用 TG采集", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            var answer = MessageBox.Show(Window.GetWindow(this), "TG 频道和消息请使用“TG采集”页签。\n\n是否立即切换？", "请使用 TG采集", MessageBoxButton.YesNo, MessageBoxImage.Information);
             if (answer == MessageBoxResult.Yes) WorkspaceTabs.SelectedIndex = 1;
             return;
         }
@@ -177,7 +177,7 @@ public partial class ContentCollectionPage : UserControl
             ShowMediaInfo();
             ItemMessage.Text = result.Succeeded
                 ? $"已提取自 {result.SourceHost}。请检查并确认内容使用权限后保存。"
-                : $"{result.Error} 可手动补全标题和正文后保存。";
+                : $"{result.Error}\n可补全标题和正文后保存。";
             ItemMessage.Foreground = result.Succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
         }
         finally { FetchButtonIsEnabled(true); }
@@ -258,7 +258,7 @@ public partial class ContentCollectionPage : UserControl
         {
             MessageBox.Show(Window.GetWindow(this), "该网页链接已存在于收件箱。", "重复链接", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex) { ItemMessage.Text = $"保存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { ItemMessage.Text = $"未能保存，请检查内容后重试：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
     private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -302,11 +302,11 @@ public partial class ContentCollectionPage : UserControl
         var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem?.Media;
         if (string.IsNullOrWhiteSpace(ItemTitleBox.Text) && string.IsNullOrWhiteSpace(ItemContentBox.Text) && (media is null || media.Count == 0))
         {
-            MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项后才能加入素材仓库。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项后才能加入素材库。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         var source = ItemUrlBox.Text.Trim();
-        if (source.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。来源地址会保留在素材来源中，不会自动加入帖子正文。继续加入素材仓库？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (source.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。\n来源地址仅作记录，不会加入帖子正文。继续加入素材库？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         var mediaList = media ?? [];
         var type = MaterialMediaValidator.InferType(mediaList) ?? (mediaList.Count == 0 ? "text" : "");
         if (type.Length == 0)
@@ -320,12 +320,12 @@ public partial class ContentCollectionPage : UserControl
                 null, ItemTitleBox.Text, type, ItemContentBox.Text, "", "", "", "", null, "waitsend", "", mediaList,
                 source.Length > 0 ? "网络采集" : "手工添加", source));
             if (_selectedItem is not null) await _store.SetItemStatusAsync(_selectedItem.Id, "已入素材库");
-            ItemMessage.Text = $"已加入素材仓库（编号 {materialId}），状态为待发布。";
+            ItemMessage.Text = $"已加入素材库（编号 {materialId}），状态为待发布。";
             ItemMessage.Foreground = UiStatusBrushes.Success;
         }
         catch (Exception ex)
         {
-            ItemMessage.Text = $"加入素材仓库失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            ItemMessage.Text = $"未能加入素材库，请检查媒体后重试：{CliDiagnostics.Sanitize(ex.Message)}";
             ItemMessage.Foreground = UiStatusBrushes.Warning;
             return;
         }
@@ -375,14 +375,14 @@ public partial class ContentCollectionPage : UserControl
         var channelUrl = TelegramCollectorService.NormalizeChannelUrl(TgChannelBox.Text);
         if (channelUrl.Length == 0)
         {
-            MessageBox.Show(Window.GetWindow(this), "请输入有效的 tg 频道地址，例如 t.me/频道名、@频道名 或 t.me/s/频道名。", "频道地址无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "请输入有效的 TG 频道地址，例如 t.me/频道名、@频道名 或 t.me/s/频道名。", "频道地址无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             TgChannelBox.Focus();
             return;
         }
         if (!_tgPermissionConfirmed)
         {
             var granted = MessageBox.Show(Window.GetWindow(this),
-                "将通过网络代理打开 tg 频道预览页并解析其中的消息。\n\n采集结果仅临时展示在列表中，确认后会下载媒体并直接加入素材仓库。\n\n请确认你对这些内容拥有合法使用权限。是否继续？",
+                "将通过网络代理读取 TG 频道消息。\n\n结果先临时展示，确认后下载媒体并加入素材库。\n请确认你拥有合法使用权限。是否继续？",
                 "确认采集", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (granted != MessageBoxResult.Yes) return;
             _tgPermissionConfirmed = true;
@@ -428,7 +428,7 @@ public partial class ContentCollectionPage : UserControl
         }
         catch (Exception ex)
         {
-            SetTgStatus($"采集失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetTgStatus($"采集未完成，请检查频道地址或代理后重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
         finally
         {
@@ -553,10 +553,10 @@ public partial class ContentCollectionPage : UserControl
         if (targets.Length == 0)
         {
             var drafted = _tempItems.Count(item => item.IsSelected && !item.CanMaterialize);
-            SetTgStatus(drafted > 0 ? "选中的消息都已加入素材仓库，不能重复入库。" : "请先勾选要加入素材仓库的临时消息。", false);
+            SetTgStatus(drafted > 0 ? "选中的消息都已加入素材库，不能重复入库。" : "请先勾选要加入素材库的临时消息。", false);
             return;
         }
-        var answer = MessageBox.Show(Window.GetWindow(this), $"将把选中的 {targets.Length} 条消息下载图片和视频并加入素材仓库：\n\ntemp\\telegram\\yyyyMMdd\\频道\\\n\n已入素材库的消息会自动跳过。是否继续？", "批量加入素材仓库", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        var answer = MessageBox.Show(Window.GetWindow(this), $"将下载选中的 {targets.Length} 条消息媒体并加入素材库。\n\n已入库的消息会自动跳过。是否继续？", "批量加入素材库", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (answer != MessageBoxResult.Yes) return;
         await DraftTempItemsAsync(targets);
     }
@@ -609,7 +609,7 @@ public partial class ContentCollectionPage : UserControl
             }
             var summary = $"加入素材库完成：成功 {drafted} 条，失败 {failed} 条";
             if (mediaFailed > 0) summary += $"，{mediaFailed} 个媒体下载失败（相关消息未入库）";
-            summary += "。可在「素材仓库」查看。";
+            summary += "。可在“素材库”查看。";
             SetTgStatus(summary, failed == 0);
         }
         finally
@@ -706,7 +706,7 @@ public partial class ContentCollectionPage : UserControl
         }
         catch (Exception ex)
         {
-            TgScheduleStatusText.Text = $"读取定时采集配置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            TgScheduleStatusText.Text = $"未能读取定时采集配置，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally
         {
@@ -761,7 +761,7 @@ public partial class ContentCollectionPage : UserControl
         }
         if (!TelegramCronSchedule.TryParse(_scheduleCronExpression, out var cron, out var cronError))
         {
-            TgScheduleStatusText.Text = $"Cron 表达式无效：{cronError}";
+            TgScheduleStatusText.Text = $"计划表达式无效：{cronError}";
             return null;
         }
         var proxySelection = _proxyRegistry.ParseSelection(
@@ -790,7 +790,7 @@ public partial class ContentCollectionPage : UserControl
         }
         catch (Exception ex)
         {
-            TgScheduleStatusText.Text = $"保存定时采集配置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            TgScheduleStatusText.Text = $"未能保存定时采集配置，请检查输入后重试：{CliDiagnostics.Sanitize(ex.Message)}";
             return null;
         }
     }
@@ -812,7 +812,7 @@ public partial class ContentCollectionPage : UserControl
                 var rules = await _telegramCollectionStore.GetRulesAsync(schedule.Id);
                 _scheduleRules = rules.Select(rule => new TelegramDistributionRuleDraft(rule.MessageType, rule.Keyword, rule.GuildId, rule.GuildName, rule.ChannelId, rule.ChannelName, rule.SortOrder)).ToArray();
             }
-            catch (Exception ex) { TgScheduleStatusText.Text = $"读取分发规则失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+            catch (Exception ex) { TgScheduleStatusText.Text = $"未能读取分发规则，请重试：{CliDiagnostics.Sanitize(ex.Message)}"; }
         }
         var option = _proxyRegistry.Options.FirstOrDefault(item => string.Equals(item.Value, schedule.ProxySelection, StringComparison.OrdinalIgnoreCase));
         if (option is not null) TgScheduleProxyBox.SelectedItem = option;
@@ -833,7 +833,7 @@ public partial class ContentCollectionPage : UserControl
         }
         catch (Exception ex)
         {
-            TgScheduleStatusText.Text = $"切换定时采集状态失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            TgScheduleStatusText.Text = $"未能切换定时采集状态，请重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
     }
 
@@ -841,14 +841,14 @@ public partial class ContentCollectionPage : UserControl
     {
         if (_telegramCollectionStore is null || (sender as FrameworkElement)?.DataContext is not TelegramScheduleRow row) return;
         var schedule = row.Schedule;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定删除频道“{schedule.ChannelName}”的定时采集配置？已入素材仓库的内容不会删除。", "删除定时采集", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除频道“{schedule.ChannelName}”的定时采集配置？\n\n已入素材库的内容不会删除。", "删除定时采集", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         try
         {
             await _telegramCollectionStore.DeleteAsync(schedule.Id);
             if (_editingTelegramSchedule?.Id == schedule.Id) ClearTelegramScheduleEditor();
             await LoadTelegramSchedulesAsync();
         }
-        catch (Exception ex) { TgScheduleStatusText.Text = $"删除失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"未能删除定时采集配置，请重试：{CliDiagnostics.Sanitize(ex.Message)}"; }
     }
 
     private async void TgScheduleRunButton_Click(object sender, RoutedEventArgs e)
@@ -874,13 +874,13 @@ public partial class ContentCollectionPage : UserControl
             var result = await _telegramCollectionScheduler.RunNowAsync(schedule.Id, cts.Token);
             TgScheduleStatusText.Text = result.Succeeded
                 ? $"立即采集完成：新增 {result.AddedCount} 条，跳过 {result.SkippedCount} 条。"
-                : $"立即采集失败：{result.Message}";
+                : $"立即采集未完成，请检查频道或代理后重试：{result.Message}";
         }
         catch (OperationCanceledException)
         {
             TgScheduleStatusText.Text = "立即采集已取消，已完成的入库内容会保留。";
         }
-        catch (Exception ex) { TgScheduleStatusText.Text = $"立即采集失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"立即采集未完成，请检查频道或代理后重试：{CliDiagnostics.Sanitize(ex.Message)}"; }
         finally
         {
             _telegramScheduleRuns.Remove(schedule.Id);
@@ -918,7 +918,7 @@ public partial class ContentCollectionPage : UserControl
         {
             TgScheduleStatusText.Text = "定时采集检查已取消。";
         }
-        catch (Exception ex) { TgScheduleStatusText.Text = $"检查定时采集失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { TgScheduleStatusText.Text = $"未能检查定时采集，请重试：{CliDiagnostics.Sanitize(ex.Message)}"; }
         finally
         {
             _telegramScheduleCheckCts.Dispose();
@@ -1039,7 +1039,7 @@ public partial class ContentCollectionPage : UserControl
         }
         catch (Exception ex)
         {
-            SetProxyStatus($"读取代理源失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetProxyStatus($"未能读取代理源，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
     }
 
@@ -1129,7 +1129,7 @@ public partial class ContentCollectionPage : UserControl
                                   row.Node.LastTgCheckedAt is not null && row.Node.TgAccessible is false)
                     .Select(row => row.Node)
                     .ToArray();
-                await DeleteProxyNodesAsync(invalidNodes, "测活不可用且 TG 不可访问的失效节点");
+                await DeleteProxyNodesAsync(invalidNodes, "测试不可用且 TG 不可访问的失效节点");
                 break;
         }
     }
@@ -1138,7 +1138,7 @@ public partial class ContentCollectionPage : UserControl
     {
         if (nodes.Count == 0)
         {
-            SetProxyStatus(description == "已选节点" ? "请先勾选要删除的节点。" : "没有同时满足测活不可用且 TG 不可访问的节点。", false);
+            SetProxyStatus(description == "已选节点" ? "请先勾选要删除的节点。" : "没有同时满足测试不可用且 TG 不可访问的节点。", false);
             return;
         }
         if (MessageBox.Show(Window.GetWindow(this), $"确定删除 {nodes.Count} 个{description}？删除后，下次同步代理源时这些节点可能重新出现。", "批量删除代理节点", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
@@ -1158,7 +1158,7 @@ public partial class ContentCollectionPage : UserControl
         catch (Exception ex)
         {
             await LoadProxyNodesAsync();
-            SetProxyStatus($"批量删除部分完成：已删除 {deleted} 个，错误：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetProxyStatus($"批量删除部分完成：已删除 {deleted} 个，请重试剩余项。\n{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
         finally { SetProxyBusy(false); }
     }
@@ -1179,14 +1179,14 @@ public partial class ContentCollectionPage : UserControl
             var result = await _proxyPoolService.FetchSourceAsync(source, message => SetProxyStatus(message, false));
             if (!result.Succeeded)
             {
-                SetProxyStatus($"获取失败：{result.Error}", false);
+                SetProxyStatus($"获取未完成，请检查代理源后重试：{result.Error}", false);
                 return;
             }
             await LoadProxySourcesAsync();
             SetProxyStatus($"获取完成：读取 {result.ReadCount} 条，保留 HTTP/HTTPS {result.AcceptedCount} 条，过滤其他协议或无效数据 {result.FilteredCount} 条。", true);
         }
         catch (OperationCanceledException) { SetProxyStatus("已取消获取。", false); }
-        catch (Exception ex) { SetProxyStatus($"获取失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (Exception ex) { SetProxyStatus($"获取未完成，请检查代理源后重试：{CliDiagnostics.Sanitize(ex.Message)}", false); }
         finally { SetProxyBusy(false); }
     }
 
@@ -1197,7 +1197,7 @@ public partial class ContentCollectionPage : UserControl
         if (targets.Length == 0) { SetProxyStatus("当前代理源没有 HTTP/HTTPS 节点。", false); return; }
         if (!int.TryParse(ProxyConcurrencyBox.Text.Trim(), out var concurrency) || concurrency is < 1 or > ProxyPoolService.MaxConcurrency)
         {
-            SetProxyStatus($"测活并发数请输入 1-{ProxyPoolService.MaxConcurrency} 的整数。", false);
+            SetProxyStatus($"测试并发数请输入 1-{ProxyPoolService.MaxConcurrency} 的整数。", false);
             ProxyConcurrencyBox.Focus();
             return;
         }
@@ -1211,10 +1211,10 @@ public partial class ContentCollectionPage : UserControl
         {
             var result = await _proxyPoolService.TestHealthAsync(targets, concurrency, message => SetProxyStatus(message, false));
             await LoadProxyNodesAsync();
-            SetProxyStatus($"测活完成：成功 {result.SuccessCount} 条，失败 {result.FailedCount} 条，过滤/跳过 {result.SkippedCount} 条。", result.FailedCount == 0);
+            SetProxyStatus($"测试完成：成功 {result.SuccessCount} 条，失败 {result.FailedCount} 条，过滤/跳过 {result.SkippedCount} 条。", result.FailedCount == 0);
         }
-        catch (OperationCanceledException) { SetProxyStatus("已取消测活。", false); }
-        catch (Exception ex) { SetProxyStatus($"测活失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (OperationCanceledException) { SetProxyStatus("已取消测试。", false); }
+        catch (Exception ex) { SetProxyStatus($"测试未完成，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false); }
         finally { SetProxyBusy(false); }
     }
 
@@ -1249,7 +1249,7 @@ public partial class ContentCollectionPage : UserControl
         catch (Exception ex)
         {
             AppLogger.Instance.WriteException("批量代理节点 TG 验证异常", ex);
-            SetProxyStatus($"TG 验证失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetProxyStatus($"TG 验证未完成，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
         finally
         {
@@ -1266,13 +1266,13 @@ public partial class ContentCollectionPage : UserControl
         {
             var result = await _proxyPoolService.CheckTelegramAsync(row.Node);
             await LoadProxyNodesAsync();
-            SetProxyStatus(result.Succeeded ? $"TG 验证成功：{row.Address} 解析到 {result.MessageCount} 条消息。" : $"TG 验证失败：{result.Error}", result.Succeeded);
+            SetProxyStatus(result.Succeeded ? $"TG 验证成功：{row.Address} 解析到 {result.MessageCount} 条消息。" : $"TG 验证未完成，请检查节点后重试：{result.Error}", result.Succeeded);
         }
         catch (OperationCanceledException) { SetProxyStatus("已取消 TG 验证。", false); }
         catch (Exception ex)
         {
             AppLogger.Instance.WriteException($"代理节点 TG 验证异常：{row.Address}", ex);
-            SetProxyStatus($"TG 验证失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetProxyStatus($"TG 验证未完成，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
         finally
         {
@@ -1291,7 +1291,7 @@ public partial class ContentCollectionPage : UserControl
             await LoadProxySourcesAsync();
             SetProxyStatus("自定义代理源已添加。", true);
         }
-        catch (Exception ex) { SetProxyStatus($"添加代理源失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (Exception ex) { SetProxyStatus($"未能添加代理源，请检查地址后重试：{CliDiagnostics.Sanitize(ex.Message)}", false); }
     }
 
     private async void ProxyEditSourceButton_Click(object sender, RoutedEventArgs e)
@@ -1313,7 +1313,7 @@ public partial class ContentCollectionPage : UserControl
             await LoadProxySourcesAsync();
             SetProxyStatus("代理源已更新。", true);
         }
-        catch (Exception ex) { SetProxyStatus($"更新代理源失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (Exception ex) { SetProxyStatus($"未能更新代理源，请检查地址后重试：{CliDiagnostics.Sanitize(ex.Message)}", false); }
     }
 
     private async void ProxyRowDeleteButton_Click(object sender, RoutedEventArgs e)
@@ -1327,7 +1327,7 @@ public partial class ContentCollectionPage : UserControl
             await LoadProxyNodesAsync();
             SetProxyStatus($"已删除代理节点：{row.Address}", true);
         }
-        catch (Exception ex) { SetProxyStatus($"删除代理节点失败：{CliDiagnostics.Sanitize(ex.Message)}", false); }
+        catch (Exception ex) { SetProxyStatus($"未能删除代理节点，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false); }
         finally { SetProxyBusy(false); }
     }
 

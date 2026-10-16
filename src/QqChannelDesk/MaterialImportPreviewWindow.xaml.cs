@@ -44,15 +44,15 @@ public partial class MaterialImportPreviewWindow : Window
     {
         SummaryText.Text = $"共 {_items.Count} 条，成功 {SuccessCount} 条，失败 {FailureCount} 条";
         TemplateStatusText.Text = _templateExpired
-            ? "模板已过期：频道或板块数据已发生变化，请重新下载模板。"
+            ? "模板已过期：频道或版块数据已变化，请重新下载模板。"
             : string.Join("；", _resultErrors);
         ExportErrorsButton.IsEnabled = FailureCount > 0;
         if (_templateExpired)
-            HintText.Text = "请重新下载模板后再导入。当前预览中的错误行仍可导出。";
+            HintText.Text = "请重新下载模板后再导入。当前失败项仍可导出。";
         else if (FailureCount > 0)
-            HintText.Text = "确认后只导入成功行；失败行可修正后导出。频道和板块可以直接在本页补填。";
+            HintText.Text = "确认后只导入成功项；失败项可修正后导出，也可在本页补填频道和版块。";
         else if (_items.Count > 0)
-            HintText.Text = "确认后将一次性写入素材仓库，未来时间会同时创建发布计划。";
+            HintText.Text = "确认后写入素材库；未来发布时间会同时创建发布计划。";
         else
             HintText.Text = _resultErrors.Count > 0 ? string.Join("；", _resultErrors) : "没有可导入的数据行。";
         ConfirmButton.IsEnabled = !_templateExpired && SuccessCount > 0;
@@ -82,9 +82,9 @@ public partial class MaterialImportPreviewWindow : Window
         if (errors.Count == 0) return;
         var dialog = new SaveFileDialog
         {
-            Title = "导出错误行",
+            Title = "导出失败项",
             Filter = "Excel 工作簿|*.xlsx",
-            FileName = $"素材导入错误行-{DateTime.Now:yyyyMMdd-HHmmss}.xlsx",
+            FileName = $"素材导入失败项-{DateTime.Now:yyyyMMdd-HHmmss}.xlsx",
             AddExtension = true,
             OverwritePrompt = true
         };
@@ -93,11 +93,13 @@ public partial class MaterialImportPreviewWindow : Window
         {
             var workbookBytes = await Task.Run(() => MaterialTemplateService.CreateErrorWorkbook(errors, _targets));
             await File.WriteAllBytesAsync(dialog.FileName, workbookBytes);
-            HintText.Text = $"错误行已导出：{Path.GetFileName(dialog.FileName)}";
+            HintText.Text = $"失败项已导出：{Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, CliDiagnostics.Sanitize(ex.Message), "导出错误行失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this,
+                $"{CliDiagnostics.Sanitize(ex.Message)}\n\n导出未完成；请重试或选择其他保存位置。",
+                "导出失败项", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

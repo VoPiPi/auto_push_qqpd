@@ -78,11 +78,11 @@ public partial class LogPage : UserControl
         try
         {
             Process.Start(new ProcessStartInfo(AppLogger.Instance.LogDirectory) { UseShellExecute = true });
-            FooterStatus.Text = "已打开日志目录";
+            FooterStatus.Text = "已打开日志文件夹";
         }
         catch (Exception ex)
         {
-            FooterStatus.Text = $"无法打开日志目录：{CliDiagnostics.Sanitize(ex.Message)}";
+            FooterStatus.Text = $"未能打开日志文件夹：{CliDiagnostics.Sanitize(ex.Message)}";
         }
     }
 }

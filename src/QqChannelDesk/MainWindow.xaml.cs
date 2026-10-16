@@ -99,12 +99,12 @@ public partial class MainWindow : Window
         _settingPage.OpenReleasesRequested += (_, _) => OpenReleasePage(UpdateCheckService.RepositoryReleaseUrl);
         _pages = new Dictionary<string, UserControl>
         {
-            ["运行中台"] = _operationsCenterPage,
+            ["运行总览"] = _operationsCenterPage,
             ["内容采集"] = _contentCollectionPage,
-            ["素材仓库"] = _materialsPage,
+            ["素材库"] = _materialsPage,
             ["发布计划"] = _schedulePage,
             ["发布记录"] = _historyPage,
-            ["日志中心"] = _logPage,
+            ["运行日志"] = _logPage,
             ["账号管理"] = new AccountManagementPage(),
             ["系统设置"] = _settingPage
         };
@@ -135,7 +135,7 @@ public partial class MainWindow : Window
             {
                 var message = CliDiagnostics.Sanitize(ex.Message);
                 _logger.Error($"本地数据库初始化失败：{message}");
-                _operationsCenterPage.SetFooter("本地数据初始化失败，发布相关功能暂不可用");
+                _operationsCenterPage.SetFooter("本地数据初始化失败，发布功能暂不可用。");
                 MessageBox.Show(this,
                     $"程序已启动，但本地数据初始化失败，设置、素材和发布记录暂不可用。\n\n{message}\n\n请确认程序目录可写后重启程序。",
                     "本地数据初始化失败", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -238,7 +238,8 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                result = new(false, false, $"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                result = new(false, false,
+                    $"检查更新未完成，请稍后重试。\n{CliDiagnostics.Sanitize(ex.Message)}");
             }
             finally
             {
@@ -276,9 +277,11 @@ public partial class MainWindow : Window
         {
             if (!_isClosing)
             {
-                _logger.Warning($"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                _logger.Warning($"检查更新未完成：{CliDiagnostics.Sanitize(ex.Message)}");
                 if (showNoUpdate)
-                    MessageBox.Show(this, $"版本检查失败：{CliDiagnostics.Sanitize(ex.Message)}", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(this,
+                        $"检查更新未完成，请稍后重试。\n{CliDiagnostics.Sanitize(ex.Message)}",
+                        "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
         finally
@@ -297,7 +300,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"无法打开 Gitee Releases：{CliDiagnostics.Sanitize(ex.Message)}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this,
+                $"未能打开下载页：{CliDiagnostics.Sanitize(ex.Message)}。请稍后重试。",
+                "打开未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -325,7 +330,7 @@ public partial class MainWindow : Window
     {
         if (_operationsCenterPage.CliState != "可用")
         {
-            MessageBox.Show(this, "请先安装并确认频道 CLI 版本可用。", "无法扫码登录", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "请先安装或升级频道工具，再扫码登录。", "频道工具不可用", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -344,15 +349,15 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _operationsCenterPage.SetFooter("扫码授权成功，正在检查频道缓存…");
+            _operationsCenterPage.SetFooter("扫码成功，正在刷新频道数据…");
             await RefreshDiagnosticsAsync();
             await RecordLoginSessionAsync();
             var sync = await _channelSync.EnsureFreshAsync(new Progress<string>(_operationsCenterPage.SetFooter));
             _operationsCenterPage.SetFooter(sync.Skipped
-                ? "频道缓存仍在 6 小时有效期内，继续使用本地数据。"
+                ? "频道数据仍有效，继续使用本地数据。"
                 : sync.Succeeded
                     ? $"频道数据已更新：{sync.GuildCount} 个频道、{sync.ChannelCount} 个版块"
-                    : $"频道数据更新失败，发布已禁用：{sync.Error}");
+                    : $"频道数据刷新失败，发布已暂停。请刷新频道后重试：{sync.Error}");
             await RestartSchedulerAsync();
         }
         finally
@@ -372,8 +377,8 @@ public partial class MainWindow : Window
     private async Task LogoutAsync()
     {
         if (MessageBox.Show(this,
-                "将通过腾讯频道 CLI 清除当前登录凭证。退出后需要重新扫码登录才能发布。确定退出吗？",
-                "退出登录", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                "将清除本机登录凭证。退出后需重新扫码登录，确定退出吗？",
+                "确认退出", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
 
         SetAccountActionsEnabled(false);
@@ -388,7 +393,7 @@ public partial class MainWindow : Window
             if (!result.Succeeded)
             {
                 _operationsCenterPage.SetFooter(result.Message);
-                MessageBox.Show(this, result.Message, "退出登录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, result.Message, "未能退出登录", MessageBoxButton.OK, MessageBoxImage.Warning);
                 await RefreshDiagnosticsAsync();
                 await RestartSchedulerAsync();
                 return;
@@ -404,8 +409,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
-            _operationsCenterPage.SetFooter($"退出登录失败：{message}");
-            MessageBox.Show(this, message, "退出登录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _operationsCenterPage.SetFooter($"未能退出登录：{message}");
+            MessageBox.Show(this, message, "未能退出登录", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
@@ -425,7 +430,7 @@ public partial class MainWindow : Window
     {
         if (_operationsCenterPage.LoginState != "已登录")
         {
-            MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, "请先扫码登录，再重新检查登录状态。", "需要登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return Task.CompletedTask;
         }
 
@@ -438,7 +443,7 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(result.Url)) details += $"\n帖子链接：{result.Url}";
             if (!string.IsNullOrWhiteSpace(result.PostId)) details += $"\n帖子 ID：{result.PostId}";
             _logger.Info($"{(result.Succeeded ? "发布成功" : "发布未成功")}：{details}");
-            _operationsCenterPage.SetFooter(result.Succeeded ? "发布请求成功" : $"发布失败：{result.Category}");
+            _operationsCenterPage.SetFooter(result.Succeeded ? "帖子已发布" : $"发布未完成：{result.Category}");
         }
         else
         {
@@ -451,7 +456,7 @@ public partial class MainWindow : Window
     {
         if (_operationsCenterPage.LoginState != "已登录")
         {
-            MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, "请先扫码登录，再重新检查登录状态。", "需要登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return Task.CompletedTask;
         }
 
@@ -464,7 +469,7 @@ public partial class MainWindow : Window
         if (dialog.Result is { } result)
         {
             _logger.Info($"草稿发布{(result.Succeeded ? "成功" : "未成功")}：{CliDiagnostics.Sanitize(result.Message)}");
-            _operationsCenterPage.SetFooter(result.Succeeded ? "草稿发布成功" : $"草稿发布失败：{result.Category}");
+            _operationsCenterPage.SetFooter(result.Succeeded ? "草稿已发布" : $"草稿发布未完成：{result.Category}");
         }
         return Task.CompletedTask;
     }
@@ -473,7 +478,7 @@ public partial class MainWindow : Window
     {
         if (_operationsCenterPage.LoginState != "已登录")
         {
-            MessageBox.Show(this, "请先通过 CLI 官方扫码流程登录，并重新检查登录状态。", "尚未登录", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, "请先扫码登录，再重新检查登录状态。", "需要登录", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -516,7 +521,7 @@ public partial class MainWindow : Window
         else if (dialog.Result is { } failed)
         {
             await _materialsPage.SetMaterialStatusAsync(material.Id, originalStatus);
-            _operationsCenterPage.SetFooter($"素材发布失败：{failed.Category}");
+            _operationsCenterPage.SetFooter($"素材发布未完成：{failed.Category}");
         }
         else await _materialsPage.SetMaterialStatusAsync(material.Id, originalStatus);
     }
@@ -531,11 +536,11 @@ public partial class MainWindow : Window
             if (!snapshot.IsLoggedIn)
                 return new ScheduleEnvironment(false, "当前账号未登录，计划执行器已暂停。请先扫码登录。");
             if (!snapshot.IsCliReady)
-                return new ScheduleEnvironment(false, "频道 CLI 当前不可用，计划执行器已暂停。");
+                return new ScheduleEnvironment(false, "频道工具不可用，计划已暂停。");
 
             var syncState = await _channelSync.GetStateAsync();
             if (!syncState.Succeeded)
-                return new ScheduleEnvironment(false, "频道和版块缓存尚未成功同步，计划执行器已暂停。");
+                return new ScheduleEnvironment(false, "频道数据尚未同步，计划已暂停。");
 
             var guilds = await _channelSync.GetCachedGuildsAsync();
             foreach (var guild in guilds)
@@ -544,11 +549,12 @@ public partial class MainWindow : Window
                     return ScheduleEnvironment.Available;
             }
 
-            return new ScheduleEnvironment(false, "没有可用的频道版块缓存，计划执行器已暂停。");
+            return new ScheduleEnvironment(false, "没有可用的频道或版块，计划已暂停。");
         }
         catch (Exception ex)
         {
-            return new ScheduleEnvironment(false, $"读取发布环境失败，计划执行器已暂停：{CliDiagnostics.Sanitize(ex.Message)}");
+            return new ScheduleEnvironment(false,
+                $"读取发布环境失败，计划已暂停。请刷新频道后重试：{CliDiagnostics.Sanitize(ex.Message)}");
         }
     }
 
@@ -669,13 +675,13 @@ public partial class MainWindow : Window
     {
         if (confirm && MessageBox.Show(this,
             "将从 npm 官方仓库下载并全局安装 tencent-channel-cli。安装需要网络连接，可能因 npm 全局目录权限不足而失败。现在继续吗？",
-            "确认安装腾讯频道 CLI", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            "安装频道工具", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return false;
 
-        var result = await RunInstallOperationAsync("正在通过 npm 安装腾讯频道 CLI…", () => _diagnostics.InstallAsync());
+        var result = await RunInstallOperationAsync("正在安装频道工具…", () => _diagnostics.InstallAsync());
         await RefreshDiagnosticsAsync();
         _operationsCenterPage.SetFooter(result.Succeeded
-            ? _operationsCenterPage.CliState == "可用" ? "CLI 已安装，版本检查通过" : "npm 安装完成，但 CLI 版本检查未通过"
+            ? _operationsCenterPage.CliState == "可用" ? "频道工具已安装" : "安装完成，版本检查未通过"
             : result.Message);
         return result.Succeeded;
     }
@@ -742,13 +748,13 @@ public partial class MainWindow : Window
             Volatile.Write(ref _diagnosticSnapshot, DiagnosticEnvironmentSnapshot.Unavailable);
             UpdateAccountActionVisibility(false);
             var hadAccount = _accountContext.IsAuthenticated;
-            if (!hadAccount || await StopSchedulerForContextChangeAsync("无法确认当前 CLI 账号，计划执行器未能安全停止；暂时保留当前账号数据。"))
+            if (!hadAccount || await StopSchedulerForContextChangeAsync("无法确认当前频道工具账号，计划执行器未能安全停止；暂时保留当前账号数据。"))
             {
                 _accountContext.Clear();
                 if (hadAccount) await RefreshAccountScopedViewsAsync();
             }
             UpdateAccountSessionDisplay("状态未知", null);
-            _operationsCenterPage.SetFooter("检查失败");
+            _operationsCenterPage.SetFooter("检查未完成，请查看运行日志后重试。");
             _logger.Error($"检查过程发生错误：{ex.Message}");
         }
         finally
@@ -764,7 +770,7 @@ public partial class MainWindow : Window
         if (!string.Equals(loginState, "已登录", StringComparison.Ordinal))
         {
             var changed = _accountContext.IsAuthenticated;
-            if (changed && !await StopSchedulerForContextChangeAsync("当前 CLI 已退出登录，但计划执行器未能安全停止；暂时保留当前页面数据。"))
+            if (changed && !await StopSchedulerForContextChangeAsync("当前频道工具已退出登录，但计划执行器未能安全停止；暂时保留当前页面数据。"))
                 return false;
             _accountContext.Clear();
             UpdateAccountSessionDisplay(AccountSessionStore.ResolveDisplay(loginState, null, null).Nickname, null);
@@ -790,7 +796,7 @@ public partial class MainWindow : Window
         if (identity is null)
         {
             var changed = _accountContext.IsAuthenticated;
-            if (changed && !await StopSchedulerForContextChangeAsync("无法读取当前 CLI 账号，计划执行器未能安全停止；暂时保留当前页面数据。"))
+            if (changed && !await StopSchedulerForContextChangeAsync("无法读取当前频道工具账号，计划执行器未能安全停止；暂时保留当前页面数据。"))
                 return false;
             _accountContext.Clear();
             var fallback = AccountSessionStore.ResolveDisplay(loginState, null, null);
@@ -802,7 +808,7 @@ public partial class MainWindow : Window
         var changedAccount = !string.Equals(_accountContext.CurrentAccountKey, identity.AccountKey, StringComparison.Ordinal);
         if (changedAccount)
         {
-            if (!await StopSchedulerForContextChangeAsync("检测到 CLI 账号已变化，但计划执行器未能安全停止；账号未切换。"))
+            if (!await StopSchedulerForContextChangeAsync("检测到频道工具账号已变化，但计划执行器未能安全停止；账号未切换。"))
                 return false;
             _accountContext.Set(identity);
         }
@@ -862,7 +868,7 @@ public partial class MainWindow : Window
         if (stopped) return true;
 
         _operationsCenterPage.SetFooter(failureMessage);
-        MessageBox.Show(this, failureMessage, "无法切换账号", MessageBoxButton.OK, MessageBoxImage.Warning);
+        MessageBox.Show(this, failureMessage, "账号切换未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
         return false;
     }
 
@@ -920,7 +926,7 @@ public partial class MainWindow : Window
         try { Process.Start(new ProcessStartInfo(FeedbackChannelUrl) { UseShellExecute = true }); }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"无法打开反馈链接：{CliDiagnostics.Sanitize(ex.Message)}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, $"未能打开反馈链接：{CliDiagnostics.Sanitize(ex.Message)}。请稍后重试。", "未能打开链接", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

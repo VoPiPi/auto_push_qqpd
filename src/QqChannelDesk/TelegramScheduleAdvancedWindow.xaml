@@ -44,9 +44,9 @@
           <Border Style="{StaticResource Card}" Margin="0,0,12,0">
             <StackPanel>
               <TextBlock Text="执行计划" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Text="使用 5 段 Cron 控制采集触发时间" Foreground="{StaticResource Muted}"
+              <TextBlock Text="用 5 段计划表达式设置采集时间" Foreground="{StaticResource Muted}"
                          FontSize="12" Margin="0,3,0,14"/>
-              <TextBlock Text="Cron 表达式" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <TextBlock Text="计划表达式" FontWeight="SemiBold" Margin="0,0,0,6"/>
               <TextBox x:Name="CronBox" Height="38" VerticalContentAlignment="Center"
                        TextChanged="CronBox_TextChanged"/>
               <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}"
@@ -78,7 +78,7 @@
                   <TextBlock Text="多个关键词使用 | 分隔" Foreground="{StaticResource Muted}" FontSize="12"/>
                   <TextBlock Text="例如：公告|头像|更新" Foreground="{StaticResource Muted}" FontSize="12"
                              Margin="0,4,0,0"/>
-                  <TextBlock Text="多个关键词按 OR 匹配；留空表示采集该频道的全部消息。"
+                  <TextBlock Text="命中任意一个即可采集；留空表示采集全部消息。"
                              Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0"/>
                 </StackPanel>
               </Border>
@@ -109,7 +109,7 @@
                   <TextBlock x:Name="RuleCountText" Foreground="{StaticResource Muted}" FontSize="12"
                              Margin="10,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
-                <TextBlock Text="按列表顺序匹配消息类型和关键词，命中后写入对应频道板块。"
+                <TextBlock Text="按列表顺序匹配消息类型和关键词，命中后写入对应频道版块。"
                            Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
               </StackPanel>
               <Button x:Name="NewRuleButton" Grid.Column="1" Content="新增规则" Width="88"
@@ -134,7 +134,7 @@
                                       ElementStyle="{StaticResource DataGridCellText}"/>
                   <DataGridTextColumn Header="目标频道" Binding="{Binding GuildName}" Width="1.15*"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTextColumn Header="目标板块" Binding="{Binding ChannelName}" Width="1.15*"
+                  <DataGridTextColumn Header="目标版块" Binding="{Binding ChannelName}" Width="1.15*"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
                   <DataGridTemplateColumn Header="操作" Width="118">
                     <DataGridTemplateColumn.CellTemplate>
@@ -170,7 +170,7 @@
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
       <Button Content="取消" Width="72" Style="{StaticResource QuietButton}"
               IsCancel="True" Click="CancelButton_Click"/>
-      <Button x:Name="ConfirmButton" Content="确认并保存" Width="104" Margin="8,0,0,0"
+      <Button x:Name="ConfirmButton" Content="保存" Width="104" Margin="8,0,0,0"
               Style="{StaticResource PrimaryButton}" Click="ConfirmButton_Click"/>
     </StackPanel>
   </Grid>

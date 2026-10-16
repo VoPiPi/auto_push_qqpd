@@ -37,7 +37,7 @@ public partial class PublishSchedulePage : UserControl
             _currentPage = 1;
             RenderCurrentPage();
             EmptyTitle.Text = "暂无发布计划";
-            EmptyMessage.Text = "在素材仓库设置未来发布时间后，计划会显示在这里；执行结果会保留在列表中。";
+            EmptyMessage.Text = "在素材库设置未来发布时间后，计划会显示在这里。";
             LastRefreshText.Text = $"刷新于 {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
         }
         catch (Exception ex)
@@ -46,11 +46,11 @@ public partial class PublishSchedulePage : UserControl
             SchedulesGrid.ItemsSource = null;
             UpdatePagination();
             EmptyState.Visibility = Visibility.Visible;
-            EmptyTitle.Text = "发布计划读取失败";
+            EmptyTitle.Text = "未能读取发布计划";
             EmptyMessage.Text = "请刷新重试，或检查本地数据库是否可访问。";
             StatusText.Text = $"读取发布计划失败：{CliDiagnostics.Sanitize(ex.Message)}";
             StatusText.Foreground = UiStatusBrushes.Danger;
-            LastRefreshText.Text = "刷新失败";
+            LastRefreshText.Text = "刷新未完成";
         }
         finally { _loading = false; }
     }
@@ -128,14 +128,14 @@ public partial class PublishSchedulePage : UserControl
             var cancelled = await _store.CancelMaterialScheduleAsync(record.MaterialId);
             if (!cancelled)
             {
-                MessageBox.Show(owner, "计划已被其他操作修改，请刷新后重试。", "取消计划失败", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(owner, "计划已被其他操作修改，请刷新后重试。", "未能取消计划", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             await LoadSchedulesAsync();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(owner, $"取消计划失败：{CliDiagnostics.Sanitize(ex.Message)}", "取消计划失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(owner, $"未能取消计划：{CliDiagnostics.Sanitize(ex.Message)}", "未能取消计划", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

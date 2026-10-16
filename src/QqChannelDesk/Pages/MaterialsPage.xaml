@@ -3,8 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Grid.Row="0" Text="素材仓库" Style="{StaticResource PageTitle}" Margin="0,0,0,6"/>
-    <TextBlock Grid.Row="1" Text="管理待发布和已发布素材;可批量设置频道与时间,或统一加入发布队列。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
+    <TextBlock Grid.Row="0" Text="素材库" Style="{StaticResource PageTitle}" Margin="0,0,0,6"/>
+    <TextBlock Grid.Row="1" Text="管理素材，可批量设置频道和发布时间。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
     <DockPanel Grid.Row="2" LastChildFill="True">
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
         <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
@@ -12,9 +12,9 @@
           <ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
         </ComboBox>
         <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchMaterialsButton_Click"/>
-        <Button Content="下载导入模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click"/>
-        <Button Content="导入数据" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportDataButton_Click"/>
-        <Button Content="手动添加素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click"/>
+        <Button Content="下载模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click"/>
+        <Button Content="导入" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportDataButton_Click"/>
+        <Button Content="新增素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click"/>
       </WrapPanel>
       <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
         <Grid.ColumnDefinitions>
@@ -30,9 +30,9 @@
             <ComboBoxItem Content="全选" Tag="select-all"/>
             <ComboBoxItem Content="反选" Tag="invert"/>
             <ComboBoxItem Content="批量删除" Tag="delete"/>
-            <ComboBoxItem Content="批量发布" Tag="publish"/>
-            <ComboBoxItem Content="批量发布频道" Tag="target"/>
-            <ComboBoxItem Content="批量设置发布时间" Tag="time"/>
+            <ComboBoxItem Content="立即发布" Tag="publish"/>
+            <ComboBoxItem Content="设置发布频道" Tag="target"/>
+            <ComboBoxItem Content="设置发布时间" Tag="time"/>
           </ComboBox>
         </StackPanel>
       </Grid>
@@ -59,7 +59,7 @@
           <DataGridTextColumn Header="标题/正文" Binding="{Binding TitleContentDisplay}" Width="2*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="48" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="来源" Binding="{Binding SourceDisplay}" Width="1.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="发布频道" Binding="{Binding TargetDisplay}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="频道/版块" Binding="{Binding TargetDisplay}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" Width="132" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTemplateColumn Header="状态" Width="86">
             <DataGridTemplateColumn.CellTemplate>
@@ -87,7 +87,7 @@
     </DockPanel>
     <Grid Grid.Row="3" Margin="0,12,0,0">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock x:Name="MaterialsStatus" Text="正在加载..." Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+        <TextBlock x:Name="MaterialsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
         <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
           <Button x:Name="PreviousPageButton" Content="‹" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click"/>
           <TextBlock x:Name="PageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center"/>

@@ -88,13 +88,13 @@ public sealed class ContentLibraryTests
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-{Guid.NewGuid():N}.db");
         var store = new ContentLibraryStore(databasePath);
         var publishAt = DateTimeOffset.Now.AddHours(2);
-        var id = await store.SaveMaterialAsync(new MaterialDraft(null, "图文标题", "image", "正文", "1", "频道", "2", "板块", publishAt, "queue", "", ["https://example.com/photo.jpg"]));
+        var id = await store.SaveMaterialAsync(new MaterialDraft(null, "图文标题", "image", "正文", "1", "频道", "2", "版块", publishAt, "queue", "", ["https://example.com/photo.jpg"]));
 
         var material = Assert.Single(await store.GetMaterialsAsync("图文标题", "queue"));
         Assert.Equal(id, material.Id);
         Assert.Equal("image", material.Type);
         Assert.Equal(new[] { "https://example.com/photo.jpg" }, material.MediaLinks);
-        Assert.Equal("频道/板块", material.TargetDisplay);
+        Assert.Equal("频道/版块", material.TargetDisplay);
         Assert.Equal("发布中", material.StatusLabel);
         Assert.Equal(publishAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
 
@@ -403,7 +403,7 @@ public sealed class ContentLibraryTests
         Assert.Contains("指定发布频道", Pages.MaterialsPage.ValidateMaterialForPublish(noTarget));
 
         var noImage = noTarget with { GuildId = "1", ChannelId = "2", Type = "image" };
-        Assert.Contains("有效的图片链接或本地文件", Pages.MaterialsPage.ValidateMaterialForPublish(noImage));
+        Assert.Contains("请至少添加一张有效图片", Pages.MaterialsPage.ValidateMaterialForPublish(noImage));
 
         var imageWithUnknownType = noImage with { MediaLinks = ["https://example.com/file.bin"] };
         Assert.Contains("无效链接或文件", Pages.MaterialsPage.ValidateMaterialForPublish(imageWithUnknownType));
@@ -415,7 +415,7 @@ public sealed class ContentLibraryTests
         Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(noVideo));
 
         var mixedVideo = noVideo with { MediaLinks = ["https://example.com/v.mp4", "https://example.com/photo.jpg"] };
-        Assert.Contains("一个视频链接或本地文件", Pages.MaterialsPage.ValidateMaterialForPublish(mixedVideo));
+        Assert.Contains("请选择一个有效视频", Pages.MaterialsPage.ValidateMaterialForPublish(mixedVideo));
     }
 
     [Fact]
@@ -425,17 +425,17 @@ public sealed class ContentLibraryTests
         Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(noTitle));
 
         var emptyContent = noTitle with { Content = "   " };
-        Assert.Contains("必须填写正文", Pages.MaterialsPage.ValidateMaterialForPublish(emptyContent));
+        Assert.Contains("请填写正文，或添加图片或视频", Pages.MaterialsPage.ValidateMaterialForPublish(emptyContent));
 
         var imageWithoutMedia = noTitle with { Type = "image" };
-        Assert.Contains("至少需要一个有效的图片链接", Pages.MaterialsPage.ValidateMaterialForPublish(imageWithoutMedia));
+        Assert.Contains("请至少添加一张有效图片", Pages.MaterialsPage.ValidateMaterialForPublish(imageWithoutMedia));
 
         var tooManyImages = noTitle with
         {
             Type = "image",
             MediaLinks = Enumerable.Range(1, 19).Select(index => $"https://example.com/{index}.jpg").ToArray()
         };
-        Assert.Contains("图片数量不能超过 18 个", Pages.MaterialsPage.ValidateMaterialForPublish(tooManyImages));
+        Assert.Contains("最多添加 18 张图片", Pages.MaterialsPage.ValidateMaterialForPublish(tooManyImages));
 
         var mediaOnly = noTitle with
         {
@@ -446,7 +446,7 @@ public sealed class ContentLibraryTests
         Assert.Empty(Pages.MaterialsPage.ValidateMaterialForPublish(mediaOnly));
 
         var titleOnly = noTitle with { Content = "", Title = "只有标题" };
-        Assert.Contains("必须填写正文", Pages.MaterialsPage.ValidateMaterialForPublish(titleOnly));
+        Assert.Contains("请填写正文，或添加图片或视频", Pages.MaterialsPage.ValidateMaterialForPublish(titleOnly));
     }
 
     [Fact]
@@ -495,7 +495,7 @@ public sealed class ContentLibraryTests
     {
         Assert.False(MaterialMediaValidator.IsValidSource("http://127.0.0.1/private.jpg", "image"));
         Assert.False(MaterialMediaValidator.IsValidSource("https://example.com/movie.mp4", "image"));
-        Assert.Contains("需要一个视频", MaterialMediaValidator.Validate("video", "title", [
+        Assert.Contains("请选择一个有效视频", MaterialMediaValidator.Validate("video", "title", [
             "https://example.com/a.mp4", "https://example.com/b.mp4"
         ]));
     }

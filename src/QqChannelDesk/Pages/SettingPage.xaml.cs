@@ -65,7 +65,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"读取设置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"读取设置未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试。";
         }
         finally
         {
@@ -89,7 +89,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存设置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
         }
     }
 
@@ -107,7 +107,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存设置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
         }
     }
 
@@ -122,7 +122,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存设置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
         }
     }
 
@@ -137,7 +137,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存设置失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
         }
     }
 
@@ -145,7 +145,7 @@ public partial class SettingPage : UserControl
     {
         var dialog = new OpenFolderDialog
         {
-            Title = "选择素材文件储存路径",
+            Title = "选择素材文件存储路径",
             Multiselect = false
         };
         if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FolderName)) return;
@@ -157,18 +157,18 @@ public partial class SettingPage : UserControl
             if (!result.Succeeded)
             {
                 StorageStatus.Text = result.Message;
-                SettingsStatus.Text = "目录不可用，未保存新的储存路径。";
+                SettingsStatus.Text = "目录不可用，未保存新路径。请选择可写目录。";
                 return;
             }
 
             await SaveSettingsAsync(_currentSettings with { MaterialStoragePath = result.FullPath });
             StoragePathBox.Text = result.FullPath;
             StorageStatus.Text = "当前目录可写。";
-            SettingsStatus.Text = "素材文件储存路径已保存。已有文件不会自动迁移。";
+            SettingsStatus.Text = "存储路径已保存。已有文件不会自动迁移。";
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存储存路径失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"存储路径未保存：{CliDiagnostics.Sanitize(ex.Message)}。请重试或选择其他目录。";
         }
     }
 
@@ -189,11 +189,11 @@ public partial class SettingPage : UserControl
             var path = FfmpegManager.ValidateExecutablePath(dialog.FileName);
             await SaveSettingsAsync(_currentSettings with { FfmpegPath = path });
             await RefreshFfmpegPathAsync();
-            SettingsStatus.Text = "FFmpeg 路径已保存，后续 CLI 操作将使用此路径。";
+            SettingsStatus.Text = "FFmpeg 路径已保存，后续频道工具操作将使用此路径。";
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"保存 FFmpeg 路径失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"FFmpeg 路径未保存：{CliDiagnostics.Sanitize(ex.Message)}。请重试或重新选择文件。";
         }
     }
 
@@ -207,7 +207,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"恢复 FFmpeg 自动选择失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"未恢复自动选择：{CliDiagnostics.Sanitize(ex.Message)}。请重试。";
         }
     }
 
@@ -218,8 +218,8 @@ public partial class SettingPage : UserControl
         if (resolution.ExecutablePath is null)
         {
             FfmpegPathStatus.Text = resolution.ConfiguredPathInvalid
-                ? "已保存的路径当前不可用，系统 PATH 和项目 tools 目录也未找到 FFmpeg。"
-                : "自动选择未找到可用 FFmpeg。";
+                ? "已保存的路径不可用，也未找到 FFmpeg。请重新选择或在线安装。"
+                : "未找到 FFmpeg，请选择文件或在线安装。";
             return;
         }
 
@@ -275,7 +275,7 @@ public partial class SettingPage : UserControl
         }
         catch (Exception ex)
         {
-            SettingsStatus.Text = $"复制机器码失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            SettingsStatus.Text = $"机器码未复制：{CliDiagnostics.Sanitize(ex.Message)}。请重试。";
         }
     }
 

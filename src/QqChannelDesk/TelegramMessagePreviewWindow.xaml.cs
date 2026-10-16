@@ -50,7 +50,7 @@ public partial class TelegramMessagePreviewWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus($"复制失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetStatus($"复制未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试。", false);
         }
     }
 
@@ -85,12 +85,12 @@ public partial class TelegramMessagePreviewWindow : Window
                 });
             }
             SetStatus(download.Failed > 0
-                ? $"已加载 {download.Paths.Count} 张图片，{download.Failed} 张下载失败。"
+                ? $"已加载 {download.Paths.Count} 张图片；{download.Failed} 张失败，请重试。"
                 : $"已加载 {download.Paths.Count} 张图片。", download.Failed == 0);
         }
         catch (Exception ex)
         {
-            SetStatus($"图片加载失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetStatus($"图片未加载：{CliDiagnostics.Sanitize(ex.Message)}。请检查网络或代理后重试。", false);
         }
         finally
         {
@@ -107,8 +107,8 @@ public partial class TelegramMessagePreviewWindow : Window
             if (drafted)
             {
                 SetStatus(_item.MaterialIdDisplay.Length > 0
-                    ? $"已加入素材仓库（编号 {_item.MaterialIdDisplay}）。"
-                    : "已加入素材仓库。", true);
+                    ? $"已加入素材库（编号 {_item.MaterialIdDisplay}）。"
+                    : "已加入素材库。", true);
                 DraftButton.IsEnabled = false;
             }
             else
@@ -118,7 +118,7 @@ public partial class TelegramMessagePreviewWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus($"加入素材仓库失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
+            SetStatus($"未加入素材库：{CliDiagnostics.Sanitize(ex.Message)}。请检查网络或代理后重试。", false);
             DraftButton.IsEnabled = _item.CanMaterialize;
         }
     }

@@ -59,7 +59,7 @@
                  TextWrapping="Wrap"
                  TextTrimming="CharacterEllipsis"
                  ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                 Text="正在连接下载源；若官方源无响应，会自动切换备用镜像。" />
+                 Text="正在连接下载源，必要时会切换备用镜像。" />
 
       <DockPanel Grid.Row="3" Margin="0,18,0,0">
         <Button x:Name="CancelButton"

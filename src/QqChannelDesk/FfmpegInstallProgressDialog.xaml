@@ -72,7 +72,7 @@
                  TextWrapping="Wrap"
                  TextTrimming="CharacterEllipsis"
                  ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                 Text="将下载便携版 FFmpeg，并安装到程序的 tools 目录。" />
+                   Text="将安装便携版 FFmpeg 到程序目录。" />
 
       <DockPanel Grid.Row="4" Margin="0,18,0,0">
         <Button x:Name="CancelButton"

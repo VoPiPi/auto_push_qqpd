@@ -48,7 +48,7 @@
             <TextBlock Text="发布日期" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,12"/>
             <DatePicker x:Name="PublishDatePicker" Grid.Column="1" Margin="0,0,0,12"/>
             <TextBlock Grid.Row="1" Text="发布时间" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-            <TextBox x:Name="PublishTimeBox" Grid.Row="1" Grid.Column="1" ToolTip="时:分:秒,例如 14:30:00"/>
+            <TextBox x:Name="PublishTimeBox" Grid.Row="1" Grid.Column="1" ToolTip="时:分:秒，例如 14:30:00"/>
           </Grid>
 
           <TextBlock x:Name="FormMessage"

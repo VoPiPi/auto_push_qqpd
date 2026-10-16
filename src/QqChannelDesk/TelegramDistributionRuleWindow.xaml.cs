@@ -41,7 +41,7 @@ public partial class TelegramDistributionRuleWindow : Window
     {
         if (_channelSync is null)
         {
-            DisableConfirm("暂无频道缓存，请先同步频道数据后再配置分发规则。");
+            DisableConfirm("暂无频道数据，请先刷新频道后再配置分发规则。");
             return;
         }
 
@@ -51,7 +51,7 @@ public partial class TelegramDistributionRuleWindow : Window
             RuleGuildBox.ItemsSource = guilds;
             if (guilds.Count == 0)
             {
-                DisableConfirm("暂无频道缓存，请先同步频道数据后再配置分发规则。");
+                DisableConfirm("暂无频道数据，请先刷新频道后再配置分发规则。");
                 return;
             }
 
@@ -69,7 +69,7 @@ public partial class TelegramDistributionRuleWindow : Window
         }
         catch (Exception ex)
         {
-            DisableConfirm($"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            DisableConfirm($"读取频道数据失败：{CliDiagnostics.Sanitize(ex.Message)}");
         }
     }
 
@@ -102,7 +102,7 @@ public partial class TelegramDistributionRuleWindow : Window
         }
         catch (Exception ex)
         {
-            ShowFormMessage($"读取板块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            ShowFormMessage($"读取版块数据失败：{CliDiagnostics.Sanitize(ex.Message)}");
         }
     }
 
@@ -112,7 +112,7 @@ public partial class TelegramDistributionRuleWindow : Window
         if (RuleGuildBox.SelectedItem is not ChannelChoice guild ||
             RuleChannelBox.SelectedItem is not ChannelChoice channel)
         {
-            RuleValidationText.Text = "请先选择目标频道和板块。";
+            RuleValidationText.Text = "请先选择目标频道和版块。";
             return;
         }
 

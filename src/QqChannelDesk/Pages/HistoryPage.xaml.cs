@@ -37,7 +37,7 @@ public partial class HistoryPage : UserControl
             RecordsGrid.ItemsSource = null;
             _filteredRecords = [];
             UpdatePagination();
-            StatusText.Text = $"读取发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            StatusText.Text = $"未能读取发布记录：{CliDiagnostics.Sanitize(ex.Message)}";
             StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
         }
@@ -92,7 +92,7 @@ public partial class HistoryPage : UserControl
         catch (Exception ex)
         {
             RecordsGrid.ItemsSource = null;
-            StatusText.Text = $"筛选发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            StatusText.Text = $"未能筛选发布记录：{CliDiagnostics.Sanitize(ex.Message)}";
             StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
             return;
@@ -180,10 +180,10 @@ public partial class HistoryPage : UserControl
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
         {
-            MessageBox.Show(Window.GetWindow(this), "帖子链接无效，无法打开。", "无法打开", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "帖子链接无效，请检查记录后重试。", "帖子链接无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
-        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), $"无法打开帖子链接：{CliDiagnostics.Sanitize(ex.Message)}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), $"未能打开帖子链接：{CliDiagnostics.Sanitize(ex.Message)}", "未能打开", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 }

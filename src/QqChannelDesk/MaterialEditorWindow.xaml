@@ -37,7 +37,7 @@
     </ScrollViewer>
     <DockPanel Grid.Row="2" Margin="0,16,0,0">
       <Button DockPanel.Dock="Right" Content="取消" Style="{StaticResource QuietButton}" IsCancel="True" Margin="8,0,0,0"/>
-      <Button DockPanel.Dock="Right" Content="保存素材" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click"/>
+      <Button DockPanel.Dock="Right" Content="保存" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click"/>
       <Button Content="刷新频道" Style="{StaticResource QuietButton}" Click="RefreshButton_Click"/>
     </DockPanel>
   </Grid>

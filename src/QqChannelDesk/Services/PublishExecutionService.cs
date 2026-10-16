@@ -69,7 +69,7 @@ public sealed class PublishExecutionService : IPublishExecutor
                 if (MaterialMediaValidator.IsLocalPath(source) && await _mediaStorage.IsManagedLibraryPathAsync(source, cancellationToken))
                 {
                     if (!File.Exists(source))
-                        throw new FileNotFoundException($"素材仓库原件已不存在：{Path.GetFileName(source)}。", source);
+                        throw new FileNotFoundException($"素材库文件已不存在：{Path.GetFileName(source)}。请重新选择媒体。", source);
                     publishPaths.Add(source);
                 }
                 else if (MaterialMediaValidator.IsLocalPath(source) && MediaStorageService.IsTelegramStagingPath(source))
@@ -126,9 +126,9 @@ public sealed class PublishExecutionService : IPublishExecutor
         catch (Exception ex)
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
-            var failure = new PublishResult(false, PublishErrorCategory.Other, $"发布准备失败：{message}", null, null);
+            var failure = new PublishResult(false, PublishErrorCategory.Other, $"发布未开始，请重试或查看运行日志：{message}", null, null);
             await CompleteSafelyAsync(recordId, failure);
-            _logger.Error($"发布执行异常：{message}");
+            _logger.Error($"发布未完成：{message}");
             return new PublishExecutionOutcome(failure, recordId);
         }
     }

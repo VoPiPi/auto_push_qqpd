@@ -55,7 +55,7 @@ public partial class MaterialsPage : UserControl
             MaterialsGrid.ItemsSource = null;
             UpdatePagination();
             UpdateSelectionCount();
-            MaterialsStatus.Text = $"读取素材仓库失败:{CliDiagnostics.Sanitize(ex.Message)}";
+            MaterialsStatus.Text = $"未能读取素材库，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
         finally { _loading = false; }
     }
@@ -105,7 +105,7 @@ public partial class MaterialsPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Window.GetWindow(this), CliDiagnostics.Sanitize(ex.Message), "保存素材失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), $"保存未完成，请检查素材后重试。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "保存未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -118,7 +118,7 @@ public partial class MaterialsPage : UserControl
             var targets = await LoadTemplateTargetsAsync();
             if (targets.Count == 0)
             {
-                MessageBox.Show(Window.GetWindow(this), "当前账号没有可用的频道和板块,请先同步频道数据。", "无法下载模板", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(Window.GetWindow(this), "暂无可用频道或版块，请先刷新频道。", "无法下载模板", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -133,11 +133,11 @@ public partial class MaterialsPage : UserControl
             if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
             var bytes = await Task.Run(() => MaterialTemplateService.CreateWorkbook(targets));
             await File.WriteAllBytesAsync(dialog.FileName, bytes);
-            MaterialsStatus.Text = $"模板已保存:{Path.GetFileName(dialog.FileName)}";
+            MaterialsStatus.Text = $"模板已保存：{Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Window.GetWindow(this), CliDiagnostics.Sanitize(ex.Message), "下载模板失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), $"模板未下载，请刷新频道后重试。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "模板未下载", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -156,14 +156,14 @@ public partial class MaterialsPage : UserControl
             var targets = await LoadTemplateTargetsAsync();
             if (targets.Count == 0)
             {
-                MessageBox.Show(Window.GetWindow(this), "当前账号没有可用的频道和板块,请先同步频道数据。", "无法导入素材", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(Window.GetWindow(this), "暂无可用频道或版块，请先刷新频道。", "无法导入素材", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             var fileHash = await Task.Run(() => MaterialTemplateService.ComputeFileHash(dialog.FileName));
             if (await _store.HasImportedFileAsync(fileHash))
             {
-                MessageBox.Show(Window.GetWindow(this), "该导入文件已经处理过,不能重复导入。请修改后另存为新文件,或使用预览中的错误行导出文件。", "重复导入", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(Window.GetWindow(this), "该文件已导入，请另存为新文件后重试。失败项可从预览页导出。", "重复导入", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -175,7 +175,7 @@ public partial class MaterialsPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Window.GetWindow(this), CliDiagnostics.Sanitize(ex.Message), "导入素材失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), $"导入未完成，请检查模板后重试。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "导入未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -254,11 +254,11 @@ public partial class MaterialsPage : UserControl
         try
         {
             await LoadMaterialsAsync();
-            MessageBox.Show(owner, $"导入完成:成功 {drafts.Count} 条,失败 {failureCount} 条。", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(owner, $"导入完成:成功 {drafts.Count} 条,失败 {failureCount} 条,但刷新列表失败:{CliDiagnostics.Sanitize(ex.Message)}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。\n列表未刷新，请手动刷新。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
@@ -271,7 +271,7 @@ public partial class MaterialsPage : UserControl
     {
         if ((sender as FrameworkElement)?.DataContext is not MaterialRecord record) return;
         var display = string.IsNullOrWhiteSpace(record.Title) ? $"素材 #{record.Id}" : record.Title;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{display}”?素材仅标记为删除,不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{display}”？\n\n素材只会标记为删除，不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
         var result = await _store.DeleteMaterialsAsync([record.Id]);
         if (result.DeletedIds.Count == 0)
@@ -301,7 +301,7 @@ public partial class MaterialsPage : UserControl
     public static string ValidateMaterialForPublish(MaterialRecord record)
     {
         if (string.IsNullOrWhiteSpace(record.GuildId) || string.IsNullOrWhiteSpace(record.ChannelId)) return "请先编辑素材并指定发布频道和版块。";
-        if (record.Type is not ("text" or "image" or "video")) return "素材类型无效。";
+        if (record.Type is not ("text" or "image" or "video")) return "素材类型无效，请重新编辑后保存。";
         return MaterialMediaValidator.ValidatePost(record.Type, record.Title, record.Content, record.MediaLinks);
     }
 
@@ -368,7 +368,7 @@ public partial class MaterialsPage : UserControl
             MessageBox.Show(
                 Window.GetWindow(this),
                 CliDiagnostics.Sanitize(ex.Message),
-                "批量操作失败",
+                "批量操作未完成",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
@@ -406,7 +406,7 @@ public partial class MaterialsPage : UserControl
                 await BatchSetPublishAtAsync();
                 return;
             default:
-                throw new InvalidOperationException($"未知批量操作:{action}");
+                throw new InvalidOperationException($"未知批量操作：{action}");
         }
     }
 
@@ -421,7 +421,7 @@ public partial class MaterialsPage : UserControl
 
         if (MessageBox.Show(
                 Window.GetWindow(this),
-                $"确定删除已选择的 {selected.Count} 条素材?仅标记为删除,不会从数据库物理移除。",
+                $"确定删除已选择的 {selected.Count} 条素材？\n\n素材只会标记为删除，不会从数据库物理移除。",
                 "批量删除素材",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
@@ -462,7 +462,7 @@ public partial class MaterialsPage : UserControl
             {
                 MessageBox.Show(
                     Window.GetWindow(this),
-                    $"素材 #{material.Id}:{error}",
+                    $"素材 #{material.Id}：{error}",
                     "素材不完整",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -497,7 +497,7 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                $"已将 {queuedIds.Count} 条素材加入发布队列,但当前没有可用的发布调度器。",
+                $"已将 {queuedIds.Count} 条素材加入发布队列，但当前没有可用的发布调度器。",
                 "批量发布",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -507,8 +507,8 @@ public partial class MaterialsPage : UserControl
         var check = await _scheduler.CheckNowAsync();
         var runningSummary = BuildSkipMessage(skippedRunning, [], []);
         var message = check.EnvironmentReady
-            ? $"已加入发布队列 {queuedIds.Count} 条;调度器已启动 {check.StartedCount} 条,已完成 {check.CompletedCount} 条。"
-            : $"已加入发布队列 {queuedIds.Count} 条,但发布环境未就绪:{check.Message}";
+            ? $"已加入发布队列 {queuedIds.Count} 条；调度器已启动 {check.StartedCount} 条，已完成 {check.CompletedCount} 条。"
+            : $"已加入发布队列 {queuedIds.Count} 条，但发布环境未就绪：{check.Message}";
         if (runningSummary.Length > 0) message += $"\n{runningSummary}";
         MessageBox.Show(Window.GetWindow(this), message, "批量发布", MessageBoxButton.OK, MessageBoxImage.Information);
     }
@@ -523,7 +523,7 @@ public partial class MaterialsPage : UserControl
             MessageBox.Show(
                 Window.GetWindow(this),
                 "所选素材中没有可设置频道的记录。已发布素材不参与批量设置。",
-                "批量发布频道",
+                "设置发布频道",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -547,7 +547,7 @@ public partial class MaterialsPage : UserControl
             channel.Name);
         await LoadMaterialsAsync();
         ShowBatchResult(
-            "批量发布频道",
+            "设置发布频道",
             result.UpdatedIds.Count,
             result.RunningIds,
             result.PublishedIds,
@@ -609,7 +609,7 @@ public partial class MaterialsPage : UserControl
         IReadOnlyList<long> missingIds)
     {
         var skipMessage = BuildSkipMessage(runningIds, publishedIds, missingIds);
-        var message = $"{action}完成:成功处理 {successCount} 条。";
+        var message = $"{action}完成：成功处理 {successCount} 条。";
         if (skipMessage.Length > 0) message += $"\n{skipMessage}";
         MessageBox.Show(
             Window.GetWindow(this),
@@ -628,6 +628,6 @@ public partial class MaterialsPage : UserControl
         if (runningIds.Count > 0) parts.Add($"正在发布 {runningIds.Count} 条");
         if (publishedIds.Count > 0) parts.Add($"已发布 {publishedIds.Count} 条");
         if (missingIds.Count > 0) parts.Add($"不存在或已删除 {missingIds.Count} 条");
-        return parts.Count == 0 ? "" : $"已跳过:{string.Join("、", parts)}。";
+        return parts.Count == 0 ? "" : $"已跳过：{string.Join("、", parts)}。";
     }
 }

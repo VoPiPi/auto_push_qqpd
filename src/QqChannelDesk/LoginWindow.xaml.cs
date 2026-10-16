@@ -38,7 +38,7 @@ public partial class LoginWindow : Window
             image.Freeze();
             QrImage.Source = image;
             OpenLinkButton.IsEnabled = Uri.TryCreate(_verificationUri, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
-            LoginStatus.Text = "请使用 QQ 扫码并在手机端确认授权。";
+            LoginStatus.Text = "请用 QQ 扫码，并在手机端确认。";
             var result = await _workflow.PollLoginAsync(_cancellation.Token);
             if (result.Succeeded)
             {
@@ -54,7 +54,7 @@ public partial class LoginWindow : Window
         }
         catch (OperationCanceledException)
         {
-            LoginStatus.Text = "已取消授权。";
+            LoginStatus.Text = "已取消登录。";
         }
         catch (Exception ex)
         {

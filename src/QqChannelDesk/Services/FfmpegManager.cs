@@ -355,17 +355,17 @@ public sealed class FfmpegManager
             };
             if (!process.Start())
             {
-                return new(false, "异常", "ffmpeg 无法启动", Path.GetDirectoryName(executable), source, configuredPathInvalid);
+                return new(false, "异常", "FFmpeg 无法启动，请重新安装或指定路径。", Path.GetDirectoryName(executable), source, configuredPathInvalid);
             }
             var output = await process.StandardOutput.ReadLineAsync(cancellationToken);
             await process.WaitForExitAsync(cancellationToken);
             return process.ExitCode == 0
                 ? new(true, "可用", FormatVersionOutput(output), Path.GetDirectoryName(executable), source, configuredPathInvalid)
-                : new(false, "异常", "ffmpeg 版本检查失败", Path.GetDirectoryName(executable), source, configuredPathInvalid);
+                : new(false, "异常", "FFmpeg 版本检查未通过，请重新安装或指定路径。", Path.GetDirectoryName(executable), source, configuredPathInvalid);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return new(false, "异常", $"ffmpeg 启动失败：{ex.Message}", Path.GetDirectoryName(executable), source, configuredPathInvalid);
+            return new(false, "异常", $"FFmpeg 启动失败，请检查路径或重新安装：{ex.Message}", Path.GetDirectoryName(executable), source, configuredPathInvalid);
         }
     }
 
@@ -379,7 +379,7 @@ public sealed class FfmpegManager
     {
         var archivePath = FindLatestArchive();
         if (archivePath is null)
-            return new CliInstallResult(false, $"在目录 {ArchiveDirectory} 中没有找到命名格式为 ffmpeg-版本号-描述.7z 或 .zip 的压缩包。", null);
+            return new CliInstallResult(false, $"未找到 FFmpeg 安装包，请将 ffmpeg-版本号-描述.7z 或 .zip 放入 {ArchiveDirectory} 后重试。", null);
 
         try
         {
@@ -404,7 +404,7 @@ public sealed class FfmpegManager
             }
 
             if (!extracted.Contains("ffmpeg.exe"))
-                return new CliInstallResult(false, $"压缩包 {Path.GetFileName(archivePath)} 的 bin 目录中未找到 ffmpeg.exe，未完成部署。", null);
+                return new CliInstallResult(false, $"安装包 {Path.GetFileName(archivePath)} 中没有 ffmpeg.exe，请更换安装包后重试。", null);
 
             var status = await CheckExecutableAsync(
                 Path.Combine(InstallDirectory, ExecutableName),
@@ -413,7 +413,7 @@ public sealed class FfmpegManager
                 cancellationToken);
             return status.Available
                 ? new CliInstallResult(true, $"项目 tools 中的 FFmpeg 已部署：{status.Detail}", null)
-                : new CliInstallResult(false, $"项目 tools 中的 FFmpeg 部署后检查失败：{status.Detail}", null);
+                : new CliInstallResult(false, $"FFmpeg 部署后不可用，请重新安装或手动指定 ffmpeg.exe：{status.Detail}", null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -421,7 +421,7 @@ public sealed class FfmpegManager
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            return new CliInstallResult(false, $"FFmpeg 部署失败：{ex.Message}", null);
+            return new CliInstallResult(false, $"FFmpeg 部署失败，请检查目录权限后重试：{ex.Message}", null);
         }
     }
 
@@ -506,7 +506,7 @@ public sealed class FfmpegManager
 
             if (lastFailure is not null)
                 return new CliInstallResult(false,
-                    $"FFmpeg 在线下载失败：{CliDiagnostics.Sanitize(lastFailure.Message)}", sourceUrl);
+                    $"FFmpeg 下载失败，请检查网络后重试或手动安装：{CliDiagnostics.Sanitize(lastFailure.Message)}", sourceUrl);
 
             ReportProgress(progress, 84, "校验通过，正在解压 ffmpeg.exe…",
                 "仅提取程序实际需要的 ffmpeg.exe。", sourceUrl);
@@ -522,7 +522,7 @@ public sealed class FfmpegManager
             var downloadedStatus = await _executableValidator(temporaryExecutablePath, cancellationToken).ConfigureAwait(false);
             if (!downloadedStatus.Available)
                 return new CliInstallResult(false,
-                    $"下载的 FFmpeg 验证失败：{downloadedStatus.Detail}", sourceUrl);
+                    $"下载的 FFmpeg 不可用，请重试或更换下载源：{downloadedStatus.Detail}", sourceUrl);
 
             ReportProgress(progress, 96, "正在完成 FFmpeg 安装…",
                 installedExecutablePath, sourceUrl, canCancel: false);
@@ -549,7 +549,7 @@ public sealed class FfmpegManager
                 {
                     RestorePreviousExecutable(installedExecutablePath, backupExecutablePath);
                     return new CliInstallResult(false,
-                        $"FFmpeg 安装后验证失败，已恢复原版本：{installedStatus.Detail}", sourceUrl);
+                        $"FFmpeg 安装后不可用，已恢复原版本，请重试或手动安装：{installedStatus.Detail}", sourceUrl);
                 }
             }
             catch
@@ -574,7 +574,7 @@ public sealed class FfmpegManager
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
             LogWarning($"FFmpeg 在线安装失败：{message}；来源：{sourceUrl}");
-            return new CliInstallResult(false, $"FFmpeg 在线安装失败：{message}", sourceUrl);
+            return new CliInstallResult(false, $"FFmpeg 在线安装失败，请重试或手动安装：{message}", sourceUrl);
         }
         finally
         {
