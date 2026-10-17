@@ -158,14 +158,15 @@
                                 <ColumnDefinition Width="112" />
                                 <ColumnDefinition Width="160" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                            <TextBlock Text="发帖最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
                             <ComboBox x:Name="ScheduleConcurrencyCombo" Grid.Column="1" SelectionChanged="ScheduleConcurrencyCombo_SelectionChanged">
                                 <ComboBoxItem Content="1 个任务" Tag="1" />
                                 <ComboBoxItem Content="2 个任务" Tag="2" />
                                 <ComboBoxItem Content="3 个任务" Tag="3" />
                             </ComboBox>
                         </Grid>
-                        <TextBlock Grid.Row="2" Text="建议保持默认值 1，避免同时发帖请求过多。" Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" />
+                        <TextBlock Grid.Row="2" Text="仅作用于发布计划，TG 定时采集固定串行执行；建议保持默认值 1，避免同时发帖请求过多。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
 
                         <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Grid.Row="3" Content="自动执行发布计划" Margin="0,-10,0,0"
                                   Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />

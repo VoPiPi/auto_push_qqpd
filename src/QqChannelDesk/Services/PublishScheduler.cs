@@ -14,10 +14,16 @@ public sealed class PublishScheduler
     private readonly AppLogger _logger;
     private readonly SemaphoreSlim _scanLock = new(1, 1);
     private readonly object _taskGate = new();
+    private readonly object _stateGate = new();
     private readonly List<Task> _runningTasks = [];
     private CancellationTokenSource? _stopSource;
     private Task? _loopTask;
+    private long _generation;
     private DateTimeOffset _startedAt;
+    private DateTimeOffset? _lastHeartbeatAt;
+    private DateTimeOffset? _nextCheckAt;
+    private bool _enabled = true;
+    private long _enabledVersion;
     private bool _runOverdueAtStartup;
     private PublishSchedulerStatus _status = PublishSchedulerStatus.Stopped;
 
@@ -37,25 +43,77 @@ public sealed class PublishScheduler
 
     public event Action<PublishSchedulerStatus>? StatusChanged;
 
-    public PublishSchedulerStatus Status => _status;
+    public PublishSchedulerStatus Status
+    {
+        get { lock (_stateGate) return _status; }
+    }
+
+    public bool IsEnabled
+    {
+        get { lock (_stateGate) return _enabled; }
+    }
+
+    /// <summary>
+    /// Applies the user's auto-execute choice immediately. The scan loop keeps
+    /// running and refreshing its heartbeat, but it will not dispatch new plans
+    /// while auto execution is disabled.
+    /// </summary>
+    public void SetEnabled(bool enabled)
+    {
+        PublishSchedulerStatus current;
+        lock (_stateGate)
+        {
+            _enabled = enabled;
+            _enabledVersion++;
+            current = _status;
+        }
+
+        var message = current.Faulted
+            ? current.Message
+            : enabled
+                ? current.Running ? "自动执行已开启，等待下一轮检查" : "计划执行器未启动"
+                : current.Running ? "自动执行已关闭，执行器仍在运行" : "计划执行器未启动，自动执行已关闭";
+        SetStatus(current with
+        {
+            Message = message,
+            UpdatedAt = DateTimeOffset.Now
+        });
+    }
 
     public void Start(bool runOverdueAtStartup)
     {
-        if (_loopTask is { IsCompleted: false }) return;
-        RemoveCompletedTasks();
-        if (RunningCount() > 0) return;
+        CancellationTokenSource source;
+        long generation;
+        lock (_stateGate)
+        {
+            // 并发 Start 只能有一次成功创建循环，避免同一窗口启动出两个扫描循环。
+            if (_loopTask is { IsCompleted: false }) return;
+            RemoveCompletedTasksCore();
+            if (RunningCountCore() > 0) return;
 
-        _startedAt = DateTimeOffset.Now;
-        _runOverdueAtStartup = runOverdueAtStartup;
-        _stopSource?.Dispose();
-        _stopSource = new CancellationTokenSource();
+            _startedAt = DateTimeOffset.Now;
+            _lastHeartbeatAt = _startedAt;
+            _nextCheckAt = null;
+            _runOverdueAtStartup = runOverdueAtStartup;
+            // 上一次 StopAsync 已完成时 _stopSource 必为 null；这里只防御性释放残留对象。
+            _stopSource?.Dispose();
+            source = new CancellationTokenSource();
+            _stopSource = source;
+            generation = ++_generation;
+        }
+
         SetStatus(new PublishSchedulerStatus(
             true,
             false,
             "正在启动计划执行器",
             0,
-            DateTimeOffset.Now));
-        _loopTask = Task.Run(() => RunLoopAsync(_stopSource.Token));
+            DateTimeOffset.Now),
+            TimeSpan.FromSeconds(2));
+        var loop = Task.Run(() => RunLoopAsync(generation, source.Token));
+        lock (_stateGate)
+        {
+            if (_generation == generation) _loopTask = loop;
+        }
     }
 
     public async Task<ScheduleCheckResult> CheckNowAsync(CancellationToken cancellationToken = default)
@@ -65,7 +123,10 @@ public sealed class PublishScheduler
             var environment = await _environment().ConfigureAwait(false);
             if (!environment.Ready)
             {
-                SetStatus(new PublishSchedulerStatus(true, true, environment.Reason, RunningCount(), DateTimeOffset.Now));
+                SetStatus(new PublishSchedulerStatus(true, true, environment.Reason, RunningCount(), DateTimeOffset.Now)
+                {
+                    Faulted = true
+                });
                 return new ScheduleCheckResult(false, 0, 0, environment.Reason);
             }
 
@@ -99,8 +160,15 @@ public sealed class PublishScheduler
 
     public async Task<bool> StopAsync(TimeSpan? waitTimeout = null)
     {
-        var source = _stopSource;
-        var loop = _loopTask;
+        CancellationTokenSource? source;
+        Task? loop;
+        long generation;
+        lock (_stateGate)
+        {
+            source = _stopSource;
+            loop = _loopTask;
+            generation = _generation;
+        }
         var timeout = waitTimeout ?? TimeSpan.FromSeconds(10);
         var deadline = DateTime.UtcNow + timeout;
         var stopped = true;
@@ -134,28 +202,53 @@ public sealed class PublishScheduler
         {
             if (stopped)
             {
-                SetStatus(new PublishSchedulerStatus(false, false, "计划执行器已停止", 0, DateTimeOffset.Now));
-                _loopTask = null;
-                _stopSource = null;
-                RemoveCompletedTasks();
+                var ownsState = false;
+                lock (_stateGate)
+                {
+                    // 只清理本次停止对应的那一次运行；期间若有 Start 创建了新循环，不能覆盖新状态。
+                    if (_generation == generation && ReferenceEquals(_stopSource, source))
+                    {
+                        _nextCheckAt = null;
+                        _loopTask = null;
+                        _stopSource = null;
+                        ownsState = true;
+                    }
+                }
+                RemoveCompletedTasksCore();
+                if (ownsState)
+                    SetStatus(new PublishSchedulerStatus(false, false, "计划执行器已停止", 0, DateTimeOffset.Now));
+                // 循环与在途任务都已确认结束，此时释放 CTS 是安全的。
+                source?.Dispose();
             }
             else
             {
+                // 超时：循环或任务仍在运行，保留 _stopSource/_loopTask 引用，避免旧循环持有已释放的 CTS。
                 SetStatus(new PublishSchedulerStatus(true, true, "计划执行器正在等待在途任务结束", RunningCount(), DateTimeOffset.Now));
             }
         }
         return stopped;
     }
 
-    private async Task RunLoopAsync(CancellationToken cancellationToken)
+    private async Task RunLoopAsync(long generation, CancellationToken cancellationToken)
     {
         var firstScan = true;
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!cancellationToken.IsCancellationRequested && IsCurrentGeneration(generation))
             {
                 RemoveCompletedTasks();
+                long enabledVersion;
+                lock (_stateGate) enabledVersion = _enabledVersion;
                 var settings = await _settingsStore.GetAsync(cancellationToken).ConfigureAwait(false);
+                bool enabled;
+                lock (_stateGate)
+                {
+                    // A user toggle can land while settings are being read. In that
+                    // case the immediate choice wins until the next scan.
+                    if (_enabledVersion == enabledVersion)
+                        _enabled = settings.AutoExecuteSchedules;
+                    enabled = _enabled;
+                }
 
                 // Startup recovery is intentionally independent from the live auto-run
                 // switch. It is a separate user consent for overdue plans.
@@ -172,18 +265,23 @@ public sealed class PublishScheduler
                             cancellationToken: cancellationToken).ConfigureAwait(false);
                         SetStatus(new PublishSchedulerStatus(true, false,
                             startupResult.StartedCount == 0 ? "启动补发检查完成" : $"启动补发已开始 {startupResult.StartedCount} 条计划",
-                            RunningCount(), DateTimeOffset.Now));
+                            RunningCount(), DateTimeOffset.Now),
+                            TimeSpan.FromSeconds(2));
                     }
                     else
                     {
-                        SetStatus(new PublishSchedulerStatus(true, true, startupEnvironment.Reason, RunningCount(), DateTimeOffset.Now));
+                        SetStatus(new PublishSchedulerStatus(true, true, startupEnvironment.Reason, RunningCount(), DateTimeOffset.Now)
+                        {
+                            Faulted = true
+                        }, TimeSpan.FromSeconds(5));
                     }
                     firstScan = false;
                 }
 
-                if (!settings.AutoExecuteSchedules)
+                if (!enabled)
                 {
-                    SetStatus(new PublishSchedulerStatus(true, false, "自动执行已关闭", RunningCount(), DateTimeOffset.Now));
+                    SetStatus(new PublishSchedulerStatus(true, false, "自动执行已关闭，执行器仍在运行", RunningCount(), DateTimeOffset.Now),
+                        TimeSpan.FromSeconds(2));
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
                     continue;
                 }
@@ -191,7 +289,10 @@ public sealed class PublishScheduler
                 var environment = await _environment().ConfigureAwait(false);
                 if (!environment.Ready)
                 {
-                    SetStatus(new PublishSchedulerStatus(true, true, environment.Reason, RunningCount(), DateTimeOffset.Now));
+                    SetStatus(new PublishSchedulerStatus(true, true, environment.Reason, RunningCount(), DateTimeOffset.Now)
+                    {
+                        Faulted = true
+                    }, TimeSpan.FromSeconds(5));
                     await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
                     continue;
                 }
@@ -214,7 +315,8 @@ public sealed class PublishScheduler
                     false,
                     result.StartedCount > 0 ? $"正在执行 {result.StartedCount} 条到期计划" : "自动执行已开启",
                     RunningCount(),
-                    DateTimeOffset.Now));
+                    DateTimeOffset.Now),
+                    TimeSpan.FromSeconds(2));
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
             }
         }
@@ -226,7 +328,10 @@ public sealed class PublishScheduler
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
             _logger.Error($"计划执行器异常：{message}");
-            SetStatus(new PublishSchedulerStatus(true, true, message, RunningCount(), DateTimeOffset.Now));
+            SetStatus(new PublishSchedulerStatus(true, true, message, RunningCount(), DateTimeOffset.Now)
+            {
+                Faulted = true
+            });
         }
     }
 
@@ -325,19 +430,54 @@ public sealed class PublishScheduler
         lock (_taskGate) _runningTasks.RemoveAll(task => task.IsCompleted);
     }
 
-    private int RunningCount()
+    private void RemoveCompletedTasksCore()
     {
-        lock (_taskGate)
-        {
-            _runningTasks.RemoveAll(task => task.IsCompleted);
-            return _runningTasks.Count;
-        }
+        _runningTasks.RemoveAll(task => task.IsCompleted);
     }
 
-    private void SetStatus(PublishSchedulerStatus status)
+    private int RunningCount()
     {
-        _status = status;
-        try { StatusChanged?.Invoke(status); }
+        lock (_taskGate) return RunningCountCore();
+    }
+
+    private int RunningCountCore()
+    {
+        _runningTasks.RemoveAll(task => task.IsCompleted);
+        return _runningTasks.Count;
+    }
+
+    private bool IsCurrentGeneration(long generation)
+    {
+        lock (_stateGate) return _generation == generation;
+    }
+
+    /// <summary>
+    /// Publishes the status together with the real heartbeat of the scan loop.
+    /// <paramref name="nextCheckIn"/> is only passed by the loop itself, so a
+    /// heartbeat always means "the loop really ran", never a UI timer.
+    /// </summary>
+    private void SetStatus(PublishSchedulerStatus status, TimeSpan? nextCheckIn = null)
+    {
+        var now = DateTimeOffset.Now;
+        PublishSchedulerStatus effective;
+        lock (_stateGate)
+        {
+            if (nextCheckIn is not null)
+            {
+                _lastHeartbeatAt = now;
+                _nextCheckAt = now + nextCheckIn.Value;
+            }
+
+            effective = status with
+            {
+                LastHeartbeatAt = status.LastHeartbeatAt ?? _lastHeartbeatAt ?? status.UpdatedAt,
+                NextCheckAt = status.NextCheckAt ?? _nextCheckAt,
+                Enabled = _enabled
+            };
+            _status = effective;
+        }
+
+        try { StatusChanged?.Invoke(effective); }
         catch (Exception ex) { _logger.Error($"更新计划执行器状态失败：{CliDiagnostics.Sanitize(ex.Message)}"); }
     }
 
@@ -361,7 +501,11 @@ public sealed record PublishSchedulerStatus(
     bool Paused,
     string Message,
     int RunningTaskCount,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? LastHeartbeatAt = null,
+    DateTimeOffset? NextCheckAt = null,
+    bool Faulted = false,
+    bool Enabled = true)
 {
     public static PublishSchedulerStatus Stopped => new(false, false, "计划执行器未启动", 0, DateTimeOffset.Now);
 }

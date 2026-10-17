@@ -9,6 +9,7 @@ public partial class App : Application
 {
     public App()
     {
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
@@ -16,9 +17,11 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        AppLogger.Instance.WriteException("UI 线程未处理异常", e.Exception);
-        // An event-handler exception is recoverable in many WPF cases. Keep the process alive so the user can save work.
-        e.Handled = true;
+        var terminating = e.Exception is not OperationCanceledException;
+        // Only cancellation is an expected control-flow exception. Other UI exceptions may have
+        // left the visual tree or application state inconsistent, so let WPF terminate normally.
+        AppLogger.Instance.WriteException("UI 线程未处理异常", e.Exception, terminating);
+        e.Handled = !terminating;
     }
 
     private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)

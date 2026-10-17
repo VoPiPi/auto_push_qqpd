@@ -43,7 +43,8 @@ public partial class HistoryPage : UserControl
         }
     }
 
-    private async void HistoryRefreshButton_Click(object sender, RoutedEventArgs e) => await LoadRecordsAsync();
+    private void HistoryRefreshButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("刷新发布记录", LoadRecordsAsync);
     private void HistoryFilterButton_Click(object sender, RoutedEventArgs e) => ApplyFilters();
 
     private void HistoryResetButton_Click(object sender, RoutedEventArgs e)

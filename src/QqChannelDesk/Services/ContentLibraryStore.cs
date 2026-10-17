@@ -83,6 +83,14 @@ public sealed class ContentLibraryStore
                     AccountKey TEXT NULL
                 );
                 CREATE INDEX IF NOT EXISTS IX_Materials_StatusPublishAt ON Materials (Status, PublishAt);
+                CREATE TABLE IF NOT EXISTS MaterialSourceClaims (
+                    AccountKey TEXT NOT NULL,
+                    SourceType TEXT NOT NULL,
+                    SourceUrl TEXT NOT NULL,
+                    MaterialId INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (AccountKey, SourceType, SourceUrl)
+                );
+                CREATE INDEX IF NOT EXISTS IX_MaterialSourceClaims_MaterialId ON MaterialSourceClaims (MaterialId);
                 CREATE TABLE IF NOT EXISTS ScheduleExecutions (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     MaterialId INTEGER NOT NULL,
@@ -123,6 +131,7 @@ public sealed class ContentLibraryStore
             await using var sourceIndex = connection.CreateCommand();
             sourceIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_Materials_Source ON Materials (SourceType, SourceUrl)";
             await sourceIndex.ExecuteNonQueryAsync(cancellationToken);
+            await EnsureMaterialSourceClaimsAsync(connection, cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -423,6 +432,128 @@ public sealed class ContentLibraryStore
             await InsertPendingExecutionAsync(connection, transaction, id, scheduledAt, now, accountKey, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return id;
+    }
+
+    public async Task<MaterialSourceSaveResult> SaveMaterialWithSourceAsync(
+        MaterialDraft material,
+        CancellationToken cancellationToken = default)
+    {
+        if (material.Id is not null)
+            throw new ArgumentException("来源认领保存只能创建新素材。", nameof(material));
+        ValidateMaterial(material);
+        var contentError = MaterialMediaValidator.ValidatePost(material.Type, material.Title, material.Content, material.MediaLinks);
+        if (contentError.Length > 0) throw new ArgumentException(contentError, nameof(material));
+
+        var sourceType = material.SourceType.Trim();
+        var sourceUrl = material.SourceUrl.Trim();
+        if (sourceType.Length == 0 || sourceUrl.Length == 0)
+            throw new ArgumentException("来源类型和来源地址不能为空。", nameof(material));
+
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.Now.ToString("O");
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await using (var claim = connection.CreateCommand())
+            {
+                claim.Transaction = transaction;
+                claim.CommandText = """
+                    INSERT OR IGNORE INTO MaterialSourceClaims (AccountKey, SourceType, SourceUrl, MaterialId)
+                    VALUES ($accountKey, $sourceType, $sourceUrl, 0);
+                    SELECT changes();
+                    """;
+                claim.Parameters.AddWithValue("$accountKey", accountKey);
+                claim.Parameters.AddWithValue("$sourceType", sourceType);
+                claim.Parameters.AddWithValue("$sourceUrl", sourceUrl);
+                if (Convert.ToInt64(await claim.ExecuteScalarAsync(cancellationToken)) == 1)
+                {
+                    long id;
+                    await using (var insert = connection.CreateCommand())
+                    {
+                        insert.Transaction = transaction;
+                        insert.CommandText = """
+                            INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
+                            VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$sourceType,$sourceUrl,$now,$now,$accountKey);
+                            SELECT last_insert_rowid();
+                            """;
+                        AddMaterialParameters(insert, material, now);
+                        insert.Parameters["$sourceType"].Value = sourceType;
+                        insert.Parameters["$sourceUrl"].Value = sourceUrl;
+                        AddAccountParameter(insert, accountKey);
+                        id = Convert.ToInt64(await insert.ExecuteScalarAsync(cancellationToken));
+                    }
+
+                    await using (var updateClaim = connection.CreateCommand())
+                    {
+                        updateClaim.Transaction = transaction;
+                        updateClaim.CommandText = """
+                            UPDATE MaterialSourceClaims
+                            SET MaterialId=$materialId
+                            WHERE AccountKey=$accountKey AND SourceType=$sourceType AND SourceUrl=$sourceUrl;
+                            """;
+                        updateClaim.Parameters.AddWithValue("$materialId", id);
+                        updateClaim.Parameters.AddWithValue("$accountKey", accountKey);
+                        updateClaim.Parameters.AddWithValue("$sourceType", sourceType);
+                        updateClaim.Parameters.AddWithValue("$sourceUrl", sourceUrl);
+                        await updateClaim.ExecuteNonQueryAsync(cancellationToken);
+                    }
+
+                    await CancelPendingExecutionsAsync(connection, transaction, id, now, accountKey, cancellationToken);
+                    if (material.Status == "queue" && material.PublishAt is { } scheduledAt && scheduledAt > DateTimeOffset.Now)
+                        await InsertPendingExecutionAsync(connection, transaction, id, scheduledAt, now, accountKey, cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return new(id, true, null);
+                }
+            }
+
+            await using (var existing = connection.CreateCommand())
+            {
+                existing.Transaction = transaction;
+                existing.CommandText = """
+                    SELECT m.Id, m.Title, m.Type, m.Content, m.GuildId, m.GuildName, m.ChannelId, m.ChannelName, m.PublishAt,
+                           m.Status, m.Link, m.MediaJson, m.SourceType, m.SourceUrl, m.CreatedAt, m.UpdatedAt
+                    FROM MaterialSourceClaims c
+                    INNER JOIN Materials m ON m.Id=c.MaterialId
+                    WHERE c.AccountKey=$accountKey AND c.SourceType=$sourceType AND c.SourceUrl=$sourceUrl
+                      AND m.Status <> 'delete'
+                    LIMIT 1;
+                    """;
+                existing.Parameters.AddWithValue("$accountKey", accountKey);
+                existing.Parameters.AddWithValue("$sourceType", sourceType);
+                existing.Parameters.AddWithValue("$sourceUrl", sourceUrl);
+                await using var reader = await existing.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    var record = ReadMaterial(reader);
+                    await reader.DisposeAsync();
+                    await transaction.CommitAsync(cancellationToken);
+                    return new(record.Id, false, record);
+                }
+            }
+
+            await using (var staleClaim = connection.CreateCommand())
+            {
+                staleClaim.Transaction = transaction;
+                staleClaim.CommandText = """
+                    DELETE FROM MaterialSourceClaims
+                    WHERE AccountKey=$accountKey AND SourceType=$sourceType AND SourceUrl=$sourceUrl
+                      AND NOT EXISTS (
+                          SELECT 1 FROM Materials m
+                          WHERE m.Id=MaterialSourceClaims.MaterialId AND m.Status <> 'delete'
+                      );
+                    """;
+                staleClaim.Parameters.AddWithValue("$accountKey", accountKey);
+                staleClaim.Parameters.AddWithValue("$sourceType", sourceType);
+                staleClaim.Parameters.AddWithValue("$sourceUrl", sourceUrl);
+                await staleClaim.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await transaction.RollbackAsync(cancellationToken);
+        throw new InvalidOperationException("来源认领发生并发冲突，请重试。");
     }
 
     public Task<long[]> SaveMaterialsAsync(
@@ -1141,6 +1272,87 @@ public sealed class ContentLibraryStore
         await EnsureColumnAsync(connection, tableName, "AccountKey", "TEXT NULL", cancellationToken);
     }
 
+    private static async Task EnsureMaterialSourceClaimsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT OR IGNORE INTO MaterialSourceClaims (AccountKey, SourceType, SourceUrl, MaterialId)
+            SELECT COALESCE(AccountKey, ''), SourceType, SourceUrl, MIN(Id)
+            FROM Materials
+            WHERE Status <> 'delete' AND SourceType <> '' AND SourceUrl <> ''
+            GROUP BY COALESCE(AccountKey, ''), SourceType, SourceUrl;
+
+            CREATE TRIGGER IF NOT EXISTS TR_Materials_SourceClaim_AfterDelete
+            AFTER DELETE ON Materials
+            BEGIN
+                UPDATE MaterialSourceClaims
+                SET MaterialId = COALESCE((
+                    SELECT MIN(m.Id)
+                    FROM Materials m
+                    WHERE m.SourceType=MaterialSourceClaims.SourceType
+                      AND m.SourceUrl=MaterialSourceClaims.SourceUrl
+                      AND m.Status <> 'delete'
+                      AND COALESCE(m.AccountKey, '')=MaterialSourceClaims.AccountKey
+                ), MaterialId)
+                WHERE MaterialId=OLD.Id;
+
+                DELETE FROM MaterialSourceClaims
+                WHERE MaterialId=OLD.Id
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM Materials m
+                      WHERE m.SourceType=MaterialSourceClaims.SourceType
+                        AND m.SourceUrl=MaterialSourceClaims.SourceUrl
+                        AND m.Status <> 'delete'
+                        AND COALESCE(m.AccountKey, '')=MaterialSourceClaims.AccountKey
+                  );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS TR_Materials_SourceClaim_AfterSoftDelete
+            AFTER UPDATE OF Status ON Materials
+            WHEN NEW.Status='delete' AND OLD.Status <> 'delete'
+            BEGIN
+                UPDATE MaterialSourceClaims
+                SET MaterialId = COALESCE((
+                    SELECT MIN(m.Id)
+                    FROM Materials m
+                    WHERE m.SourceType=MaterialSourceClaims.SourceType
+                      AND m.SourceUrl=MaterialSourceClaims.SourceUrl
+                      AND m.Status <> 'delete'
+                      AND COALESCE(m.AccountKey, '')=MaterialSourceClaims.AccountKey
+                ), MaterialId)
+                WHERE MaterialId=NEW.Id;
+
+                DELETE FROM MaterialSourceClaims
+                WHERE MaterialId=NEW.Id
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM Materials m
+                      WHERE m.SourceType=MaterialSourceClaims.SourceType
+                        AND m.SourceUrl=MaterialSourceClaims.SourceUrl
+                        AND m.Status <> 'delete'
+                        AND COALESCE(m.AccountKey, '')=MaterialSourceClaims.AccountKey
+                  );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS TR_Materials_SourceClaim_AfterSourceUpdate
+            AFTER UPDATE OF SourceType, SourceUrl ON Materials
+            WHEN OLD.SourceType <> NEW.SourceType OR OLD.SourceUrl <> NEW.SourceUrl
+            BEGIN
+                UPDATE OR IGNORE MaterialSourceClaims
+                SET SourceType=NEW.SourceType, SourceUrl=NEW.SourceUrl
+                WHERE MaterialId=NEW.Id;
+
+                DELETE FROM MaterialSourceClaims
+                WHERE MaterialId=NEW.Id
+                  AND (SourceType <> NEW.SourceType OR SourceUrl <> NEW.SourceUrl);
+            END;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task EnsureColumnAsync(
         SqliteConnection connection,
         string tableName,
@@ -1247,7 +1459,14 @@ public sealed class ContentLibraryStore
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO ScheduleExecutions (MaterialId, ScheduledAt, Status, CreatedAt, UpdatedAt, AccountKey)
-            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now, $accountKey);
+            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now, $accountKey)
+            ON CONFLICT(MaterialId, ScheduledAt) DO UPDATE SET
+                Status='Pending',
+                UpdatedAt=$now,
+                CompletedAt=NULL,
+                StartedAt=NULL,
+                LastError=''
+            WHERE ScheduleExecutions.Status <> 'Running';
             """;
         command.Parameters.AddWithValue("$materialId", materialId);
         command.Parameters.AddWithValue("$scheduledAt", scheduledAt.ToString("O"));
@@ -1287,6 +1506,8 @@ public sealed class ContentLibraryStore
         return connection;
     }
 }
+
+public sealed record MaterialSourceSaveResult(long MaterialId, bool Created, MaterialRecord? ExistingMaterial);
 
 public sealed record CollectedItemDraft(string Url, string SourceHost, string Title, string Content, string Status = "待处理", string Notes = "", IReadOnlyList<string>? TagList = null, string ParseError = "", long? Id = null, IReadOnlyList<string>? MediaList = null)
 {

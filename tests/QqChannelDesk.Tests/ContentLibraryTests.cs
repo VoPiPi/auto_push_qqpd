@@ -132,6 +132,57 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public async Task MaterialSourceClaims_AreAtomicAndReleaseAfterSoftDelete()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-source-claim-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var first = await store.SaveMaterialWithSourceAsync(new MaterialDraft(
+            null, "第一条", "text", "正文", "", "", "", "", null, "waitsend", "", [],
+            "TG采集", "https://t.me/channel/100"));
+        var duplicate = await store.SaveMaterialWithSourceAsync(new MaterialDraft(
+            null, "重复", "text", "重复正文", "", "", "", "", null, "waitsend", "", [],
+            "TG采集", "https://t.me/channel/100"));
+
+        Assert.True(first.Created);
+        Assert.False(duplicate.Created);
+        Assert.Equal(first.MaterialId, duplicate.MaterialId);
+        Assert.Single(await store.GetMaterialsAsync());
+
+        await store.UpdateMaterialStatusAsync(first.MaterialId, "delete");
+        var reclaimed = await store.SaveMaterialWithSourceAsync(new MaterialDraft(
+            null, "重新采集", "text", "新正文", "", "", "", "", null, "waitsend", "", [],
+            "TG采集", "https://t.me/channel/100"));
+
+        Assert.True(reclaimed.Created);
+        Assert.NotEqual(first.MaterialId, reclaimed.MaterialId);
+        Assert.Equal("重新采集", Assert.Single(await store.GetMaterialsAsync()).Title);
+    }
+
+    [Fact]
+    public async Task MaterialSourceClaims_HandleConcurrentSameSourceSaves()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-source-race-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        await store.InitializeAsync();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var saves = Enumerable.Range(0, 4).Select(index => Task.Run(async () =>
+        {
+            await start.Task;
+            return await store.SaveMaterialWithSourceAsync(new MaterialDraft(
+                null, $"并发 {index}", "text", "正文", "", "", "", "", null, "waitsend", "", [],
+                "TG采集", "https://t.me/channel/101"));
+        })).ToArray();
+        start.SetResult();
+
+        var results = await Task.WhenAll(saves);
+
+        Assert.Single(results, result => result.Created);
+        Assert.Single(results.Select(result => result.MaterialId).Distinct());
+        Assert.Single(await store.GetMaterialsAsync());
+    }
+
+    [Fact]
     public async Task MaterialBatchOperations_UpdateTargetAndTimeWithoutTouchingProtectedRows()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-batch-{Guid.NewGuid():N}.db");
@@ -337,6 +388,27 @@ public sealed class ContentLibraryTests
         Assert.Equal(materialId, executions[0].MaterialId);
         Assert.Equal(materialId, executions[1].MaterialId);
         Assert.Equal(secondTime.ToString("O"), executions[1].ScheduledAt.ToString("O"));
+    }
+
+    [Fact]
+    public async Task ScheduleExecution_ReschedulingToSameTimeReusesPendingRowWithoutThrowing()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-reschedule-same-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var scheduledAt = DateTimeOffset.Now.AddHours(1);
+        var materialId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "同时间重排", "text", "正文", "guild", "频道", "channel", "版块",
+            scheduledAt, "queue", "", []));
+
+        await store.SaveMaterialAsync(new MaterialDraft(
+            materialId, "同时间重排", "text", "修改后的正文", "guild", "频道", "channel", "版块",
+            scheduledAt, "queue", "", []));
+
+        var executions = await store.GetScheduleExecutionsAsync();
+        var execution = Assert.Single(executions);
+        Assert.Equal(materialId, execution.MaterialId);
+        Assert.Equal(ScheduleExecutionStatus.Pending, execution.Status);
+        Assert.Equal(scheduledAt.ToString("O"), execution.ScheduledAt.ToString("O"));
     }
 
     [Theory]

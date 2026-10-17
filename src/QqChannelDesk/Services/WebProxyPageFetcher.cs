@@ -36,9 +36,12 @@ public sealed partial class WebProxyPageFetcher : IWebProxyProvider, IDisposable
     public bool SupportsSimulation => true;
 
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _fetchGate = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeSource = new();
+    private readonly OperationLeaseTracker _lifetimeLease = new();
     private Window? _hostWindow;
     private WebView2? _webView;
-    private bool _disposed;
+    private bool _lifetimeDisposed;
 
     /// <summary>
     /// 通过网页代理打开目标地址，等待页面内容出现后返回 HTML、最终地址和节点 cookie。
@@ -53,11 +56,72 @@ public sealed partial class WebProxyPageFetcher : IWebProxyProvider, IDisposable
 
     public void Dispose()
     {
+        if (_lifetimeLease.IsDisposed && _lifetimeDisposed) return;
+        // 有在途抓取时由最后一个操作完成释放；否则当前调用直接收尾。
+        var closeNow = _lifetimeLease.MarkDisposed();
+
+        CancelLifetime();
+        if (closeNow) DisposeLifetime();
+        CloseHostOnDispatcher();
+    }
+
+    /// <summary>
+    /// 取消在途抓取并等待 WebView2 宿主空闲后再释放，避免关闭窗口与脚本执行并发。
+    /// </summary>
+    public async Task DisposeAsync()
+    {
+        if (_lifetimeLease.IsDisposed && _lifetimeDisposed) return;
+        var disposeNow = _lifetimeLease.MarkDisposed();
+        CancelLifetime();
+
+        if (!disposeNow)
+            await _fetchGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await CloseHostAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!disposeNow) _fetchGate.Release();
+            DisposeLifetime();
+        }
+    }
+
+    private void CancelLifetime()
+    {
+        try { _lifetimeSource.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void DisposeLifetime()
+    {
         lock (_gate)
         {
-            if (_disposed) return;
-            _disposed = true;
+            if (_lifetimeDisposed) return;
+            _lifetimeDisposed = true;
         }
+        try { _lifetimeSource.Dispose(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// 在 <c>_gate</c> 内登记一次抓取并取出生命周期令牌。
+    /// 取消/释放会一直等到最后一个租约归还后才关闭宿主和释放 CTS，
+    /// 因此排队中的抓取不会引用到已释放的令牌。
+    /// </summary>
+    private bool TryBeginOperation(out CancellationToken lifetimeToken)
+    {
+        if (!_lifetimeLease.TryAcquireLease())
+        {
+            lifetimeToken = default;
+            return false;
+        }
+        lifetimeToken = _lifetimeSource.Token;
+        return true;
+    }
+
+    private void CloseHostOnDispatcher()
+    {
         void CloseHost()
         {
             try { _webView?.Dispose(); }
@@ -70,24 +134,55 @@ public sealed partial class WebProxyPageFetcher : IWebProxyProvider, IDisposable
         else CloseHost();
     }
 
+    private Task CloseHostAsync()
+    {
+        void CloseHost()
+        {
+            try { _webView?.Dispose(); }
+            catch { }
+            try { _hostWindow?.Close(); }
+            catch { }
+        }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+            return dispatcher.InvokeAsync(CloseHost).Task;
+        CloseHost();
+        return Task.CompletedTask;
+    }
+
     private async Task<ProxyPageResult> FetchCoreAsync(string url, string? waitSelector, CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!PublicArticleFetcher.TryNormalizePublicUrl(url, out var target, out var error))
-            throw new InvalidOperationException(error);
-        await EnsureHostAsync(cancellationToken);
-        var core = RequireCore();
-
-        var homepageHtml = await LoadHomepageAsync(cancellationToken);
-        var token = ReadInitialToken(homepageHtml) ?? throw new InvalidOperationException("代理首页没有返回初始令牌，请稍后重试。");
-        var destination = await RequestProxyDestinationAsync(token, target.AbsoluteUri, cancellationToken);
-        var page = await WaitForProxyPageAsync(core, destination, waitSelector, cancellationToken);
-        return page with
+        // 单例宿主只有一个 WebView2，多个采集（定时 + 手动）必须串行使用，
+        // 否则导航、cookie 与读取到的 HTML 会相互覆盖。
+        var acquired = TryBeginOperation(out var lifetimeToken);
+        ObjectDisposedException.ThrowIf(!acquired, this);
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetimeToken);
+        var operationToken = linkedSource.Token;
+        await _fetchGate.WaitAsync(operationToken).ConfigureAwait(true);
+        try
         {
-            CookieHeader = await ReadCookiesAsync(core, page.FinalUrl),
-            ProviderId = Id,
-            ProviderName = DisplayName
-        };
+            if (!PublicArticleFetcher.TryNormalizePublicUrl(url, out var target, out var error))
+                throw new InvalidOperationException(error);
+            await EnsureHostAsync(operationToken);
+            var core = RequireCore();
+
+            var homepageHtml = await LoadHomepageAsync(operationToken);
+            var token = ReadInitialToken(homepageHtml) ?? throw new InvalidOperationException("代理首页没有返回初始令牌，请稍后重试。");
+            var destination = await RequestProxyDestinationAsync(token, target.AbsoluteUri, operationToken);
+            var page = await WaitForProxyPageAsync(core, destination, waitSelector, operationToken);
+            return page with
+            {
+                CookieHeader = await ReadCookiesAsync(core, page.FinalUrl),
+                ProviderId = Id,
+                ProviderName = DisplayName
+            };
+        }
+        finally
+        {
+            _fetchGate.Release();
+            if (_lifetimeLease.TryReleaseLease()) DisposeLifetime();
+        }
     }
 
     private async Task EnsureHostAsync(CancellationToken cancellationToken)
@@ -353,8 +448,11 @@ public sealed partial class WebProxyPageFetcher : IWebProxyProvider, IDisposable
 
     private async Task<string> ReadHtmlAsync(CancellationToken cancellationToken)
     {
-        var html = await ExecuteStringAsync("document.documentElement.outerHTML", ScriptTimeout, cancellationToken);
-        return html ?? "";
+        return await WebViewHtmlReader.ReadAsync(
+            RequireCore(),
+            DisplayName,
+            ScriptTimeout,
+            cancellationToken);
     }
 
     private async Task<string?> ExecuteStringAsync(string script, TimeSpan timeout, CancellationToken cancellationToken)
@@ -363,7 +461,7 @@ public sealed partial class WebProxyPageFetcher : IWebProxyProvider, IDisposable
         string raw;
         try
         {
-            raw = await core.ExecuteScriptAsync(script).WaitAsync(timeout);
+            raw = await core.ExecuteScriptAsync(script).WaitAsync(timeout, cancellationToken);
         }
         catch (TimeoutException)
         {

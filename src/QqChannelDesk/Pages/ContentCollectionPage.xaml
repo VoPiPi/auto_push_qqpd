@@ -34,7 +34,7 @@
                 <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="1.4*" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="来源" Binding="{Binding SourceHost}" Width="85" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTemplateColumn Header="状态" Width="78">
+                <DataGridTemplateColumn Header="状态" Width="96">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <Border Style="{StaticResource StatusPill}" Background="{Binding Status, Converter={StaticResource StatusSoftBrushConverter}}">
@@ -126,9 +126,15 @@
             <Button Grid.Column="1" Content="打开临时目录" Style="{StaticResource QuietButton}" Click="TgOpenTempButton_Click" VerticalAlignment="Center"/>
           </Grid>
           <Grid Grid.Row="2">
-            <DataGrid x:Name="TgGrid" AutoGenerateColumns="False" IsReadOnly="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="Cell" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid x:Name="TgGrid" AutoGenerateColumns="False" IsReadOnly="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TgGrid_SelectionChanged" PreviewMouseLeftButtonDown="TgGrid_PreviewMouseLeftButtonDown" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
-                <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="44"/>
+                <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource TableCheckBox}" PreviewMouseLeftButtonDown="TgItemSelectionCheckBox_PreviewMouseLeftButtonDown" Click="TgItemSelectionCheckBox_Click" ToolTip="选择此消息"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="序号" Binding="{Binding DisplayIndex}" IsReadOnly="True" Width="52" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="标题/正文" Binding="{Binding Summary}" IsReadOnly="True" Width="3*" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="发布时间" Binding="{Binding PublishedAtDisplay}" IsReadOnly="True" Width="96" ElementStyle="{StaticResource DataGridCellText}"/>
@@ -146,7 +152,7 @@
                 <DataGridTemplateColumn Header="操作" Width="190" IsReadOnly="True">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
-                      <StackPanel Orientation="Horizontal">
+                      <StackPanel Style="{StaticResource TableActionPanel}">
                         <Button Content="查看" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Click="TgViewButton_Click"/>
                         <Button Content="删除" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDeleteRowButton_Click"/>
                         <Button Content="入库" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDraftRowButton_Click" IsEnabled="{Binding CanMaterialize}" ToolTip="确认后加入素材库"/>
@@ -187,17 +193,28 @@
               <TextBlock Grid.Row="1" Text="每 2 分钟检查一次；新消息会下载媒体并加入素材库，已入库内容自动跳过。" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
             </StackPanel>
           </Border>
-          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
             <DataGrid.Columns>
               <DataGridTextColumn Header="采集地址" Binding="{Binding ChannelUrl}" Width="1.7*" ElementStyle="{StaticResource DataGridCellText}"/>
-              <DataGridTextColumn Header="执行计划" Binding="{Binding CronDisplay}" Width="1.1*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="执行计划" Binding="{Binding CronDisplay}" Width="82" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="采集数量" Binding="{Binding MessageLimitDisplay}" Width="88" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="分发目标" Binding="{Binding DistributionDisplay}" Width="1.3*" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTemplateColumn Header="状态" Width="86"><DataGridTemplateColumn.CellTemplate><DataTemplate><Border Style="{StaticResource StatusPill}" Background="{Binding EnabledLabel, Converter={StaticResource StatusSoftBrushConverter}}"><TextBlock Text="{Binding EnabledLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding EnabledLabel, Converter={StaticResource StatusStrongBrushConverter}}"/></Border></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
               <DataGridTextColumn Header="下次执行" Binding="{Binding NextRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="最近采集" Binding="{Binding LastRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="结果" Binding="{Binding ResultDisplay}" Width="1.5*" ElementStyle="{StaticResource DataGridCellText}"/>
-              <DataGridTemplateColumn Header="操作" Width="280"><DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal"><Button Content="{Binding RunLabel}" IsEnabled="{Binding CanRun}" Style="{StaticResource TableLinkButton}" Click="TgScheduleRunButton_Click" ToolTip="开始对该频道执行一次采集；进行中再次点击可取消"/><Button Content="编辑" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleEditButton_Click"/><Button Content="{Binding ToggleLabel}" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleToggleButton_Click" ToolTip="暂停或恢复该频道的定时采集"/><Button Content="删除" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleDeleteButton_Click"/></StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="操作" Width="200">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <StackPanel Style="{StaticResource TableActionPanel}">
+                      <Button Content="{Binding RunLabel}" IsEnabled="{Binding CanRun}" Style="{StaticResource TableLinkButton}" Click="TgScheduleRunButton_Click" ToolTip="开始对该频道执行一次采集；进行中再次点击可取消"/>
+                      <Button Content="编辑" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleEditButton_Click"/>
+                      <Button Content="{Binding ToggleLabel}" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleToggleButton_Click" ToolTip="暂停或恢复该频道的定时采集"/>
+                      <Button Content="删除" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleDeleteButton_Click"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
             </DataGrid.Columns>
           </DataGrid>
           <Grid Grid.Row="2" Margin="0,10,0,0">
@@ -258,12 +275,12 @@
             </StackPanel>
           </Grid>
           <Grid Grid.Row="3">
-            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" IsReadOnly="False" HeadersVisibility="Column" HorizontalAlignment="Stretch" Width="Auto" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="ProxyNodesGrid_SelectionChanged" PreviewMouseLeftButtonDown="ProxyNodesGrid_PreviewMouseLeftButtonDown" IsReadOnly="False" HeadersVisibility="Column" HorizontalAlignment="Stretch" Width="Auto" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
                 <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
-                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" Focusable="False" Click="ProxyNodeSelectionCheckBox_Click" ToolTip="选择此节点"/>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource TableCheckBox}" PreviewMouseLeftButtonDown="ProxyNodeSelectionCheckBox_PreviewMouseLeftButtonDown" Click="ProxyNodeSelectionCheckBox_Click" ToolTip="选择此节点"/>
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
@@ -295,7 +312,7 @@
                 <DataGridTemplateColumn Header="操作" Width="142">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
-                      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                      <StackPanel Style="{StaticResource TableActionPanel}">
                         <Button Content="测试" Style="{StaticResource TableLinkButton}" Click="ProxyRowHealthButton_Click" ToolTip="测试节点是否可用"/>
                         <Button Content="TG" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowTgButton_Click" ToolTip="使用此代理节点验证 TG 频道"/>
                         <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowDeleteButton_Click" ToolTip="从当前代理源删除此节点"/>

@@ -11,6 +11,10 @@
     <ApplicationIcon>min_logo.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <!-- 同时作为 WPF 资源嵌入，托盘图标按小图标尺寸读取同一份 ico，保证与软件图标一致。 -->
+    <Resource Include="min_logo.ico" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="HtmlAgilityPack" Version="1.11.71" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
     <PackageReference Include="SharpCompress" Version="0.39.0" />

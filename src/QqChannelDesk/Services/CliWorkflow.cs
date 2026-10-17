@@ -15,6 +15,9 @@ public sealed class CliWorkflow
     private readonly string? _cliEntryPoint;
     private readonly string _nodeExecutable;
     private readonly FfmpegManager _ffmpegManager;
+    private readonly SemaphoreSlim _runtimeLock = new(1, 1);
+    private string? _resolvedNodeExecutable;
+    private string? _resolvedCliEntryPoint;
 
     public CliWorkflow(
         string? cliEntryPoint = null,
@@ -22,7 +25,7 @@ public sealed class CliWorkflow
         AppLogger? logger = null,
         FfmpegManager? ffmpegManager = null)
     {
-        _cliEntryPoint = cliEntryPoint;
+        _cliEntryPoint = NodeRuntimeLocator.ResolveConfiguredExecutable(cliEntryPoint);
         _nodeExecutable = nodeExecutable;
         _logger = logger ?? AppLogger.Instance;
         _ffmpegManager = ffmpegManager ?? new FfmpegManager();
@@ -54,7 +57,16 @@ public sealed class CliWorkflow
 
     public async Task<LoginResult> PollLoginAsync(CancellationToken cancellationToken = default)
     {
-        var result = await RunCliAsync(["login", "poll-token", "--json"], LoginTimeout, cancellationToken);
+        ProcessResult result;
+        try
+        {
+            result = await RunCliAsync(["login", "poll-token", "--json"], LoginTimeout, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.Debug("用户取消 CLI 扫码授权轮询。");
+            return new LoginResult(false, "已取消扫码授权。", true);
+        }
         if (cancellationToken.IsCancellationRequested)
         {
             _logger.Debug("用户取消 CLI 扫码授权轮询。");
@@ -341,12 +353,14 @@ public sealed class CliWorkflow
 
     private async Task<ProcessResult> RunCliAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var cli = _cliEntryPoint ?? await FindCliEntryPointAsync(cancellationToken);
-        if (cli is null) return new ProcessResult(null, "", "未找到频道工具（tencent-channel-cli），请先安装后重试。", false);
+        var runtime = await ResolveRuntimeAsync(cancellationToken).ConfigureAwait(false);
+        if (runtime.ErrorMessage.Length > 0)
+            return new ProcessResult(null, "", runtime.ErrorMessage, false);
+
         var info = new ProcessStartInfo
         {
-            FileName = _nodeExecutable,
-            WorkingDirectory = Path.GetDirectoryName(cli)!,
+            FileName = runtime.NodeExecutable!,
+            WorkingDirectory = Path.GetDirectoryName(runtime.CliEntryPoint)!,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -358,7 +372,7 @@ public sealed class CliWorkflow
             ? path
             : Environment.GetEnvironmentVariable("PATH");
         info.Environment["PATH"] = await _ffmpegManager.BuildCliPathAsync(inheritedPath, cancellationToken).ConfigureAwait(false);
-        info.ArgumentList.Add(cli);
+        info.ArgumentList.Add(runtime.CliEntryPoint!);
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
 
         using var process = new Process { StartInfo = info };
@@ -375,53 +389,107 @@ public sealed class CliWorkflow
         timeoutSource.CancelAfter(timeout);
         try
         {
-            var stdout = process.StandardOutput.ReadToEndAsync(timeoutSource.Token);
-            var stderr = process.StandardError.ReadToEndAsync(timeoutSource.Token);
-            await process.WaitForExitAsync(timeoutSource.Token);
-            return new ProcessResult(process.ExitCode, await stdout, await stderr, false);
+            var output = await LimitedProcessOutputReader.ReadAsync(process, timeoutSource.Token);
+            return new ProcessResult(process.ExitCode, output.StandardOutput, output.StandardError, false);
+        }
+        catch (ProcessOutputLimitExceededException ex)
+        {
+            return new ProcessResult(null, "", SafeText(ex.Message), false);
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            cancellationToken.ThrowIfCancellationRequested();
             return new ProcessResult(null, "", "", true);
         }
     }
 
-    private static async Task<string?> FindCliEntryPointAsync(CancellationToken cancellationToken)
+    private async Task<CliRuntimeResolution> ResolveRuntimeAsync(CancellationToken cancellationToken)
+    {
+        await _runtimeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _resolvedNodeExecutable ??= NodeRuntimeLocator.ResolveConfiguredExecutable(_nodeExecutable)
+                ?? NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+            if (_resolvedNodeExecutable is null)
+                return new CliRuntimeResolution(null, null, "未找到 Node.js，请先安装后重试。");
+
+            _resolvedCliEntryPoint ??= _cliEntryPoint
+                ?? await FindCliEntryPointAsync(_resolvedNodeExecutable, cancellationToken).ConfigureAwait(false);
+            if (_resolvedCliEntryPoint is null)
+                return new CliRuntimeResolution(_resolvedNodeExecutable, null, "未找到频道工具（tencent-channel-cli），请先安装后重试。");
+
+            return new CliRuntimeResolution(_resolvedNodeExecutable, _resolvedCliEntryPoint, string.Empty);
+        }
+        finally
+        {
+            _runtimeLock.Release();
+        }
+    }
+
+    private static async Task<string?> FindCliEntryPointAsync(string nodeExecutable, CancellationToken cancellationToken)
     {
         var candidates = new List<string>();
-        var pathEntries = (Environment.GetEnvironmentVariable("PATH") ?? "")
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var entry in pathEntries)
+        var npmCli = NodeRuntimeLocator.FindNpmCliPath(nodeExecutable);
+        if (npmCli is not null)
         {
-            var node = Path.Combine(entry.Trim('"'), OperatingSystem.IsWindows() ? "node.exe" : "node");
-            if (!File.Exists(node)) continue;
-            var npmCli = Path.Combine(Path.GetDirectoryName(node)!, "node_modules", "npm", "bin", "npm-cli.js");
-            if (!File.Exists(npmCli)) continue;
-            var root = await RunNodeAsync(npmCli, ["root", "-g"], cancellationToken);
+            var root = await RunNodeAsync(nodeExecutable, npmCli, ["root", "-g"], cancellationToken).ConfigureAwait(false);
             if (root.ExitCode == 0)
             {
                 var globalRoot = root.StandardOutput.Trim();
-                if (globalRoot.Length > 0) candidates.Add(Path.Combine(globalRoot, "tencent-channel-cli", "bin", "tencent-channel-cli"));
+                if (globalRoot.Length > 0 && Path.IsPathRooted(globalRoot))
+                    candidates.Add(Path.Combine(globalRoot, "tencent-channel-cli", "bin", "tencent-channel-cli"));
             }
         }
-        candidates.Add(Path.Combine(Environment.CurrentDirectory, "node_modules", "tencent-channel-cli", "bin", "tencent-channel-cli"));
+
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "node_modules", "tencent-channel-cli", "bin", "tencent-channel-cli"));
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates
+            .Where(File.Exists)
+            .Select(Path.GetFullPath)
+            .FirstOrDefault();
     }
 
-    private static async Task<ProcessResult> RunNodeAsync(string script, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    private static async Task<ProcessResult> RunNodeAsync(
+        string nodeExecutable,
+        string script,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
     {
-        var info = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8, CreateNoWindow = true };
+        var info = new ProcessStartInfo(nodeExecutable)
+        {
+            WorkingDirectory = AppContext.BaseDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            CreateNoWindow = true
+        };
         info.ArgumentList.Add(script);
         foreach (var arg in args) info.ArgumentList.Add(arg);
         using var process = Process.Start(info);
         if (process is null) return new ProcessResult(null, "", "", false);
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        return new ProcessResult(process.ExitCode, await stdout, await stderr, false);
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(ShortTimeout);
+        try
+        {
+            var output = await LimitedProcessOutputReader.ReadAsync(process, timeoutSource.Token);
+            return new ProcessResult(process.ExitCode, output.StandardOutput, output.StandardError, false);
+        }
+        catch (ProcessOutputLimitExceededException ex)
+        {
+            return new ProcessResult(null, "", SafeText(ex.Message), false);
+        }
+        catch (OperationCanceledException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ProcessResult(null, "", "", true);
+        }
     }
+
+    private sealed record CliRuntimeResolution(
+        string? NodeExecutable,
+        string? CliEntryPoint,
+        string ErrorMessage);
 
     private static JsonDocument ParseLastJson(string output) => TryParseJson(output) ??
         throw new InvalidOperationException("频道工具返回格式无法识别，请重新登录或查看运行日志。");

@@ -58,6 +58,69 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Contains("新增 3 条", saved.LastError);
     }
 
+    [Fact]
+    public async Task CollectionStore_ReadsRulesForMultipleSchedulesAndKeepsAccountScope()
+    {
+        var context = new AccountContext();
+        context.Set(CurrentAccountIdentity.Create("global-a", "account-a"));
+        var store = new TelegramCollectionStore(_databasePath, context);
+        var first = await SaveScheduleAsync(store, "first");
+        var second = await SaveScheduleAsync(store, "second");
+        var withoutRules = await SaveScheduleAsync(store, "no-rules");
+        await store.ReplaceRulesAsync(first, [Rule("text")]);
+        await store.ReplaceRulesAsync(second, [Rule("image"), Rule("video")]);
+
+        var grouped = await store.GetRulesByScheduleIdsAsync([first, second, withoutRules]);
+
+        Assert.Equal(2, grouped.Count);
+        Assert.Single(grouped[first]);
+        Assert.Equal(2, grouped[second].Count);
+        Assert.False(grouped.ContainsKey(withoutRules));
+
+        // 超出单个 SQLite 绑定参数批次的查询仍需安全执行。
+        var overflow = Enumerable.Range(0, 900).Select(index => 100_000L + index).ToArray();
+        Assert.Empty(await store.GetRulesByScheduleIdsAsync(overflow));
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "account-b"));
+        Assert.Empty(await store.GetRulesByScheduleIdsAsync([first, second]));
+    }
+
+    [Fact]
+    public async Task CollectionStore_RejectsReplacingRulesForAnotherAccountsSchedule()
+    {
+        var context = new AccountContext();
+        context.Set(CurrentAccountIdentity.Create("global-a", "account-a"));
+        var store = new TelegramCollectionStore(_databasePath, context);
+        var scheduleId = await SaveScheduleAsync(store, "account-a");
+        await store.ReplaceRulesAsync(scheduleId, [Rule("text")]);
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "account-b"));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ReplaceRulesAsync(scheduleId, [Rule("image")]));
+
+        context.Set(CurrentAccountIdentity.Create("global-a", "account-a"));
+        var rule = Assert.Single(await store.GetRulesAsync(scheduleId));
+        Assert.Equal("text", rule.MessageType);
+    }
+
+    [Fact]
+    public async Task CollectionStore_PersistsCancelledStatusWithoutOverwritingLastSuccess()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var id = await SaveScheduleAsync(store, "cancelled");
+        var lastSuccess = new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.FromHours(8));
+        await store.UpdateResultAsync(id, lastSuccess, true, 3, "上次成功");
+
+        var cancelledAt = lastSuccess.AddMinutes(10);
+        await store.UpdateResultAsync(id, cancelledAt, false, 1, "已新增 1 条，已跳过 0 条", "已取消");
+
+        var saved = Assert.Single(await store.GetAsync());
+        Assert.Equal("已取消", saved.LastStatus);
+        Assert.Equal(cancelledAt, saved.LastCollectedAt);
+        Assert.Equal(lastSuccess, saved.LastSuccessAt);
+        Assert.Equal(1, saved.LastAddedCount);
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("2026-10-12T08:00:00+08:00", true)]
@@ -119,6 +182,41 @@ public sealed class TelegramCollectionTests : IDisposable
     }
 
     [Fact]
+    public void CronSchedule_StepFromSingleValueExpandsToFieldMaximum()
+    {
+        var schedule = TelegramCronSchedule.Parse("5/15 * * * *");
+
+        var occurrence = schedule.GetNextOccurrence(new DateTime(2026, 10, 17, 8, 0, 0, DateTimeKind.Unspecified));
+        Assert.Equal(new DateTime(2026, 10, 17, 8, 5, 0), occurrence);
+
+        // 5/15 必须等价于 {5,20,35,50}，不能在 5 分之后跳到下一小时。
+        occurrence = schedule.GetNextOccurrence(new DateTime(2026, 10, 17, 8, 5, 0, DateTimeKind.Unspecified));
+        Assert.Equal(new DateTime(2026, 10, 17, 8, 20, 0), occurrence);
+        occurrence = schedule.GetNextOccurrence(new DateTime(2026, 10, 17, 8, 50, 0, DateTimeKind.Unspecified));
+        Assert.Equal(new DateTime(2026, 10, 17, 9, 5, 0), occurrence);
+    }
+
+    [Fact]
+    public void CronSchedule_FindsLeapDayBeyondOneYear()
+    {
+        var schedule = TelegramCronSchedule.Parse("0 9 29 2 *");
+        var occurrence = schedule.GetNextOccurrence(new DateTime(2025, 3, 1, 0, 0, 0, DateTimeKind.Unspecified));
+
+        Assert.Equal(new DateTime(2028, 2, 29, 9, 0, 0), occurrence);
+    }
+
+    [Fact]
+    public void CronSchedule_DoesNotRepeatImmediatelyAfterExecution()
+    {
+        var schedule = TelegramCronSchedule.Parse("0 9 * * *");
+        var lastRun = new DateTimeOffset(2026, 10, 17, 9, 0, 0, TimeSpan.FromHours(8));
+
+        Assert.False(schedule.IsDue(lastRun, lastRun));
+        Assert.False(schedule.IsDue(lastRun, lastRun.AddMinutes(1)));
+        Assert.True(schedule.IsDue(lastRun, lastRun.AddDays(1)));
+    }
+
+    [Fact]
     public void TelegramDistributionRules_MatchKeywordsAndUseFirstMatchingRule()
     {
         var message = new TelegramChannelMessage(
@@ -149,6 +247,13 @@ public sealed class TelegramCollectionTests : IDisposable
     private static TelegramCollectionSchedule Schedule(string type, int frequencyValue = 1, int weekday = 1, string triggerTime = "00:00") =>
         new(1, "https://t.me/s/channel", "channel", 24, true, "auto", 50, "", null, null, "从未采集", "", 0,
             DateTimeOffset.Now, DateTimeOffset.Now, type, frequencyValue, weekday, triggerTime);
+
+    private static Task<long> SaveScheduleAsync(TelegramCollectionStore store, string name) =>
+        store.SaveAsync(new TelegramCollectionScheduleDraft(
+            null, $"https://t.me/s/{name}", name, 24, true, WebProxySelection.Automatic, 20, ""));
+
+    private static TelegramDistributionRuleDraft Rule(string messageType) =>
+        new(messageType, "", "100", "版块", "200", "频道");
 
     [Fact]
     public async Task Materializer_SavesTelegramSourceAndSkipsDuplicateBeforeDownloading()

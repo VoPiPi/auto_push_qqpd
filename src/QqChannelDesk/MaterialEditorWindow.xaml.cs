@@ -39,7 +39,7 @@ public partial class MaterialEditorWindow : Window
                 _settingSchedule = false;
             }
         }
-        Loaded += async (_, _) => await LoadGuildsAsync();
+        Loaded += (_, _) => UiAsync.Run("素材编辑器初始化", LoadGuildsAsync);
     }
 
     private async Task LoadGuildsAsync()
@@ -87,8 +87,9 @@ public partial class MaterialEditorWindow : Window
             selectFirstWhenMissing);
     }
 
-    private async void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("素材编辑器频道切换", async () =>
+        {
         if (_loading) return;
         if (GuildCombo.SelectedItem is not ChannelChoice guild)
         {
@@ -97,10 +98,11 @@ public partial class MaterialEditorWindow : Window
         }
         try { await LoadChannelsAsync(guild, selectFirstWhenMissing: true); }
         catch (Exception ex) { FormMessage.Text = $"未能读取版块数据：{CliDiagnostics.Sanitize(ex.Message)}"; }
-    }
+        });
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("素材编辑器刷新频道", async () =>
+        {
         try
         {
             FormMessage.Text = "正在刷新频道和版块…";
@@ -110,7 +112,7 @@ public partial class MaterialEditorWindow : Window
             FormMessage.Text = "频道数据已刷新。";
         }
         catch (Exception ex) { FormMessage.Text = $"刷新未完成：{CliDiagnostics.Sanitize(ex.Message)}"; }
-    }
+        });
 
     private void MediaLinksBox_TextChanged(object sender, TextChangedEventArgs e) => InferTypeFromLinks();
 
@@ -152,8 +154,9 @@ public partial class MaterialEditorWindow : Window
         PublishTimeBox.Text = now.ToString("HH:mm:ss");
     }
 
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void SaveButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("保存素材", async () =>
+        {
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
         var links = ParseMediaLinks();
@@ -213,7 +216,7 @@ public partial class MaterialEditorWindow : Window
         Material = new MaterialDraft(_existing?.Id, title, type, content, guild?.Id ?? "", guild?.Name ?? "", channel?.Id ?? "", channel?.Name ?? "", publishAt, status, materialLink, storedLinks,
             _existing?.SourceType ?? "手工添加", _existing?.SourceUrl ?? "");
         DialogResult = true;
-    }
+        });
 
     public static string ResolveMaterialStatus(DateTimeOffset? publishAt, string? existingStatus, DateTimeOffset now)
     {

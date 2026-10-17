@@ -6,6 +6,76 @@ namespace QqChannelDesk.Tests;
 public sealed class PublishSchedulerTests
 {
     [Fact]
+    public async Task SetEnabledUpdatesStatusWithoutStoppingLoop()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-{Guid.NewGuid():N}.db");
+        var accountContext = new AccountContext();
+        accountContext.Set(CurrentAccountIdentity.Create("global", "nickname"));
+        var store = new ContentLibraryStore(databasePath, accountContext);
+        var settings = new SystemSettingsStore(databasePath);
+        var scheduler = new PublishScheduler(
+            store,
+            new ControlledPublisher(),
+            settings,
+            () => Task.FromResult(ScheduleEnvironment.Available),
+            new AppLogger(Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-log-{Guid.NewGuid():N}")));
+
+        scheduler.Start(runOverdueAtStartup: false);
+        try
+        {
+            scheduler.SetEnabled(false);
+
+            var status = scheduler.Status;
+            Assert.False(scheduler.IsEnabled);
+            Assert.False(status.Enabled);
+            Assert.True(status.Running);
+            Assert.Contains("自动执行已关闭", status.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await scheduler.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DisabledAutoExecuteStillPublishesHeartbeat()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-{Guid.NewGuid():N}.db");
+        var accountContext = new AccountContext();
+        accountContext.Set(CurrentAccountIdentity.Create("global", "nickname"));
+        var store = new ContentLibraryStore(databasePath, accountContext);
+        var settings = new SystemSettingsStore(databasePath);
+        await settings.SaveAsync(new AppSettings(AutoExecuteSchedules: false));
+        var scheduler = new PublishScheduler(
+            store,
+            new ControlledPublisher(),
+            settings,
+            () => Task.FromResult(ScheduleEnvironment.Available),
+            new AppLogger(Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-log-{Guid.NewGuid():N}")));
+
+        var disabledStatus = new TaskCompletionSource<PublishSchedulerStatus>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        scheduler.StatusChanged += status =>
+        {
+            if (status.Running && !status.Enabled) disabledStatus.TrySetResult(status);
+        };
+
+        scheduler.Start(runOverdueAtStartup: true);
+        try
+        {
+            var status = await disabledStatus.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.False(status.Enabled);
+            Assert.True(status.Running);
+            Assert.NotNull(status.LastHeartbeatAt);
+            Assert.NotNull(status.NextCheckAt);
+        }
+        finally
+        {
+            await scheduler.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task SuccessfulPublishCompletedDuringStopIsNotMislabeled()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-{Guid.NewGuid():N}.db");
@@ -48,6 +118,38 @@ public sealed class PublishSchedulerTests
         Assert.Equal(materialId, execution.MaterialId);
         Assert.Equal(ScheduleExecutionStatus.Succeeded, execution.Status);
         Assert.Equal(42, execution.PublishRecordId);
+    }
+
+    [Fact]
+    public async Task ConcurrentStartOnlyCreatesOneLoopAndStopIsIdempotent()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-{Guid.NewGuid():N}.db");
+        var accountContext = new AccountContext();
+        accountContext.Set(CurrentAccountIdentity.Create("global", "nickname"));
+        var store = new ContentLibraryStore(databasePath, accountContext);
+        var settings = new SystemSettingsStore(databasePath);
+        await settings.SaveAsync(new AppSettings(AutoExecuteSchedules: false));
+        var scheduler = new PublishScheduler(
+            store,
+            new ControlledPublisher(),
+            settings,
+            () => Task.FromResult(ScheduleEnvironment.Available),
+            new AppLogger(Path.Combine(Path.GetTempPath(), $"qq-channel-scheduler-log-{Guid.NewGuid():N}")));
+
+        // Start 同步完成状态切换，随后并发启动只应有一次生效。
+        scheduler.Start(runOverdueAtStartup: false);
+        Assert.True(scheduler.Status.Running);
+        Parallel.For(0, 8, _ => scheduler.Start(runOverdueAtStartup: false));
+
+        Assert.True(scheduler.Status.Running);
+
+        var stopResults = await Task.WhenAll(
+                scheduler.StopAsync(),
+                scheduler.StopAsync())
+            .WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.All(stopResults, Assert.True);
+        Assert.False(scheduler.Status.Running);
+        Assert.False(scheduler.Status.Paused);
     }
 
     private sealed class ControlledPublisher : IPublishExecutor

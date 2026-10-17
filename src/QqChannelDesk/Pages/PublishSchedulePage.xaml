@@ -35,7 +35,7 @@
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="计划时间" Binding="{Binding ScheduledAtDisplay}" Width="135" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="状态" Width="86">
+          <DataGridTemplateColumn Header="状态" Width="96">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">

@@ -11,6 +11,7 @@ public sealed class SystemSettingsStore
     private const string FfmpegPathKey = "ffmpeg_path";
     private const string MaterialRetentionPolicyKey = "material_retention_policy";
     private const string AutoExecuteSchedulesKey = "auto_execute_schedules";
+    private const string TelegramCollectionSchedulerEnabledKey = "telegram_collection_scheduler_enabled";
     private const string MaxScheduleConcurrencyKey = "max_schedule_concurrency";
     private const string StartWithWindowsKey = "start_with_windows";
     private const string CloseWindowBehaviorKey = "close_window_behavior";
@@ -51,6 +52,7 @@ public sealed class SystemSettingsStore
                 [FfmpegPathKey] = string.Empty,
                 [MaterialRetentionPolicyKey] = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish.ToString(),
                 [AutoExecuteSchedulesKey] = "true",
+                [TelegramCollectionSchedulerEnabledKey] = "true",
                 [MaxScheduleConcurrencyKey] = "1",
                 [StartWithWindowsKey] = "false",
                 [CloseWindowBehaviorKey] = CloseWindowBehavior.ExitApplication.ToString()
@@ -85,6 +87,7 @@ public sealed class SystemSettingsStore
             MaterialStoragePath: ReadString(values, MaterialStoragePathKey),
             MaterialRetentionPolicy: ReadRetentionPolicy(values, MaterialRetentionPolicyKey),
             AutoExecuteSchedules: ReadBoolean(values, AutoExecuteSchedulesKey),
+            TelegramCollectionSchedulerEnabled: ReadBoolean(values, TelegramCollectionSchedulerEnabledKey),
             MaxScheduleConcurrency: ReadConcurrency(values, MaxScheduleConcurrencyKey),
             StartWithWindows: ReadBoolean(values, StartWithWindowsKey),
             CloseWindowBehavior: ReadCloseWindowBehavior(values, CloseWindowBehaviorKey),
@@ -108,6 +111,8 @@ public sealed class SystemSettingsStore
             await UpsertAsync(connection, transaction, MaterialRetentionPolicyKey,
                 settings.MaterialRetentionPolicy.ToString(), cancellationToken);
             await UpsertAsync(connection, transaction, AutoExecuteSchedulesKey, settings.AutoExecuteSchedules, cancellationToken);
+            await UpsertAsync(connection, transaction, TelegramCollectionSchedulerEnabledKey,
+                settings.TelegramCollectionSchedulerEnabled, cancellationToken);
             await UpsertAsync(connection, transaction, MaxScheduleConcurrencyKey,
                 NormalizeConcurrency(settings.MaxScheduleConcurrency).ToString(), cancellationToken);
             await UpsertAsync(connection, transaction, StartWithWindowsKey, settings.StartWithWindows, cancellationToken);
@@ -244,10 +249,12 @@ public sealed record AppSettings(
     string? MaterialStoragePath = null,
     MaterialRetentionPolicy MaterialRetentionPolicy = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish,
     bool AutoExecuteSchedules = true,
+    /// <summary>发布计划的发帖并发数；TG 定时采集不读取该值，始终按单任务串行执行。</summary>
     int MaxScheduleConcurrency = 1,
     bool StartWithWindows = false,
     CloseWindowBehavior CloseWindowBehavior = CloseWindowBehavior.ExitApplication,
-    string? FfmpegPath = null)
+    string? FfmpegPath = null,
+    bool TelegramCollectionSchedulerEnabled = true)
 {
     public string EffectiveMaterialStoragePath =>
         Path.GetFullPath(string.IsNullOrWhiteSpace(MaterialStoragePath)

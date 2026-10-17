@@ -54,8 +54,9 @@ public partial class TelegramMessagePreviewWindow : Window
         }
     }
 
-    private async void LoadImagesButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void LoadImagesButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("加载 TG 图片预览", async () =>
+        {
         var images = _item.Message.Media.Where(media => media.Kind == "image").ToArray();
         if (images.Length == 0) return;
         LoadImagesButton.IsEnabled = false;
@@ -96,10 +97,11 @@ public partial class TelegramMessagePreviewWindow : Window
         {
             LoadImagesButton.IsEnabled = true;
         }
-    }
+        });
 
-    private async void DraftButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void DraftButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("TG 预览加入素材库", async () =>
+        {
         DraftButton.IsEnabled = false;
         try
         {
@@ -121,7 +123,7 @@ public partial class TelegramMessagePreviewWindow : Window
             SetStatus($"未加入素材库：{CliDiagnostics.Sanitize(ex.Message)}。请检查网络或代理后重试。", false);
             DraftButton.IsEnabled = _item.CanMaterialize;
         }
-    }
+        });
 
     private void DeleteButton_Click(object sender, RoutedEventArgs e)
     {

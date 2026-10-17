@@ -15,6 +15,7 @@ public partial class MaterialImportPreviewWindow : Window
     private readonly ObservableCollection<MaterialImportPreviewItem> _items;
     private readonly bool _templateExpired;
     private readonly IReadOnlyList<string> _resultErrors;
+    private int _closed;
 
     public MaterialImportPreviewWindow(
         MaterialTemplateParseResult result,
@@ -62,13 +63,31 @@ public partial class MaterialImportPreviewWindow : Window
     {
         if (sender is not System.Windows.Controls.ComboBox combo || combo.DataContext is not MaterialImportPreviewItem item) return;
         item.RefreshAfterGuildSelection();
-        Dispatcher.BeginInvoke(DispatcherPriority.DataBind, UpdateState);
+        ScheduleStateUpdate();
     }
 
     private void ChannelComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (sender is not System.Windows.Controls.ComboBox combo || combo.DataContext is not MaterialImportPreviewItem) return;
-        Dispatcher.BeginInvoke(DispatcherPriority.DataBind, UpdateState);
+        ScheduleStateUpdate();
+    }
+
+    private void ScheduleStateUpdate()
+    {
+        if (Volatile.Read(ref _closed) != 0 ||
+            Dispatcher.HasShutdownStarted ||
+            Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
+        UiAsync.Post(
+            Dispatcher,
+            () =>
+            {
+                if (Volatile.Read(ref _closed) == 0) UpdateState();
+            },
+            DispatcherPriority.DataBind);
     }
 
     private void PreviewGrid_BeginningEdit(object sender, System.Windows.Controls.DataGridBeginningEditEventArgs e)
@@ -76,8 +95,9 @@ public partial class MaterialImportPreviewWindow : Window
         if (e.Column is System.Windows.Controls.DataGridTextColumn) e.Cancel = true;
     }
 
-    private async void ExportErrorsButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void ExportErrorsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("导出素材导入失败项", async () =>
+        {
         var errors = ErrorRows;
         if (errors.Count == 0) return;
         var dialog = new SaveFileDialog
@@ -101,12 +121,18 @@ public partial class MaterialImportPreviewWindow : Window
                 $"{CliDiagnostics.Sanitize(ex.Message)}\n\n导出未完成；请重试或选择其他保存位置。",
                 "导出失败项", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
+        });
 
     private void ConfirmButton_Click(object sender, RoutedEventArgs e)
     {
         if (SuccessCount == 0) return;
         DialogResult = true;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        Volatile.Write(ref _closed, 1);
+        base.OnClosed(e);
     }
 }
 

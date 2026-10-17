@@ -386,6 +386,30 @@ public sealed class CliDiagnosticsTests
 
 public sealed class CliWorkflowTests
 {
+    [Fact]
+    public void IgnoresNodeExecutablePlacedInCurrentDirectory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"QqChannelNodePath-{Guid.NewGuid():N}");
+        var fakeNode = Path.Combine(directory, OperatingSystem.IsWindows() ? "node.exe" : "node");
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(fakeNode, []);
+
+        try
+        {
+            var resolved = NodeRuntimeLocator.FindNodeExecutablePath([directory], directory);
+
+            Assert.False(string.Equals(
+                Path.GetFullPath(fakeNode),
+                resolved,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(fakeNode);
+            Directory.Delete(directory);
+        }
+    }
+
     [Theory]
     [InlineData("abc", "123", "hello", "频道 ID 必须为数字。")]
     [InlineData("123", "abc", "hello", "版块 ID 必须为数字。")]
@@ -438,7 +462,7 @@ public sealed class CliWorkflowTests
     }
 
     [Fact]
-    public void AppLoggerWriteExceptionPersistsSynchronouslyAndKeepsInnerDetails()
+    public async Task AppLoggerWriteExceptionPersistsAfterFlushAndKeepsInnerDetails()
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -451,6 +475,7 @@ public sealed class CliWorkflowTests
                 "TG 请求失败，token=secret-token",
                 new HttpRequestException("代理 cookie=secret-cookie 无效"));
             logger.WriteException("代理节点 TG 验证异常", exception);
+            await logger.FlushAsync();
 
             var logFile = Path.Combine(directory, "logs", $"{DateTime.Now:yyyy-MM-dd}.log");
             Assert.True(File.Exists(logFile));

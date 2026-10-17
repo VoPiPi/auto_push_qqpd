@@ -39,7 +39,7 @@ public partial class MaterialBatchSettingsWindow : Window
             Description.Text = $"为所选的 {_selectedCount} 条素材设置目标频道与版块;仅保存目标,不立即发布。";
             TargetPanel.Visibility = Visibility.Visible;
             TimePanel.Visibility = Visibility.Collapsed;
-            Loaded += async (_, _) => await LoadGuildsAsync();
+            Loaded += (_, _) => UiAsync.Run("批量发布频道初始化", LoadGuildsAsync);
         }
         else
         {
@@ -80,11 +80,12 @@ public partial class MaterialBatchSettingsWindow : Window
         }
     }
 
-    private async void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("批量发布频道切换", async () =>
+        {
         if (_loading || GuildCombo.SelectedItem is not ChannelChoice guild) return;
         await LoadChannelsAsync(guild);
-    }
+        });
 
     private async Task LoadChannelsAsync(ChannelChoice guild)
     {

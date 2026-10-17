@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Security;
 using QqChannelDesk.Services;
 using Xunit;
 
@@ -42,13 +43,56 @@ public sealed class ProxyPoolServiceTests
     }
 
     [Fact]
-    public void ShouldIgnoreProxyCertificate_AppliesOnlyToHttpsProxyNodes()
+    public void ShouldRelaxProxyCertificate_AllowsHttpsProxyEndpointCertificateErrors()
+    {
+        var https = CreateNode("https", 8443);
+
+        Assert.True(ProxyPoolService.ShouldRelaxProxyCertificate(
+            https,
+            https.Host,
+            SslPolicyErrors.RemoteCertificateChainErrors));
+        Assert.True(ProxyPoolService.ShouldRelaxProxyCertificate(
+            https,
+            https.Host,
+            SslPolicyErrors.RemoteCertificateNameMismatch));
+    }
+
+    [Fact]
+    public void ShouldRelaxProxyCertificate_DoesNotRelaxTargetSiteOrHttpProxyErrors()
     {
         var https = CreateNode("https", 443);
         var http = CreateNode("http", 8080);
 
-        Assert.True(ProxyPoolService.ShouldIgnoreProxyCertificate(https));
-        Assert.False(ProxyPoolService.ShouldIgnoreProxyCertificate(http));
+        Assert.False(ProxyPoolService.ShouldRelaxProxyCertificate(
+            https,
+            "api.example.com",
+            SslPolicyErrors.RemoteCertificateChainErrors));
+        Assert.False(ProxyPoolService.ShouldRelaxProxyCertificate(
+            http,
+            http.Host,
+            SslPolicyErrors.RemoteCertificateChainErrors));
+    }
+
+    [Fact]
+    public void ShouldRelaxProxyCertificate_RejectsUnavailableCertificate()
+    {
+        var https = CreateNode("https", 8443);
+
+        Assert.False(ProxyPoolService.ShouldRelaxProxyCertificate(
+            https,
+            https.Host,
+            SslPolicyErrors.RemoteCertificateNotAvailable));
+    }
+
+    [Fact]
+    public void ShouldRelaxProxyCertificate_AcceptsValidCertificateForAnyHost()
+    {
+        var http = CreateNode("http", 8080);
+
+        Assert.True(ProxyPoolService.ShouldRelaxProxyCertificate(
+            http,
+            "api.example.com",
+            SslPolicyErrors.None));
     }
 
     [Fact]

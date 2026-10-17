@@ -139,7 +139,7 @@
                   <DataGridTemplateColumn Header="操作" Width="118">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
-                        <StackPanel Orientation="Horizontal">
+                        <StackPanel Style="{StaticResource TableActionPanel}">
                           <Button Content="编辑" Style="{StaticResource TableLinkButton}"
                                   Click="RuleEditButton_Click"/>
                           <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0"

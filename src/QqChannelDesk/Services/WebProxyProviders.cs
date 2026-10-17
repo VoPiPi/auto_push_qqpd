@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -53,6 +54,30 @@ public sealed class WebProxyProviderRegistry
             .Concat(_providers.Select(provider => new WebProxyOption(provider.Id, provider.DisplayName)))
             .ToArray();
 
+    internal static async Task DisposeDefaultProvidersAsync()
+    {
+        Exception? firstError = null;
+        foreach (var dispose in new Func<Task>[]
+        {
+            WebProxyPageFetcher.Default.DisposeAsync,
+            CoProxyWebProxyProvider.DisposeSharedBrowserAsync,
+            LumiProxyWebProxyProvider.DisposeSharedBrowserAsync
+        })
+        {
+            try
+            {
+                await dispose().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex;
+            }
+        }
+
+        if (firstError is not null)
+            ExceptionDispatchInfo.Capture(firstError).Throw();
+    }
+
     public WebProxySelection ParseSelection(string text, string? selectedValue = null)
     {
         var trimmed = (text ?? "").Trim();
@@ -102,6 +127,7 @@ public sealed class WebProxyProviderRegistry
 public abstract class HttpWebProxyProviderBase : IWebProxyProvider
 {
     private static readonly HttpClient Client = CreateClient();
+    private const int MaxHtmlBytes = 5_000_000;
 
     public abstract string Id { get; }
     public abstract string DisplayName { get; }
@@ -116,7 +142,7 @@ public abstract class HttpWebProxyProviderBase : IWebProxyProvider
         string providerName,
         CancellationToken cancellationToken)
     {
-        using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"{providerName} 返回 HTTP {(int)response.StatusCode}。");
         var mediaType = response.Content.Headers.ContentType?.MediaType;
@@ -124,13 +150,31 @@ public abstract class HttpWebProxyProviderBase : IWebProxyProvider
             !mediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase) &&
             !mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"{providerName} 返回的不是 HTML 页面。");
-        var html = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (response.Content.Headers.ContentLength is > MaxHtmlBytes)
+            throw new InvalidOperationException($"{providerName} 返回页面超过 {MaxHtmlBytes / 1_000_000} MB。");
+        var html = await ReadLimitedTextAsync(response.Content, MaxHtmlBytes, cancellationToken);
         if (string.IsNullOrWhiteSpace(html)) throw new InvalidOperationException($"{providerName} 返回了空页面。");
         var finalUrl = response.RequestMessage?.RequestUri?.AbsoluteUri ?? request.RequestUri?.AbsoluteUri ?? "";
         var cookies = response.Headers.TryGetValues("Set-Cookie", out var values)
             ? string.Join("; ", values.Select(value => value.Split(';', 2)[0]))
             : "";
         return new ProxyPageResult(html, finalUrl, cookies, providerId, providerName);
+    }
+
+    private static async Task<string> ReadLimitedTextAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken);
+            if (read == 0) break;
+            if (buffer.Length + read > maxBytes)
+                throw new InvalidOperationException($"页面内容超过 {maxBytes / 1_000_000} MB 限制。");
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private static HttpClient CreateClient()
@@ -167,6 +211,8 @@ public sealed class CoProxyWebProxyProvider : HttpWebProxyProviderBase
             activateInlineProxyScript: true);
     }
 
+    internal static Task DisposeSharedBrowserAsync() => Browser.DisposeAsync();
+
     private static readonly WebProxyBrowserHost Browser = new();
 }
 
@@ -200,6 +246,8 @@ public sealed class LumiProxyWebProxyProvider : HttpWebProxyProviderBase
             navigateFromBootstrap: true);
     }
 
+    internal static Task DisposeSharedBrowserAsync() => Browser.DisposeAsync();
+
     private static readonly WebProxyBrowserHost Browser = new();
 
     private static string EnsureHttps(string value) =>
@@ -218,9 +266,12 @@ internal sealed class WebProxyBrowserHost : IDisposable
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _fetchGate = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeSource = new();
+    private readonly OperationLeaseTracker _lifetimeLease = new();
     private Window? _window;
     private WebView2? _webView;
-    private bool _disposed;
+    private bool _lifetimeDisposed;
 
     public Task<ProxyPageResult> FetchAsync(
         Uri entryUri,
@@ -262,11 +313,70 @@ internal sealed class WebProxyBrowserHost : IDisposable
 
     public void Dispose()
     {
+        if (_lifetimeLease.IsDisposed && _lifetimeDisposed) return;
+        var closeNow = _lifetimeLease.MarkDisposed();
+
+        CancelLifetime();
+        if (closeNow) DisposeLifetime();
+        CloseHostOnDispatcher();
+    }
+
+    /// <summary>
+    /// 取消在途抓取并等待 WebView2 宿主空闲后再释放。
+    /// </summary>
+    public async Task DisposeAsync()
+    {
+        if (_lifetimeLease.IsDisposed && _lifetimeDisposed) return;
+        var disposeNow = _lifetimeLease.MarkDisposed();
+        CancelLifetime();
+
+        if (!disposeNow)
+            await _fetchGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await CloseHostAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!disposeNow) _fetchGate.Release();
+            DisposeLifetime();
+        }
+    }
+
+    private void CancelLifetime()
+    {
+        try { _lifetimeSource.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void DisposeLifetime()
+    {
         lock (_gate)
         {
-            if (_disposed) return;
-            _disposed = true;
+            if (_lifetimeDisposed) return;
+            _lifetimeDisposed = true;
         }
+        try { _lifetimeSource.Dispose(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// 在 <c>_gate</c> 内登记一次抓取并取出生命周期令牌；释放会等到最后一个租约归还，
+    /// 避免排队中的抓取引用已释放的 CTS。
+    /// </summary>
+    private bool TryBeginOperation(out CancellationToken lifetimeToken)
+    {
+        if (!_lifetimeLease.TryAcquireLease())
+        {
+            lifetimeToken = default;
+            return false;
+        }
+        lifetimeToken = _lifetimeSource.Token;
+        return true;
+    }
+
+    private void CloseHostOnDispatcher()
+    {
         void Close()
         {
             try { _webView?.Dispose(); } catch { }
@@ -275,6 +385,21 @@ internal sealed class WebProxyBrowserHost : IDisposable
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is not null && !dispatcher.CheckAccess()) dispatcher.Invoke(Close);
         else Close();
+    }
+
+    private Task CloseHostAsync()
+    {
+        void Close()
+        {
+            try { _webView?.Dispose(); } catch { }
+            try { _window?.Close(); } catch { }
+        }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+            return dispatcher.InvokeAsync(Close).Task;
+        Close();
+        return Task.CompletedTask;
     }
 
     private async Task<ProxyPageResult> FetchCoreAsync(
@@ -289,20 +414,33 @@ internal sealed class WebProxyBrowserHost : IDisposable
         bool activateInlineProxyScript,
         bool navigateFromBootstrap)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await EnsureHostAsync(cancellationToken);
-        var core = _webView?.CoreWebView2 ?? throw new InvalidOperationException("WebView2 尚未初始化。");
-        var requestBody = body is null ? null : await body.WaitAsync(cancellationToken);
-        if (bootstrapUri is not null)
+        // 静态宿主只有一个 WebView2，多个采集必须串行使用，避免导航与 cookie 相互覆盖。
+        var acquired = TryBeginOperation(out var lifetimeToken);
+        ObjectDisposedException.ThrowIf(!acquired, this);
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetimeToken);
+        var operationToken = linkedSource.Token;
+        await _fetchGate.WaitAsync(operationToken).ConfigureAwait(true);
+        try
         {
-            await NavigateAsync(core, bootstrapUri, HttpMethod.Get, null, cancellationToken, providerName);
-            await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken);
+            await EnsureHostAsync(operationToken);
+            var core = _webView?.CoreWebView2 ?? throw new InvalidOperationException("WebView2 尚未初始化。");
+            var requestBody = body is null ? null : await body.WaitAsync(operationToken);
+            if (bootstrapUri is not null)
+            {
+                await NavigateAsync(core, bootstrapUri, HttpMethod.Get, null, operationToken, providerName);
+                await Task.Delay(TimeSpan.FromMilliseconds(350), operationToken);
+            }
+            if (navigateFromBootstrap && method == HttpMethod.Get)
+                await NavigateFromCurrentPageAsync(core, entryUri, operationToken, providerName);
+            else
+                await NavigateAsync(core, entryUri, method, requestBody, operationToken, providerName);
+            return await WaitForPageAsync(core, providerId, providerName, waitSelector, operationToken, activateInlineProxyScript);
         }
-        if (navigateFromBootstrap && method == HttpMethod.Get)
-            await NavigateFromCurrentPageAsync(core, entryUri, cancellationToken, providerName);
-        else
-            await NavigateAsync(core, entryUri, method, requestBody, cancellationToken, providerName);
-        return await WaitForPageAsync(core, providerId, providerName, waitSelector, cancellationToken, activateInlineProxyScript);
+        finally
+        {
+            _fetchGate.Release();
+            if (_lifetimeLease.TryReleaseLease()) DisposeLifetime();
+        }
     }
 
     private async Task EnsureHostAsync(CancellationToken cancellationToken)
@@ -481,7 +619,7 @@ internal sealed class WebProxyBrowserHost : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var raw = await core.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30));
+                var raw = await core.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
                 if (!string.IsNullOrWhiteSpace(raw) && raw is not "null")
                 {
                     var state = JsonSerializer.Deserialize<string>(raw);
@@ -501,10 +639,12 @@ internal sealed class WebProxyBrowserHost : IDisposable
 
                         if (root.GetProperty("ready").GetBoolean())
                         {
-                            var htmlRaw = await core.ExecuteScriptAsync("document.documentElement.outerHTML").WaitAsync(TimeSpan.FromSeconds(30));
-                            var html = JsonSerializer.Deserialize<string>(htmlRaw) ?? "";
+                            var html = await WebViewHtmlReader.ReadAsync(
+                                core,
+                                providerName,
+                                TimeSpan.FromSeconds(30),
+                                cancellationToken);
                             var finalUrl = root.GetProperty("href").GetString() ?? "";
-                            if (string.IsNullOrWhiteSpace(html)) throw new InvalidOperationException($"{providerName} 返回空页面。");
                             var cookies = await ReadCookiesAsync(core, finalUrl);
                             return new ProxyPageResult(html, finalUrl, cookies, providerId, providerName);
                         }
@@ -544,7 +684,7 @@ internal sealed class WebProxyBrowserHost : IDisposable
                 return true;
             })()
             """;
-        var raw = await core.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30));
+        var raw = await core.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
         return string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(raw, "true\r\n", StringComparison.OrdinalIgnoreCase);
     }

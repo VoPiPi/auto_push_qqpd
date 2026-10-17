@@ -240,9 +240,55 @@ public sealed class TelegramCollectionStore
         AddAccountParameter(command, accountKey);
         var rules = new List<TelegramDistributionRule>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            rules.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetInt32(8), DateTimeOffset.Parse(reader.GetString(9)), DateTimeOffset.Parse(reader.GetString(10))));
+        while (await reader.ReadAsync(cancellationToken)) rules.Add(ReadRule(reader));
         return rules;
+    }
+
+    /// <summary>
+    /// 一次读取多个 Schedule 的分发规则（按 ScheduleId 分组），避免界面按 Schedule 逐个查询造成 N+1。
+    /// 未命中的 Schedule 不会出现在结果字典里，调用方按“无规则”处理即可。
+    /// </summary>
+    public async Task<IReadOnlyDictionary<long, IReadOnlyList<TelegramDistributionRule>>> GetRulesByScheduleIdsAsync(
+        IReadOnlyCollection<long> scheduleIds,
+        CancellationToken cancellationToken = default)
+    {
+        var grouped = new Dictionary<long, IReadOnlyList<TelegramDistributionRule>>();
+        if (scheduleIds is null || scheduleIds.Count == 0) return grouped;
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return grouped;
+        var ids = scheduleIds.Where(id => id > 0).Distinct().ToArray();
+        if (ids.Length == 0) return grouped;
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        // SQLite 绑定参数数量有上限，按固定大小分批查询，避免配置很多频道时 SQL 过长。
+        foreach (var batch in ids.Chunk(400))
+        {
+            await using var command = connection.CreateCommand();
+            var names = batch.Select((_, index) => $"$id{index}").ToArray();
+            command.CommandText = $"""
+                SELECT Id, ScheduleId, MessageType, Keyword, GuildId, GuildName, ChannelId, ChannelName,
+                       SortOrder, CreatedAt, UpdatedAt
+                FROM TelegramCollectionDistributionRules
+                WHERE ScheduleId IN ({string.Join(", ", names)}) AND {Scope("AccountKey")}
+                ORDER BY ScheduleId, SortOrder, Id;
+                """;
+            for (var index = 0; index < batch.Length; index++) command.Parameters.AddWithValue(names[index], batch[index]);
+            AddAccountParameter(command, accountKey);
+            var buckets = new Dictionary<long, List<TelegramDistributionRule>>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var rule = ReadRule(reader);
+                if (!buckets.TryGetValue(rule.ScheduleId, out var bucket))
+                {
+                    bucket = [];
+                    buckets[rule.ScheduleId] = bucket;
+                }
+                bucket.Add(rule);
+            }
+            foreach (var pair in buckets) grouped[pair.Key] = pair.Value;
+        }
+        return grouped;
     }
 
     public async Task ReplaceRulesAsync(long scheduleId, IReadOnlyList<TelegramDistributionRuleDraft> rules, CancellationToken cancellationToken = default)
@@ -251,6 +297,15 @@ public sealed class TelegramCollectionStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
+        await using (var scheduleScope = connection.CreateCommand())
+        {
+            scheduleScope.Transaction = transaction;
+            scheduleScope.CommandText = $"SELECT 1 FROM TelegramCollectionSchedules WHERE Id=$scheduleId AND {Scope("AccountKey")} LIMIT 1;";
+            scheduleScope.Parameters.AddWithValue("$scheduleId", scheduleId);
+            AddAccountParameter(scheduleScope, accountKey);
+            if (await scheduleScope.ExecuteScalarAsync(cancellationToken) is null)
+                throw new InvalidOperationException("TG 定时采集配置不存在。");
+        }
         await using (var delete = connection.CreateCommand())
         {
             delete.Transaction = transaction;
@@ -294,6 +349,7 @@ public sealed class TelegramCollectionStore
         bool succeeded,
         int addedCount,
         string error,
+        string? status = null,
         CancellationToken cancellationToken = default)
     {
         var accountKey = RequireAccountKey();
@@ -309,7 +365,7 @@ public sealed class TelegramCollectionStore
             """;
         command.Parameters.AddWithValue("$collected", collectedAt.ToString("O"));
         command.Parameters.AddWithValue("$success", succeeded ? 1 : 0);
-        command.Parameters.AddWithValue("$status", succeeded ? "成功" : "失败");
+        command.Parameters.AddWithValue("$status", string.IsNullOrWhiteSpace(status) ? (succeeded ? "成功" : "失败") : status.Trim());
         command.Parameters.AddWithValue("$error", error ?? "");
         command.Parameters.AddWithValue("$count", addedCount);
         command.Parameters.AddWithValue("$now", now);
@@ -474,6 +530,11 @@ public sealed class TelegramCollectionStore
         reader.GetString(5), reader.GetInt32(6), reader.GetString(7), ParseDate(reader, 8), ParseDate(reader, 9),
         reader.GetString(10), reader.GetString(11), reader.GetInt32(12), DateTimeOffset.Parse(reader.GetString(13)), DateTimeOffset.Parse(reader.GetString(14)),
         reader.GetString(15), reader.GetInt32(16), reader.GetInt32(17), reader.GetString(18), reader.GetString(19));
+
+    private static TelegramDistributionRule ReadRule(SqliteDataReader reader) => new(
+        reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+        reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetInt32(8),
+        DateTimeOffset.Parse(reader.GetString(9)), DateTimeOffset.Parse(reader.GetString(10)));
 
     private static DateTimeOffset? ParseDate(SqliteDataReader reader, int index) => reader.IsDBNull(index) ? null : DateTimeOffset.Parse(reader.GetString(index));
 

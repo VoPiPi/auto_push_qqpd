@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Security;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -19,8 +22,12 @@ public sealed class ProxyPoolService
     public const int DefaultConcurrency = 10;
     public const int MaxConcurrency = 50;
     public const string TelegramProbeUrl = "https://t.me/s/TGWenAnGuan";
+    private const int MaxSourceBytes = 5_000_000;
     private const string CountryProbeUrl = "https://ipwho.is/";
     private const string IpProbeFallbackUrl = "https://api.ipify.org?format=json";
+    private const SslPolicyErrors RelaxableProxyCertificateErrors =
+        SslPolicyErrors.RemoteCertificateChainErrors |
+        SslPolicyErrors.RemoteCertificateNameMismatch;
     private static readonly Regex NodePattern = new(@"^(?:(?<scheme>https?)://)?(?<host>\[[^\]]+\]|[^:/\s]+):(?<port>\d{1,5})(?::(?<country>[A-Za-z]{2,3}))?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly ProxyPoolStore _store;
     private readonly HttpClient _sourceClient;
@@ -47,8 +54,8 @@ public sealed class ProxyPoolService
             progress?.Invoke($"正在获取 {source.DisplayName}…");
             using var response = await _sourceClient.GetAsync(source.SourceUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is > 5_000_000) throw new InvalidOperationException("代理源文件超过 5 MB。");
-            var text = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (response.Content.Headers.ContentLength is > MaxSourceBytes) throw new InvalidOperationException("代理源文件超过 5 MB。");
+            var text = await ReadLimitedTextAsync(response.Content, MaxSourceBytes, cancellationToken);
             var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var candidates = lines.Select(ParseHttpCandidate).Where(item => item is not null).Cast<ProxyNodeCandidate>().DistinctBy(item => $"{item.Scheme}|{item.Host}|{item.Port}", StringComparer.OrdinalIgnoreCase).ToArray();
             await _store.ApplyFetchedNodesAsync(source, candidates, cancellationToken);
@@ -165,8 +172,20 @@ public sealed class ProxyPoolService
         return new ProxyNodeCandidate(value, scheme, host, port, match.Groups["country"].Value.ToUpperInvariant());
     }
 
-    internal static bool ShouldIgnoreProxyCertificate(ProxyNode node) =>
-        string.Equals(node.Scheme, "https", StringComparison.OrdinalIgnoreCase);
+    internal static bool ShouldRelaxProxyCertificate(ProxyNode node, string? targetHostName, SslPolicyErrors errors)
+    {
+        if (errors == SslPolicyErrors.None) return true;
+        if (!string.Equals(node.Scheme, "https", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var expectedProxyHost = NormalizeHost(GetProxyHost(node));
+        var actualTargetHost = NormalizeHost(targetHostName);
+        if (expectedProxyHost.Length == 0 ||
+            actualTargetHost.Length == 0 ||
+            !string.Equals(expectedProxyHost, actualTargetHost, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return (errors & ~RelaxableProxyCertificateErrors) == SslPolicyErrors.None;
+    }
 
     internal static bool IsCallerCancellation(OperationCanceledException exception, CancellationToken cancellationToken) =>
         cancellationToken.IsCancellationRequested;
@@ -213,27 +232,62 @@ public sealed class ProxyPoolService
 
     private static HttpClient CreateProxyClient(ProxyNode node, int timeoutSeconds)
     {
-        var handler = new HttpClientHandler
+        var handler = new SocketsHttpHandler
         {
             Proxy = new WebProxy(node.Address),
             UseProxy = true,
             AllowAutoRedirect = true
         };
-        // Public HTTPS proxy nodes frequently use expired or self-signed certificates.
-        // HTTP proxy nodes keep the platform's normal certificate validation.
-        if (ShouldIgnoreProxyCertificate(node))
-            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+
+        // Keep target-site certificate validation intact. Some public HTTPS proxies use
+        // expired or self-signed certificates, so only relax validation when TLS is
+        // connecting to the proxy endpoint itself.
+        if (string.Equals(node.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+        {
+            handler.SslOptions = new SslClientAuthenticationOptions
+            {
+                RemoteCertificateValidationCallback = (sender, _, _, errors) =>
+                    errors == SslPolicyErrors.None ||
+                    (sender is SslStream sslStream &&
+                     ShouldRelaxProxyCertificate(node, sslStream.TargetHostName, errors))
+            };
+        }
+
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("QqChannelDesk/1.0 (+proxy-pool)");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json,text/html;q=0.9");
         return client;
     }
 
+    private static string GetProxyHost(ProxyNode node) =>
+        Uri.TryCreate(node.Address, UriKind.Absolute, out var proxyUri)
+            ? proxyUri.IdnHost
+            : node.Host;
+
+    private static string NormalizeHost(string? host) =>
+        host?.Trim().Trim('[', ']').TrimEnd('.') ?? "";
+
     private static HttpClient CreateSourceClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("QqChannelDesk/1.0 (+proxy-pool-source)");
         return client;
+    }
+
+    private static async Task<string> ReadLimitedTextAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken);
+            if (read == 0) break;
+            if (buffer.Length + read > maxBytes)
+                throw new InvalidOperationException("代理源文件超过 5 MB。");
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private sealed record IpWhoResponse(bool Success, string? Ip, string? Country, string? CountryCode);

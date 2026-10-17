@@ -16,7 +16,10 @@ public sealed class AppLogger
         "(?i)([\"']?(?:QQ_AI_CONNECT_TOKEN|access_token|refresh_token|authorization|cookie|qr_code|verification_uri|token|secret|password|session|ticket)[\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s,;}]+)",
         RegexOptions.Compiled);
     private const int MaxSessionEntries = 2000;
+    private const int MaxPendingFileWrites = 256;
     private readonly List<(LogLevel Level, string Entry)> _sessionEntries = [];
+    private readonly object _fileWriteQueueLock = new();
+    private int _pendingFileWrites;
     private Task _lastFileWrite = Task.CompletedTask;
     private Task _lastSettingsWrite = Task.CompletedTask;
     private readonly string _logDirectory;
@@ -72,23 +75,37 @@ public sealed class AppLogger
     private void WriteLogFile(string entry)
     {
         var logDirectory = _logDirectory;
-        var fileName = $"{DateTime.Now:yyyy-MM-dd}.log";
-        var previousWrite = _lastFileWrite;
-        _lastFileWrite = Task.Run(async () =>
+        lock (_fileWriteQueueLock)
         {
-            try
+            if (_pendingFileWrites >= MaxPendingFileWrites)
             {
-                await previousWrite;
-                Directory.CreateDirectory(logDirectory);
-                lock (FileLock)
+                WriteLogFileSynchronously(entry);
+                return;
+            }
+
+            _pendingFileWrites++;
+            var previousWrite = _lastFileWrite;
+            _lastFileWrite = Task.Run(async () =>
+            {
+                try
                 {
-                    File.AppendAllText(Path.Combine(logDirectory, fileName), entry + Environment.NewLine);
+                    await previousWrite;
+                    Directory.CreateDirectory(logDirectory);
+                    var fileName = $"{DateTime.Now:yyyy-MM-dd}.log";
+                    lock (FileLock)
+                    {
+                        File.AppendAllText(Path.Combine(logDirectory, fileName), entry + Environment.NewLine);
+                    }
                 }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-            }
-        });
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+                finally
+                {
+                    lock (_fileWriteQueueLock) _pendingFileWrites--;
+                }
+            });
+        }
     }
 
     private void WriteLogFileSynchronously(string entry)
@@ -120,8 +137,9 @@ public sealed class AppLogger
         var safeContext = Redact(context ?? string.Empty);
         var entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [Error] {safeContext}{suffix}\n{details}";
 
-        // UnhandledException runs on the termination path. Do not queue this write on the thread pool.
-        WriteLogFileSynchronously(entry);
+        // Try to persist ordinary exceptions without blocking the caller. The termination path must finish inline.
+        if (terminating) WriteLogFileSynchronously(entry);
+        else WriteLogFile(entry);
         AddSessionEntry(LogLevel.Error, entry);
         RaiseEntryWrittenSafely(RedactErrorCodes(entry), LogLevel.Error);
     }

@@ -18,7 +18,8 @@ public partial class PublishDialog : Window
     private readonly MaterialRecord? _sourceMaterial;
     private readonly MediaStorageService _mediaStorage;
     private bool _loadingGuilds;
-    private bool _loadingChannels;
+    private int _guildLoadVersion;
+    private int _channelLoadVersion;
     private bool _syncSucceeded;
     private readonly List<string> _mediaPaths = [];
 
@@ -94,21 +95,24 @@ public partial class PublishDialog : Window
             MediaFilesText.ToolTip = string.Join(Environment.NewLine, sourceMaterial.MediaLinks.Select(DisplayMediaSource));
             SelectMediaButton.IsEnabled = false;
         }
-        Loaded += async (_, _) => await LoadCachedGuildsAsync();
+        Loaded += (_, _) => UiAsync.Run("发布对话框初始化", LoadCachedGuildsAsync);
     }
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshGuildsAsync();
+    private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("刷新发布频道", RefreshGuildsAsync);
 
-    private async void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("发布频道切换", async () =>
+        {
         if (_loadingGuilds || GuildCombo.SelectedItem is not ChannelChoice guild) return;
         await LoadCachedChannelsAsync(guild);
-        PublishButton.IsEnabled = _syncSucceeded && ChannelCombo.Items.Count > 0;
-    }
+        });
 
     private async Task LoadCachedGuildsAsync()
     {
+        var version = ++_guildLoadVersion;
         _loadingGuilds = true;
+        InvalidateCachedChannelSelection();
         GuildCombo.IsEnabled = false;
         ChannelCombo.IsEnabled = false;
         PublishButton.IsEnabled = false;
@@ -118,6 +122,7 @@ public partial class PublishDialog : Window
             var previous = _sourceMaterial?.GuildId ?? (GuildCombo.SelectedItem as ChannelChoice)?.Id;
             var guilds = await _channelSync.GetCachedGuildsAsync();
             var state = await _channelSync.GetStateAsync();
+            if (version != _guildLoadVersion) return;
             _syncSucceeded = state.Succeeded;
             GuildCombo.ItemsSource = guilds;
             GuildCombo.SelectedItem = guilds.FirstOrDefault(item => item.Id == previous) ?? guilds.FirstOrDefault();
@@ -130,6 +135,7 @@ public partial class PublishDialog : Window
             else
             {
                 await LoadCachedChannelsAsync(selected);
+                if (version != _guildLoadVersion) return;
                 FooterStatus.Text = state.Succeeded
                     ? $"已加载频道数据：{guilds.Count} 个频道{(state.SyncedAt is null ? "" : $"，上次刷新于 {state.SyncedAt.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}"
                     : state.Error is null ? "频道数据尚未同步，请刷新频道。" : $"上次刷新失败：{state.Error}。已保留旧数据，发布已暂停；请刷新频道后重试。";
@@ -141,12 +147,13 @@ public partial class PublishDialog : Window
         }
         catch (Exception ex)
         {
+            if (version != _guildLoadVersion) return;
             FooterStatus.Text = $"频道数据读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
             DialogStatus.Text = "频道数据读取失败，发布已暂停。请刷新频道后重试。";
         }
         finally
         {
-            _loadingGuilds = false;
+            if (version == _guildLoadVersion) _loadingGuilds = false;
         }
     }
 
@@ -176,27 +183,39 @@ public partial class PublishDialog : Window
 
     private async Task LoadCachedChannelsAsync(ChannelChoice guild)
     {
-        if (_loadingChannels) return;
-        _loadingChannels = true;
+        var version = ++_channelLoadVersion;
+        ChannelCombo.ItemsSource = null;
+        ChannelCombo.SelectedItem = null;
         ChannelCombo.IsEnabled = false;
+        PublishButton.IsEnabled = false;
         try
         {
             var channels = await _channelSync.GetCachedChannelsAsync(guild.Id);
-            if ((GuildCombo.SelectedItem as ChannelChoice)?.Id != guild.Id) return;
+            if (version != _channelLoadVersion
+                || (GuildCombo.SelectedItem as ChannelChoice)?.Id != guild.Id)
+                return;
             ChannelCombo.ItemsSource = channels;
             ChannelCombo.SelectedItem = channels.FirstOrDefault();
             ChannelCombo.IsEnabled = channels.Count > 0;
+            PublishButton.IsEnabled = _syncSucceeded && ChannelCombo.SelectedItem is ChannelChoice;
             if (channels.Count == 0) FooterStatus.Text = "该频道没有可用版块";
         }
         catch (Exception ex)
         {
+            if (version != _channelLoadVersion) return;
             ChannelCombo.ItemsSource = null;
+            PublishButton.IsEnabled = false;
             FooterStatus.Text = $"版块数据读取失败：{CliDiagnostics.Sanitize(ex.Message)}";
         }
-        finally
-        {
-            _loadingChannels = false;
-        }
+    }
+
+    private void InvalidateCachedChannelSelection()
+    {
+        _channelLoadVersion++;
+        ChannelCombo.ItemsSource = null;
+        ChannelCombo.SelectedItem = null;
+        ChannelCombo.IsEnabled = false;
+        PublishButton.IsEnabled = false;
     }
 
     private void SelectMediaButton_Click(object sender, RoutedEventArgs e)
@@ -215,10 +234,18 @@ public partial class PublishDialog : Window
         MediaFilesText.ToolTip = string.Join(Environment.NewLine, _mediaPaths);
     }
 
-    private async void PublishButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void PublishButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("执行发布", async () =>
+        {
         var guild = GuildCombo.SelectedItem as ChannelChoice;
         var channel = ChannelCombo.SelectedItem as ChannelChoice;
+        if (guild is null
+            || channel is null
+            || !await IsCachedChannelSelectionValidAsync(guild, channel))
+        {
+            MessageBox.Show(this, "频道或版块已变化，请重新选择后再发布。", "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         var sourceMedia = _sourceMaterial?.MediaLinks ?? (_sourceDraft?.Media is { Count: > 0 } draftMedia ? draftMedia : _mediaPaths);
         var previewRequest = new PublishRequest(guild?.Id ?? "", channel?.Id ?? "", ContentBox.Text, TitleBox.Text, _feedType, sourceMedia);
         var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest, allowUnknownSources: true);
@@ -262,6 +289,18 @@ public partial class PublishDialog : Window
         {
             PublishButton.IsEnabled = true;
         }
+        });
+
+    private async Task<bool> IsCachedChannelSelectionValidAsync(ChannelChoice guild, ChannelChoice channel)
+    {
+        if ((GuildCombo.SelectedItem as ChannelChoice)?.Id != guild.Id
+            || (ChannelCombo.SelectedItem as ChannelChoice)?.Id != channel.Id)
+            return false;
+
+        var channels = await _channelSync.GetCachedChannelsAsync(guild.Id);
+        return (GuildCombo.SelectedItem as ChannelChoice)?.Id == guild.Id
+            && (ChannelCombo.SelectedItem as ChannelChoice)?.Id == channel.Id
+            && channels.Any(item => string.Equals(item.Id, channel.Id, StringComparison.Ordinal));
     }
 
     private string GetSourceDisplay()

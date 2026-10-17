@@ -3,7 +3,10 @@ using Microsoft.Win32;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using UserControl = System.Windows.Controls.UserControl;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
@@ -19,6 +22,9 @@ public partial class MaterialsPage : UserControl
     private bool _loading;
     private bool _batchBusy;
     private bool _resettingBatchAction;
+    private bool _syncingMaterialSelection;
+    private CheckBox? _materialSelectionClickCheckBox;
+    private bool _materialSelectionClickWasChecked;
     private IReadOnlyList<MaterialRecord> _allMaterials = [];
     private int _currentPage = 1;
 
@@ -35,7 +41,7 @@ public partial class MaterialsPage : UserControl
         _channelSync = channelSync;
         _mediaStorage = mediaStorage ?? new MediaStorageService();
         _scheduler = scheduler;
-        Loaded += async (_, _) => await LoadMaterialsAsync();
+        Loaded += (_, _) => UiAsync.Run("素材库初始化", LoadMaterialsAsync);
     }
 
     public async Task LoadMaterialsAsync()
@@ -64,7 +70,19 @@ public partial class MaterialsPage : UserControl
     {
         var pageCount = GetPageCount(_allMaterials.Count);
         _currentPage = Math.Clamp(_currentPage, 1, pageCount);
-        MaterialsGrid.ItemsSource = _allMaterials.Skip((_currentPage - 1) * PageSize).Take(PageSize).ToArray();
+        var pageItems = _allMaterials.Skip((_currentPage - 1) * PageSize).Take(PageSize).ToArray();
+        _syncingMaterialSelection = true;
+        try
+        {
+            MaterialsGrid.ItemsSource = pageItems;
+            MaterialsGrid.UnselectAll();
+            foreach (var material in pageItems.Where(material => material.IsSelected))
+                MaterialsGrid.SelectedItems.Add(material);
+        }
+        finally
+        {
+            _syncingMaterialSelection = false;
+        }
         MaterialsStatus.Text = $"共 {_allMaterials.Count} 条";
         UpdatePagination(pageCount);
         UpdateSelectionCount();
@@ -109,10 +127,12 @@ public partial class MaterialsPage : UserControl
         }
     }
 
-    private async void AddMaterialButton_Click(object sender, RoutedEventArgs e) => await EditMaterialAsync(null);
+    private void AddMaterialButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("新增素材", () => EditMaterialAsync(null));
 
-    private async void DownloadTemplateButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void DownloadTemplateButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("下载素材导入模板", async () =>
+        {
         try
         {
             var targets = await LoadTemplateTargetsAsync();
@@ -139,10 +159,11 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(Window.GetWindow(this), $"模板未下载，请刷新频道后重试。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "模板未下载", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
+        });
 
-    private async void ImportDataButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void ImportDataButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("导入素材数据", async () =>
+        {
         var dialog = new OpenFileDialog
         {
             Title = "选择素材导入模板",
@@ -177,7 +198,7 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(Window.GetWindow(this), $"导入未完成，请检查模板后重试。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "导入未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
+        });
 
     private async Task<IReadOnlyList<MaterialTemplateTarget>> LoadTemplateTargetsAsync()
     {
@@ -245,8 +266,16 @@ public partial class MaterialsPage : UserControl
         {
             foreach (var path in importedMedia)
             {
-                try { if (File.Exists(path)) File.Delete(path); }
-                catch { }
+                try
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+                catch (Exception deleteEx)
+                {
+                    AppLogger.Instance.WriteException(
+                        $"素材导入回滚失败，源文件：{sourceFileName}，残留文件：{path}",
+                        deleteEx);
+                }
             }
             throw;
         }
@@ -262,13 +291,15 @@ public partial class MaterialsPage : UserControl
         }
     }
 
-    private async void EditMaterialButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void EditMaterialButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("编辑素材", async () =>
+        {
         if ((sender as FrameworkElement)?.DataContext is MaterialRecord record) await EditMaterialAsync(record);
-    }
+        });
 
-    private async void DeleteMaterialButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void DeleteMaterialButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("删除素材", async () =>
+        {
         if ((sender as FrameworkElement)?.DataContext is not MaterialRecord record) return;
         var display = string.IsNullOrWhiteSpace(record.Title) ? $"素材 #{record.Id}" : record.Title;
         if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{display}”？\n\n素材只会标记为删除，不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
@@ -284,7 +315,7 @@ public partial class MaterialsPage : UserControl
                 MessageBoxImage.Information);
         }
         await LoadMaterialsAsync();
-    }
+        });
 
     private void PublishMaterialButton_Click(object sender, RoutedEventArgs e)
     {
@@ -317,17 +348,97 @@ public partial class MaterialsPage : UserControl
         await LoadMaterialsAsync();
     }
 
-    private async void SearchMaterialsButton_Click(object sender, RoutedEventArgs e) => await LoadMaterialsAsync();
+    private void SearchMaterialsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("搜索素材", LoadMaterialsAsync);
 
-    private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
-    {
+    private void SearchBox_KeyDown(object sender, KeyEventArgs e) =>
+        UiAsync.Run("素材搜索快捷键", async () =>
+        {
         if (e.Key == Key.Enter) await LoadMaterialsAsync();
-    }
+        });
 
     private IReadOnlyList<MaterialRecord> GetSelectedMaterials() =>
         _allMaterials.Where(material => material.IsSelected).ToArray();
 
-    private void MaterialSelectionCheckBox_Click(object sender, RoutedEventArgs e) => UpdateSelectionCount();
+    private void MaterialsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingMaterialSelection) return;
+        _syncingMaterialSelection = true;
+        try
+        {
+            foreach (var material in e.AddedItems.OfType<MaterialRecord>()) material.IsSelected = true;
+            foreach (var material in e.RemovedItems.OfType<MaterialRecord>()) material.IsSelected = false;
+        }
+        finally
+        {
+            _syncingMaterialSelection = false;
+        }
+        UpdateSelectionCount();
+    }
+
+    private void MaterialsGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (sender is not DataGrid grid || e.OriginalSource is not DependencyObject source) return;
+        if (IsInteractiveRowElement(source)) return;
+        if (ItemsControl.ContainerFromElement(grid, source) is not DataGridRow { Item: MaterialRecord material }) return;
+
+        var selectedBefore = grid.SelectedItems.OfType<MaterialRecord>().ToArray();
+        var shouldSelect = !material.IsSelected;
+        UiAsync.Post(Dispatcher, () =>
+        {
+            _syncingMaterialSelection = true;
+            try
+            {
+                foreach (var selected in selectedBefore) selected.IsSelected = true;
+                material.IsSelected = shouldSelect;
+            }
+            finally
+            {
+                _syncingMaterialSelection = false;
+            }
+            SyncMaterialsGridSelectionFromModels();
+            UpdateSelectionCount();
+        }, DispatcherPriority.Background);
+    }
+
+    private void SyncMaterialsGridSelectionFromModels()
+    {
+        _syncingMaterialSelection = true;
+        try
+        {
+            MaterialsGrid.UnselectAll();
+            foreach (var material in MaterialsGrid.Items.OfType<MaterialRecord>().Where(material => material.IsSelected))
+                MaterialsGrid.SelectedItems.Add(material);
+        }
+        finally
+        {
+            _syncingMaterialSelection = false;
+        }
+    }
+
+    private void MaterialSelectionCheckBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not CheckBox checkBox) return;
+        _materialSelectionClickCheckBox = checkBox;
+        _materialSelectionClickWasChecked = checkBox.IsChecked == true;
+    }
+
+    private void MaterialSelectionCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.DataContext is not MaterialRecord material) return;
+        var shouldSelect = ReferenceEquals(_materialSelectionClickCheckBox, checkBox)
+            ? !_materialSelectionClickWasChecked
+            : checkBox.IsChecked == true;
+        _materialSelectionClickCheckBox = null;
+        material.IsSelected = shouldSelect;
+        checkBox.IsChecked = shouldSelect;
+        UiAsync.Post(Dispatcher, () =>
+        {
+            SyncMaterialsGridSelectionFromModels();
+            UpdateSelectionCount();
+        }, DispatcherPriority.Background);
+    }
 
     private void UpdateSelectionCount()
     {
@@ -338,18 +449,37 @@ public partial class MaterialsPage : UserControl
 
     private void SelectAll()
     {
-        foreach (var material in _allMaterials) material.IsSelected = true;
+        _syncingMaterialSelection = true;
+        try
+        {
+            foreach (var material in _allMaterials) material.IsSelected = true;
+        }
+        finally
+        {
+            _syncingMaterialSelection = false;
+        }
+        SyncMaterialsGridSelectionFromModels();
         UpdateSelectionCount();
     }
 
     private void InvertSelection()
     {
-        foreach (var material in _allMaterials) material.IsSelected = !material.IsSelected;
+        _syncingMaterialSelection = true;
+        try
+        {
+            foreach (var material in _allMaterials) material.IsSelected = !material.IsSelected;
+        }
+        finally
+        {
+            _syncingMaterialSelection = false;
+        }
+        SyncMaterialsGridSelectionFromModels();
         UpdateSelectionCount();
     }
 
-    private async void BatchActionBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void BatchActionBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("执行素材批量操作", async () =>
+        {
         if (_resettingBatchAction || _batchBusy) return;
         if (BatchActionBox.SelectedItem is not ComboBoxItem { Tag: string action } ||
             string.IsNullOrWhiteSpace(action))
@@ -381,7 +511,7 @@ public partial class MaterialsPage : UserControl
             BatchActionBox.IsEnabled = true;
             UpdateSelectionCount();
         }
-    }
+        });
 
     private async Task ExecuteBatchActionAsync(string action)
     {
@@ -497,7 +627,7 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                $"已将 {queuedIds.Count} 条素材加入发布队列，但当前没有可用的发布调度器。",
+                $"已将 {queuedIds.Count} 条素材加入发布队列，但当前没有可用的发布执行器。",
                 "批量发布",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -507,7 +637,7 @@ public partial class MaterialsPage : UserControl
         var check = await _scheduler.CheckNowAsync();
         var runningSummary = BuildSkipMessage(skippedRunning, [], []);
         var message = check.EnvironmentReady
-            ? $"已加入发布队列 {queuedIds.Count} 条；调度器已启动 {check.StartedCount} 条，已完成 {check.CompletedCount} 条。"
+            ? $"已加入发布队列 {queuedIds.Count} 条；执行器已启动 {check.StartedCount} 条，已完成 {check.CompletedCount} 条。"
             : $"已加入发布队列 {queuedIds.Count} 条，但发布环境未就绪：{check.Message}";
         if (runningSummary.Length > 0) message += $"\n{runningSummary}";
         MessageBox.Show(Window.GetWindow(this), message, "批量发布", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -629,5 +759,15 @@ public partial class MaterialsPage : UserControl
         if (publishedIds.Count > 0) parts.Add($"已发布 {publishedIds.Count} 条");
         if (missingIds.Count > 0) parts.Add($"不存在或已删除 {missingIds.Count} 条");
         return parts.Count == 0 ? "" : $"已跳过：{string.Join("、", parts)}。";
+    }
+
+    private static bool IsInteractiveRowElement(DependencyObject source)
+    {
+        for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is ButtonBase or TextBoxBase or ComboBox) return true;
+            if (current is DataGridRow) return false;
+        }
+        return false;
     }
 }

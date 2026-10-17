@@ -297,6 +297,16 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="TableHyperlink" TargetType="Hyperlink">
+      <Setter Property="TextDecorations" Value="Underline" />
+      <Setter Property="Foreground" Value="{StaticResource TableLink}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Foreground" Value="{StaticResource TableLinkHover}" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
     <Style TargetType="TextBox" BasedOn="{StaticResource TextBoxBaseStyle}">
       <Setter Property="Foreground" Value="{StaticResource Ink}" />
       <Setter Property="Background" Value="{StaticResource Surface}" />
@@ -321,37 +331,50 @@
     <Style TargetType="DataGrid" BasedOn="{StaticResource DataGridBaseStyle}">
       <Setter Property="Background" Value="{StaticResource Surface}" />
       <Setter Property="Foreground" Value="{StaticResource Ink}" />
-      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderBrush" Value="#D8E0DB" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="GridLinesVisibility" Value="Horizontal" />
-      <Setter Property="HorizontalGridLinesBrush" Value="#D7DEDA" />
-      <Setter Property="VerticalGridLinesBrush" Value="#D7DEDA" />
+      <Setter Property="HorizontalGridLinesBrush" Value="#E2E8E4" />
+      <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
       <Setter Property="RowBackground" Value="White" />
       <Setter Property="AlternatingRowBackground" Value="#F8FAF8" />
       <Setter Property="CanUserResizeRows" Value="False" />
       <Setter Property="HeadersVisibility" Value="Column" />
       <Setter Property="RowHeaderWidth" Value="0" />
-      <Setter Property="RowHeight" Value="34" />
-      <Setter Property="ColumnHeaderHeight" Value="38" />
+      <Setter Property="RowHeight" Value="36" />
+      <Setter Property="ColumnHeaderHeight" Value="40" />
       <Setter Property="SelectionMode" Value="Single" />
       <Setter Property="SelectionUnit" Value="FullRow" />
+      <Setter Property="SnapsToDevicePixels" Value="True" />
+      <Setter Property="UseLayoutRounding" Value="True" />
+      <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
     </Style>
     <Style TargetType="DataGridColumnHeader">
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="Background" Value="#F1F5F2" />
       <Setter Property="Foreground" Value="{StaticResource Muted}" />
+      <Setter Property="FontSize" Value="12" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Padding" Value="10,9" />
-      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="BorderBrush" Value="#D8E0DB" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style TargetType="DataGridCell">
-      <Setter Property="Padding" Value="8,5" />
+      <Setter Property="Padding" Value="10,6" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="BorderBrush" Value="#D7DEDA" />
-      <Setter Property="BorderThickness" Value="0,0,1,1" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="BorderBrush" Value="#E2E8E4" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Style.Triggers>
         <Trigger Property="IsSelected" Value="True">
           <Setter Property="Background" Value="{StaticResource AccentSoft}" />
@@ -360,21 +383,36 @@
       </Style.Triggers>
     </Style>
     <Style TargetType="DataGridRow">
-      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="MinHeight" Value="36" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
       <Style.Triggers>
         <Trigger Property="IsMouseOver" Value="True">
           <Setter Property="Background" Value="#F1F7F3" />
         </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="{StaticResource AccentSoft}" />
+        </Trigger>
       </Style.Triggers>
     </Style>
     <Style x:Key="CompactDataGridRow" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
-      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="MinHeight" Value="36" />
     </Style>
     <Style x:Key="DataGridCellText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="TextWrapping" Value="NoWrap" />
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
       <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+    </Style>
+    <Style x:Key="TableCheckBox" TargetType="CheckBox" BasedOn="{StaticResource CheckBoxBaseStyle}">
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Focusable" Value="False" />
+    </Style>
+    <Style x:Key="TableActionPanel" TargetType="StackPanel">
+      <Setter Property="Orientation" Value="Horizontal" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style x:Key="SectionTitle" TargetType="TextBlock">
       <Setter Property="FontSize" Value="18" />

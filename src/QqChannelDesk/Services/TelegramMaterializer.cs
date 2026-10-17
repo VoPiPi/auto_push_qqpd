@@ -55,12 +55,20 @@ public sealed class TelegramMaterializer
 
         // Telegram materials intentionally keep the title field empty. The message
         // body remains the publishing content and the field is reserved for later use.
-        var id = await _library.SaveMaterialAsync(new MaterialDraft(
+        var saved = await _library.SaveMaterialWithSourceAsync(new MaterialDraft(
             null, "", type, message.Text,
             targetRule?.GuildId ?? "", targetRule?.GuildName ?? "",
             targetRule?.ChannelId ?? "", targetRule?.ChannelName ?? "", null, "waitsend", "",
             draft.MediaPaths, "TG采集", message.Url), cancellationToken);
-        return new(id, draft.Directory, draft.MediaPaths, draft.Failed, false, "", true, false);
+        if (!saved.Created)
+        {
+            await DiscardStagingAsync(draft, cancellationToken);
+            var savedExisting = saved.ExistingMaterial
+                ?? throw new InvalidOperationException("来源已存在，但无法读取既有素材。");
+            return new(savedExisting.Id, "", savedExisting.MediaLinks, 0, false, "这条 TG 消息已在素材库中。", true, true);
+        }
+
+        return new(saved.MaterialId, draft.Directory, draft.MediaPaths, draft.Failed, false, "", true, false);
     }
 
     private async Task DiscardStagingAsync(TelegramDraftResult draft, CancellationToken cancellationToken)

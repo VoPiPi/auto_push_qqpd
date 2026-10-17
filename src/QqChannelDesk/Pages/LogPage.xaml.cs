@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
 using QqChannelDesk.Services;
 
 namespace QqChannelDesk.Pages;
@@ -9,6 +11,7 @@ public partial class LogPage : UserControl
 {
     private bool _showDebugLogs;
     private bool _showAllLogs;
+    private bool _scrollToNewestPending;
 
     public event Action<bool>? DebugModeChanged;
 
@@ -25,8 +28,8 @@ public partial class LogPage : UserControl
     public void AppendLog(string entry)
     {
         if ((!_showDebugLogs || !_showAllLogs) && entry.Contains("[Debug]", StringComparison.Ordinal)) return;
-        DiagnosticLog.AppendText(entry + Environment.NewLine);
-        if (AutoScrollToggle.IsChecked == true) DiagnosticLog.ScrollToEnd();
+        var separator = DiagnosticLog.Text.Length == 0 ? string.Empty : Environment.NewLine;
+        SetDiagnosticLogText(entry + separator + DiagnosticLog.Text);
     }
 
     private void DebugModeToggle_Changed(object sender, RoutedEventArgs e)
@@ -49,7 +52,7 @@ public partial class LogPage : UserControl
 
     private void AutoScrollToggle_Changed(object sender, RoutedEventArgs e)
     {
-        if (IsInitialized && AutoScrollToggle.IsChecked == true) DiagnosticLog.ScrollToEnd();
+        if (IsInitialized && AutoScrollToggle.IsChecked == true) ScrollToNewest();
     }
 
     private void ShowAllLogsButton_Click(object sender, RoutedEventArgs e)
@@ -68,9 +71,46 @@ public partial class LogPage : UserControl
 
     private void ReloadLogs()
     {
-        DiagnosticLog.Text = string.Join(Environment.NewLine,
-            AppLogger.Instance.ReadEntries(_showDebugLogs && _showAllLogs));
-        if (AutoScrollToggle.IsChecked == true) DiagnosticLog.ScrollToEnd();
+        SetDiagnosticLogText(string.Join(Environment.NewLine,
+            AppLogger.Instance.ReadEntries(_showDebugLogs && _showAllLogs).Reverse()));
+    }
+
+    private void SetDiagnosticLogText(string text)
+    {
+        var autoScroll = AutoScrollToggle.IsChecked == true;
+        var scrollViewer = FindVisualChild<ScrollViewer>(DiagnosticLog);
+        var verticalOffset = scrollViewer?.VerticalOffset ?? 0;
+
+        DiagnosticLog.Text = text;
+
+        if (autoScroll)
+        {
+            ScrollToNewest();
+            return;
+        }
+
+        if (scrollViewer is null) return;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (AutoScrollToggle.IsChecked == true) return;
+            scrollViewer.ScrollToVerticalOffset(verticalOffset);
+        });
+    }
+
+    private void ScrollToNewest()
+    {
+        if (AutoScrollToggle.IsChecked != true) return;
+
+        DiagnosticLog.CaretIndex = 0;
+        if (_scrollToNewestPending) return;
+        _scrollToNewestPending = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            _scrollToNewestPending = false;
+            if (AutoScrollToggle.IsChecked != true) return;
+            DiagnosticLog.CaretIndex = 0;
+            DiagnosticLog.ScrollToHome();
+        });
     }
 
     private void OpenLogDirectoryButton_Click(object sender, RoutedEventArgs e)
@@ -84,5 +124,18 @@ public partial class LogPage : UserControl
         {
             FooterStatus.Text = $"未能打开日志文件夹：{CliDiagnostics.Sanitize(ex.Message)}";
         }
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match) return match;
+            var descendant = FindVisualChild<T>(child);
+            if (descendant is not null) return descendant;
+        }
+
+        return null;
     }
 }

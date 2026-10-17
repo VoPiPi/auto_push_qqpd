@@ -27,7 +27,7 @@ public partial class TelegramScheduleAdvancedWindow : Window
                 _rules.Add(TelegramDistributionRuleEditorRow.From(rule));
         }
         UpdateRulesState();
-        Loaded += async (_, _) => await LoadGuildsAsync();
+        Loaded += (_, _) => UiAsync.Run("TG 高级计划初始化", LoadGuildsAsync);
         UpdateCronPreview();
     }
 

@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
@@ -51,9 +53,24 @@ public partial class MainWindow : Window
     private CloseWindowBehavior _closeWindowBehavior = CloseWindowBehavior.ExitApplication;
     private DiagnosticEnvironmentSnapshot _diagnosticSnapshot = DiagnosticEnvironmentSnapshot.Unavailable;
     private Forms.NotifyIcon? _trayIcon;
+    private Drawing.Icon? _trayIconImage;
+    private Forms.ContextMenuStrip? _trayMenu;
+    private string? _trayTextCache;
     private Button? _selectedNavigationButton;
+    private int _shutdownComplete;
+    private int _shutdownWatchdogArmed;
+    private readonly SemaphoreSlim _schedulerSwitchSaveLock = new(1, 1);
 
     private const string FeedbackChannelUrl = "https://pd.qq.com/s/7m3414vbj";
+    private const int WmShowWindow = 0x0018;
+
+    // 退出阶段每个清理步骤都设上限，保证托盘退出能在固定时间内结束进程；
+    // 计划执行器仍保留原来的 10 秒预算，避免把即将完成的发布提前判定为“需人工确认”。
+    private static readonly TimeSpan ShutdownSchedulerWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ShutdownBrowserWait = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan ShutdownLogWait = TimeSpan.FromSeconds(2);
+    // 覆盖“两个执行器各 10 秒 + 代理浏览器 8 秒 + 日志 2 秒”的最坏情况，只兜底真正的卡死。
+    private static readonly TimeSpan ShutdownWatchdogTimeout = TimeSpan.FromSeconds(35);
 
     public MainWindow()
     {
@@ -96,7 +113,7 @@ public partial class MainWindow : Window
         _logPage = new LogPage();
         _settingPage.SettingsChanged += SettingPage_SettingsChanged;
         _settingPage.UpdateCheckRequested += SettingPage_UpdateCheckRequested;
-        _settingPage.OpenReleasesRequested += (_, _) => OpenReleasePage(UpdateCheckService.RepositoryReleaseUrl);
+        _settingPage.OpenReleasesRequested += SettingPage_OpenReleasesRequested;
         _pages = new Dictionary<string, UserControl>
         {
             ["运行总览"] = _operationsCenterPage,
@@ -113,17 +130,21 @@ public partial class MainWindow : Window
         _selectedNavigationButton = OperationsNavButton;
         _logger.EntryWritten += Logger_EntryWritten;
         _operationsCenterPage.RefreshRequested += RefreshDiagnosticsAsync;
-        _operationsCenterPage.InstallNodeRequested += async (_, _) => await InstallNodeAsync();
-        _operationsCenterPage.InstallCliRequested += async (_, _) => await InstallCliAsync(confirm: true);
-        _operationsCenterPage.InstallFfmpegRequested += async (_, _) => await InstallFfmpegAsync();
-        _operationsCenterPage.LoginRequested += async (_, _) => await LoginAsync();
+        _operationsCenterPage.InstallNodeRequested += OperationsCenter_InstallNodeRequested;
+        _operationsCenterPage.InstallCliRequested += OperationsCenter_InstallCliRequested;
+        _operationsCenterPage.InstallFfmpegRequested += OperationsCenter_InstallFfmpegRequested;
+        _operationsCenterPage.LoginRequested += OperationsCenter_LoginRequested;
         _logPage.DebugModeChanged += DebugMode_Changed;
         _scheduler.StatusChanged += Scheduler_StatusChanged;
-        _materialsPage.PublishMaterialRequested += material => _ = OpenMaterialPublishDialogAsync(material);
+        _telegramCollectionScheduler.StateChanged += TelegramScheduler_StateChanged;
+        _materialsPage.PublishMaterialRequested += MaterialsPage_PublishMaterialRequested;
+        _operationsCenterPage.PublishSchedulerEnabledChanged += OperationsCenter_PublishSchedulerEnabledChanged;
+        _operationsCenterPage.TelegramSchedulerEnabledChanged += OperationsCenter_TelegramSchedulerEnabledChanged;
+        _operationsCenterPage.TelegramCancelRunRequested += OperationsCenter_TelegramCancelRunRequested;
         InitializeTrayIcon();
         Closing += MainWindow_Closing;
 
-        Loaded += async (_, _) =>
+        Loaded += (_, _) => UiAsync.Run("主窗口初始化", async () =>
         {
             try
             {
@@ -158,65 +179,152 @@ public partial class MainWindow : Window
             }
             var settings = await _settingsStore.GetAsync();
             _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
+            _scheduler.SetEnabled(settings.AutoExecuteSchedules);
             _scheduler.Start(settings.RunTasksOnStartup);
+            _telegramCollectionScheduler.SetEnabled(settings.TelegramCollectionSchedulerEnabled);
             if (_accountContext.IsAuthenticated) _telegramCollectionScheduler.Start();
+            _operationsCenterPage.SetSchedulerSwitches(settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
             _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+            UpdateTrayText();
             await _operationsCenterPage.RefreshDashboardAsync();
             if (settings.NotifyUpgrade)
-                _ = CheckForUpdatesAsync(showNoUpdate: false, delayed: true);
-        };
+                UiAsync.Observe("启动时检查更新", CheckForUpdatesAsync(showNoUpdate: false, delayed: true));
+        });
     }
 
     private void InitializeTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
         var openItem = new Forms.ToolStripMenuItem("打开主界面");
-        openItem.Click += (_, _) => Dispatcher.BeginInvoke(ShowMainWindowFromTray);
+        openItem.Click += (_, _) => UiAsync.Post(Dispatcher, ShowMainWindowFromTray);
+        var backgroundTasksItem = new Forms.ToolStripMenuItem("打开后台任务");
+        backgroundTasksItem.Click += (_, _) => UiAsync.Post(Dispatcher, ShowBackgroundTasksFromTray);
         var exitItem = new Forms.ToolStripMenuItem("退出程序");
-        exitItem.Click += (_, _) => Dispatcher.BeginInvoke(ExitFromTray);
+        exitItem.Click += (_, _) => UiAsync.Post(Dispatcher, ExitFromTray);
         menu.Items.Add(openItem);
+        menu.Items.Add(backgroundTasksItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(exitItem);
 
+        _trayIconImage = LoadApplicationIcon();
+        _trayMenu = menu;
         _trayIcon = new Forms.NotifyIcon
         {
-            Icon = Drawing.SystemIcons.Application,
+            Icon = _trayIconImage ?? Drawing.SystemIcons.Application,
             Text = "腾讯频道发帖助手",
             ContextMenuStrip = menu,
             Visible = false
         };
-        _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(ShowMainWindowFromTray);
+        _trayIcon.DoubleClick += (_, _) => UiAsync.Post(Dispatcher, ShowMainWindowFromTray);
+    }
+
+    private static Drawing.Icon? LoadApplicationIcon()
+    {
+        // 托盘图标优先复用内置的 min_logo.ico：ExtractAssociatedIcon 只会取出 32x32 的单一尺寸，
+        // 在缩放屏幕或深浅色任务栏下与软件图标明显不一致。
+        try
+        {
+            var resource = Application.GetResourceStream(new Uri("pack://application:,,,/min_logo.ico"));
+            if (resource?.Stream is { } stream)
+            {
+                using (stream)
+                {
+                    var size = Forms.SystemInformation.SmallIconSize;
+                    var icon = size.Width > 0 && size.Height > 0
+                        ? new Drawing.Icon(stream, size)
+                        : new Drawing.Icon(stream);
+                    return icon;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Debug($"读取内置程序图标失败，将回退到可执行文件图标：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
+
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+        try
+        {
+            return Drawing.Icon.ExtractAssociatedIcon(path);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Debug($"读取程序图标失败，托盘将使用系统默认图标：{CliDiagnostics.Sanitize(ex.Message)}");
+            return null;
+        }
+    }
+
+    private void ShowBackgroundTasksFromTray()
+    {
+        NavigateToPage("运行总览");
+        _operationsCenterPage.ShowBackgroundTasks();
+        ShowMainWindowFromTray();
     }
 
     private void ShowMainWindowFromTray()
     {
         if (_isClosing) return;
         ShowInTaskbar = true;
-        Show();
+        // 外部工具直接恢复隐藏窗口时 WPF 仍认为窗口处于隐藏状态，统一补一次 Show，
+        // 否则窗口虽然可见，客户区会停留在没有渲染内容的黑屏帧。
+        if (!IsVisible) Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         Topmost = true;
         Topmost = false;
         Focus();
         if (_trayIcon is not null) _trayIcon.Visible = false;
+        ForceMainWindowRedraw();
         _logger.Debug("已从系统托盘恢复主界面。");
+    }
+
+    private void ForceMainWindowRedraw()
+    {
+        void Repaint()
+        {
+            if (_isClosing || !IsVisible) return;
+            InvalidateVisual();
+            InvalidateArrange();
+            UpdateLayout();
+        }
+
+        Repaint();
+        // DWM 有时要等下一次渲染才把客户区从黑帧切回正常内容，补两次低优先级重绘。
+        UiAsync.Post(Dispatcher, Repaint, DispatcherPriority.Render);
+        UiAsync.Post(Dispatcher, Repaint, DispatcherPriority.ApplicationIdle);
     }
 
     private void ExitFromTray()
     {
         if (_isClosing) return;
         _exitRequested = true;
-        ShowInTaskbar = true;
+        // 立即收起界面与托盘图标，清理流程继续在后台跑，避免用户看到停在半关闭状态的窗口。
+        if (_trayIcon is not null) _trayIcon.Visible = false;
+        Hide();
+        ShowInTaskbar = false;
         Close();
     }
 
     private void SettingPage_SettingsChanged(AppSettings settings)
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            UiAsync.Post(Dispatcher, () => SettingPage_SettingsChanged(settings));
+            return;
+        }
         _closeWindowBehavior = SystemSettingsStore.NormalizeCloseWindowBehavior(settings.CloseWindowBehavior);
+        _scheduler.SetEnabled(settings.AutoExecuteSchedules);
+        _telegramCollectionScheduler.SetEnabled(settings.TelegramCollectionSchedulerEnabled);
+        _operationsCenterPage.SetSchedulerSwitches(settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
+        _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+        _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+        UpdateTrayText();
     }
 
-    private async void SettingPage_UpdateCheckRequested(object? sender, EventArgs e) =>
-        await CheckForUpdatesAsync(showNoUpdate: true);
+    private void SettingPage_UpdateCheckRequested(object? sender, EventArgs e) =>
+        UiAsync.Run("手动检查更新", () => CheckForUpdatesAsync(showNoUpdate: true));
 
     private async Task CheckForUpdatesAsync(bool showNoUpdate, bool delayed = false)
     {
@@ -306,24 +414,49 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void NavigationButton_Click(object sender, RoutedEventArgs e)
+    private void NavigationButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("主窗口导航", async () =>
+        {
+            if (sender is not Button { Tag: string pageName }) return;
+            if (!NavigateToPage(pageName)) return;
+
+            if (ReferenceEquals(PageHost.Content, _materialsPage))
+                await _materialsPage.LoadMaterialsAsync();
+
+            if (ReferenceEquals(PageHost.Content, _schedulePage))
+                await _schedulePage.LoadSchedulesAsync();
+
+            if (ReferenceEquals(PageHost.Content, _historyPage))
+                await _historyPage.LoadRecordsAsync();
+        });
+
+    private bool NavigateToPage(string pageName)
     {
-        if (sender is not Button { Tag: string pageName } button || !_pages.TryGetValue(pageName, out var page)) return;
+        if (!_pages.TryGetValue(pageName, out var page)) return false;
 
-        if (_selectedNavigationButton is not null)
-            _selectedNavigationButton.Style = (Style)FindResource("NavigationButton");
-        button.Style = (Style)FindResource("ActiveNavigationButton");
-        _selectedNavigationButton = button;
+        var button = pageName switch
+        {
+            "运行总览" => OperationsNavButton,
+            "内容采集" => ContentCollectionNavButton,
+            "素材库" => MaterialsNavButton,
+            "发布计划" => ScheduleNavButton,
+            "发布记录" => HistoryNavButton,
+            "运行日志" => LogNavButton,
+            "账号管理" => AccountsNavButton,
+            "系统设置" => SettingNavButton,
+            _ => null
+        };
+
+        if (button is not null)
+        {
+            if (_selectedNavigationButton is not null)
+                _selectedNavigationButton.Style = (Style)FindResource("NavigationButton");
+            button.Style = (Style)FindResource("ActiveNavigationButton");
+            _selectedNavigationButton = button;
+        }
+
         PageHost.Content = page;
-
-        if (ReferenceEquals(page, _materialsPage))
-            await _materialsPage.LoadMaterialsAsync();
-
-        if (ReferenceEquals(page, _schedulePage))
-            await _schedulePage.LoadSchedulesAsync();
-
-        if (ReferenceEquals(page, _historyPage))
-            await _historyPage.LoadRecordsAsync();
+        return true;
     }
 
     private async Task LoginAsync()
@@ -876,9 +1009,14 @@ public partial class MainWindow : Window
     {
         if (!_accountContext.IsAuthenticated || _isClosing) return;
         var settings = await _settingsStore.GetAsync();
+        _scheduler.SetEnabled(settings.AutoExecuteSchedules);
         _scheduler.Start(settings.RunTasksOnStartup);
-        if (_accountContext.IsAuthenticated) _telegramCollectionScheduler.Start();
+        _telegramCollectionScheduler.SetEnabled(settings.TelegramCollectionSchedulerEnabled);
+        _telegramCollectionScheduler.Start();
+        _operationsCenterPage.SetSchedulerSwitches(settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
         _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+        _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+        UpdateTrayText();
     }
 
     private void UpdateAccountSessionDisplay(string nickname, DateTimeOffset? loginAt)
@@ -894,18 +1032,181 @@ public partial class MainWindow : Window
     {
         if (!Dispatcher.CheckAccess())
         {
-            _ = Dispatcher.BeginInvoke(() => Scheduler_StatusChanged(status));
+            UiAsync.Post(Dispatcher, () => Scheduler_StatusChanged(status));
             return;
         }
 
         _operationsCenterPage.UpdateSchedulerStatus(status);
+        UpdateTrayText();
         if (status.Running || status.Paused)
-            _ = _operationsCenterPage.RefreshDashboardAsync();
+            UiAsync.Observe("发布计划状态刷新运行总览", _operationsCenterPage.RefreshDashboardAsync());
     }
 
-    private void AccountLoginAction_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) => _ = LoginAsync();
+    private void TelegramScheduler_StateChanged(TelegramCollectionSchedulerStatus status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            UiAsync.Post(Dispatcher, () => TelegramScheduler_StateChanged(status));
+            return;
+        }
 
-    private void AccountLogoutAction_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) => _ = LogoutAsync();
+        _operationsCenterPage.UpdateTelegramSchedulerStatus(status);
+        UpdateTrayText();
+    }
+
+    private void OperationsCenter_PublishSchedulerEnabledChanged(object? sender, bool enabled) =>
+        UiAsync.Run("切换计划自动执行", () => SetPublishSchedulerEnabledAsync(enabled));
+
+    private async Task SetPublishSchedulerEnabledAsync(bool enabled)
+    {
+        await _schedulerSwitchSaveLock.WaitAsync();
+        try
+        {
+            var settings = await _settingsStore.GetAsync();
+            var updated = settings with { AutoExecuteSchedules = enabled };
+            if (settings.AutoExecuteSchedules != enabled)
+                await _settingsStore.SaveAsync(updated);
+            _scheduler.SetEnabled(updated.AutoExecuteSchedules);
+            _operationsCenterPage.SetSchedulerSwitches(
+                updated.AutoExecuteSchedules,
+                updated.TelegramCollectionSchedulerEnabled);
+            _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            _operationsCenterPage.SetBackgroundTaskFooter(enabled
+                ? "计划自动执行已开启，执行器会在下一轮检查到期计划。"
+                : "计划自动执行已关闭，正在执行的发布不会被中断。");
+            UpdateTrayText();
+        }
+        catch (Exception ex)
+        {
+            var fallback = await SafeGetSchedulerSwitchesAsync();
+            _scheduler.SetEnabled(fallback.PublishEnabled);
+            _telegramCollectionScheduler.SetEnabled(fallback.TelegramEnabled);
+            _operationsCenterPage.SetSchedulerSwitches(fallback.PublishEnabled, fallback.TelegramEnabled);
+            _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+            _operationsCenterPage.SetBackgroundTaskFooter(
+                $"计划自动执行开关保存失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            _logger.Error($"保存计划自动执行开关失败：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
+        finally
+        {
+            _schedulerSwitchSaveLock.Release();
+        }
+    }
+
+    private async Task<(bool PublishEnabled, bool TelegramEnabled)> SafeGetSchedulerSwitchesAsync()
+    {
+        try
+        {
+            var settings = await _settingsStore.GetAsync();
+            return (settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
+        }
+        catch
+        {
+            return (_scheduler.IsEnabled, _telegramCollectionScheduler.IsEnabled);
+        }
+    }
+
+    private void OperationsCenter_TelegramSchedulerEnabledChanged(object? sender, bool enabled) =>
+        UiAsync.Run("切换 TG 定时采集", () => SetTelegramSchedulerEnabledAsync(enabled));
+
+    private async Task SetTelegramSchedulerEnabledAsync(bool enabled)
+    {
+        await _schedulerSwitchSaveLock.WaitAsync();
+        try
+        {
+            var settings = await _settingsStore.GetAsync();
+            var updated = settings with { TelegramCollectionSchedulerEnabled = enabled };
+            if (settings.TelegramCollectionSchedulerEnabled != enabled)
+                await _settingsStore.SaveAsync(updated);
+            _scheduler.SetEnabled(updated.AutoExecuteSchedules);
+            _telegramCollectionScheduler.SetEnabled(updated.TelegramCollectionSchedulerEnabled);
+            _operationsCenterPage.SetSchedulerSwitches(
+                updated.AutoExecuteSchedules,
+                updated.TelegramCollectionSchedulerEnabled);
+            _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+            _operationsCenterPage.SetBackgroundTaskFooter(enabled
+                ? "TG 定时采集已开启，执行器会在下一轮检查到期配置。"
+                : "TG 定时采集已关闭，正在执行的采集不会被中断。");
+            UpdateTrayText();
+        }
+        catch (Exception ex)
+        {
+            var fallback = await SafeGetSchedulerSwitchesAsync();
+            _scheduler.SetEnabled(fallback.PublishEnabled);
+            _telegramCollectionScheduler.SetEnabled(fallback.TelegramEnabled);
+            _operationsCenterPage.SetSchedulerSwitches(fallback.PublishEnabled, fallback.TelegramEnabled);
+            _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
+            _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
+            _operationsCenterPage.SetBackgroundTaskFooter(
+                $"TG 定时采集开关保存失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            _logger.Error($"保存 TG 定时采集开关失败：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
+        finally
+        {
+            _schedulerSwitchSaveLock.Release();
+        }
+    }
+
+    private void OperationsCenter_TelegramCancelRunRequested(object? sender, EventArgs e)
+    {
+        var cancelled = _telegramCollectionScheduler.CancelCurrentRun();
+        _operationsCenterPage.SetBackgroundTaskFooter(cancelled
+            ? "已请求取消当前 TG 采集，正在等待采集循环安全结束。"
+            : "当前没有正在执行的 TG 采集。");
+    }
+
+    private void UpdateTrayText()
+    {
+        if (_trayIcon is null) return;
+        var text = BuildTrayText();
+        if (string.Equals(_trayTextCache, text, StringComparison.Ordinal)) return;
+        _trayTextCache = text;
+        try
+        {
+            _trayIcon.Text = text.Length <= 63 ? text : text[..63];
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"更新托盘提示文本失败：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
+    }
+
+    private string BuildTrayText()
+    {
+        var publish = _scheduler.Status;
+        var telegram = _telegramCollectionScheduler.Status;
+        var publishText = publish.Running
+            ? !publish.Enabled
+                ? "发布计划：自动执行关闭"
+                : publish.Paused ? "发布计划：已暂停" : "发布计划：运行中"
+            : "发布计划：已停止";
+        var telegramText = telegram.Running
+            ? !telegram.Enabled
+                ? "TG 采集：定时采集关闭"
+                : telegram.Paused ? "TG 采集：已暂停" : "TG 采集：运行中"
+            : "TG 采集：已停止";
+        return $"腾讯频道发帖助手 · {publishText} · {telegramText}";
+    }
+
+    private void OperationsCenter_InstallNodeRequested(object? sender, EventArgs e) =>
+        UiAsync.Run("安装 Node.js", InstallNodeAsync);
+    private void OperationsCenter_InstallCliRequested(object? sender, EventArgs e) =>
+        UiAsync.Run("安装频道工具", () => InstallCliAsync(confirm: true));
+    private void OperationsCenter_InstallFfmpegRequested(object? sender, EventArgs e) =>
+        UiAsync.Run("安装 FFmpeg", InstallFfmpegAsync);
+    private void OperationsCenter_LoginRequested(object? sender, EventArgs e) =>
+        UiAsync.Run("扫码登录", LoginAsync);
+    private void MaterialsPage_PublishMaterialRequested(MaterialRecord material) =>
+        UiAsync.Observe("打开发布对话框", OpenMaterialPublishDialogAsync(material));
+    private void SettingPage_OpenReleasesRequested(object? sender, EventArgs e) => OpenReleasePage(UpdateCheckService.RepositoryReleaseUrl);
+
+    private void AccountLoginAction_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
+        UiAsync.Observe("账号登录", LoginAsync());
+
+    private void AccountLogoutAction_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
+        UiAsync.Observe("账号退出", LogoutAsync());
 
     private void UpdateAccountActionVisibility(bool isLoggedIn)
     {
@@ -936,7 +1237,7 @@ public partial class MainWindow : Window
         _logger.Info(enabled ? "调试模式已开启，显示详细 CLI 输出。" : "调试模式已关闭，仅显示操作摘要。");
     }
 
-    private async void MainWindow_Closing(object? sender, CancelEventArgs e)
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_isClosing) return;
 
@@ -952,27 +1253,160 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         _isClosing = true;
+        if (_trayIcon is not null) _trayIcon.Visible = false;
+        // 清理阶段可能持续数秒，先把窗口收起来，避免它停留在半关闭状态被外部工具恢复到黑屏。
+        ShowInTaskbar = false;
+        Hide();
+        ArmShutdownWatchdog();
+        UiAsync.Run("关闭主窗口", ShutdownApplicationAsync);
+    }
+
+    /// <summary>
+    /// 兜底保险：清理流程或 WebView2 未能在预算内退出时强制结束进程，
+    /// 避免“从托盘退出后进程还活着、再次启动提示程序仍在运行”的情况。
+    /// </summary>
+    private void ArmShutdownWatchdog()
+    {
+        if (Interlocked.Exchange(ref _shutdownWatchdogArmed, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(ShutdownWatchdogTimeout).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.Warning($"关闭流程超过 {ShutdownWatchdogTimeout.TotalSeconds:0} 秒仍未结束，强制退出进程。");
+            }
+            catch (Exception)
+            {
+                // 日志不可用时也必须保证进程退出。
+            }
+            Environment.Exit(0);
+        });
+    }
+
+    private async Task ShutdownApplicationAsync()
+    {
         try
         {
-            await _scheduler.StopAsync();
-            await _telegramCollectionScheduler.StopAsync();
+            var publishSchedulerStopped = false;
+            var telegramSchedulerStopped = false;
+            try
+            {
+                publishSchedulerStopped = await _scheduler.StopAsync(ShutdownSchedulerWait);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"关闭程序时停止发布计划执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+            try
+            {
+                telegramSchedulerStopped = await _telegramCollectionScheduler.StopAsync(ShutdownSchedulerWait);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"关闭程序时停止 TG 定时采集执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+            if (!publishSchedulerStopped || !telegramSchedulerStopped)
+            {
+                _logger.Warning("关闭程序时未能确认所有计划执行器已停止，将继续释放界面资源并退出进程。");
+            }
+
+            try
+            {
+                await WebProxyProviderRegistry.DisposeDefaultProvidersAsync()
+                    .WaitAsync(ShutdownBrowserWait);
+            }
+            catch (TimeoutException)
+            {
+                _logger.Warning("关闭程序时释放网页代理浏览器超时，将强制退出进程。");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"关闭程序时释放网页代理浏览器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+
+            try
+            {
+                await AppLogger.Instance.FlushAsync()
+                    .WaitAsync(ShutdownLogWait);
+            }
+            catch (TimeoutException)
+            {
+                _logger.Warning("关闭程序时刷新日志超时，将强制退出进程。");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"关闭程序时刷新日志失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
         }
         catch (Exception ex)
         {
-            _logger.Error($"关闭程序时停止计划执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            _logger.Error($"关闭程序时发生未处理异常：{CliDiagnostics.Sanitize(ex.Message)}");
         }
         finally
         {
-            if (_trayIcon is not null) _trayIcon.Visible = false;
-            _ = Dispatcher.BeginInvoke(() => Close());
+            CompleteShutdown();
         }
+    }
+
+    private void CompleteShutdown()
+    {
+        if (Interlocked.Exchange(ref _shutdownComplete, 1) == 1) return;
+        // Queue the final shutdown so it never runs re-entrantly inside Window.Closing.
+        if (!UiAsync.Post(Dispatcher, CompleteShutdownCore, DispatcherPriority.Send))
+            Environment.Exit(0);
+    }
+
+    private void CompleteShutdownCore()
+    {
+        if (_trayIcon is not null)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+            _trayIcon = null;
+        }
+        _trayMenu?.Dispose();
+        _trayMenu = null;
+        _trayIconImage?.Dispose();
+        _trayIconImage = null;
+        var application = Application.Current;
+        if (application is not null)
+            application.Shutdown();
+        else
+            Close();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+            source.AddHook(MainWindowMessageHook);
+    }
+
+    private IntPtr MainWindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == WmShowWindow && wParam != IntPtr.Zero && !_isClosing &&
+            Visibility != Visibility.Visible)
+        {
+            // 启动器、任务管理器等外部工具直接 ShowWindow 恢复托盘隐藏窗口时，
+            // WPF 自身可见性仍是 Hidden，客户区会停在黑帧；这里补一次标准托盘恢复流程。
+            UiAsync.Post(Dispatcher, ShowMainWindowFromTray, DispatcherPriority.Send);
+        }
+        return IntPtr.Zero;
     }
 
     private void Logger_EntryWritten(string entry)
     {
         if (!Dispatcher.CheckAccess())
         {
-            _ = Dispatcher.BeginInvoke(() => Logger_EntryWritten(entry));
+            UiAsync.Post(Dispatcher, () => Logger_EntryWritten(entry));
             return;
         }
         _logPage.AppendLog(entry);
@@ -983,8 +1417,25 @@ public partial class MainWindow : Window
         _logger.EntryWritten -= Logger_EntryWritten;
         _settingPage.SettingsChanged -= SettingPage_SettingsChanged;
         _settingPage.UpdateCheckRequested -= SettingPage_UpdateCheckRequested;
+        _settingPage.OpenReleasesRequested -= SettingPage_OpenReleasesRequested;
+        _operationsCenterPage.RefreshRequested -= RefreshDiagnosticsAsync;
+        _operationsCenterPage.InstallNodeRequested -= OperationsCenter_InstallNodeRequested;
+        _operationsCenterPage.InstallCliRequested -= OperationsCenter_InstallCliRequested;
+        _operationsCenterPage.InstallFfmpegRequested -= OperationsCenter_InstallFfmpegRequested;
+        _operationsCenterPage.LoginRequested -= OperationsCenter_LoginRequested;
+        _operationsCenterPage.PublishSchedulerEnabledChanged -= OperationsCenter_PublishSchedulerEnabledChanged;
+        _operationsCenterPage.TelegramSchedulerEnabledChanged -= OperationsCenter_TelegramSchedulerEnabledChanged;
+        _operationsCenterPage.TelegramCancelRunRequested -= OperationsCenter_TelegramCancelRunRequested;
+        _logPage.DebugModeChanged -= DebugMode_Changed;
+        _scheduler.StatusChanged -= Scheduler_StatusChanged;
+        _telegramCollectionScheduler.StateChanged -= TelegramScheduler_StateChanged;
+        _materialsPage.PublishMaterialRequested -= MaterialsPage_PublishMaterialRequested;
+        _trayMenu?.Dispose();
+        _trayMenu = null;
         _trayIcon?.Dispose();
-        WebProxyPageFetcher.Default.Dispose();
+        _trayIcon = null;
+        _trayIconImage?.Dispose();
+        _trayIconImage = null;
         base.OnClosed(e);
     }
 

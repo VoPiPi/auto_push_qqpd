@@ -32,9 +32,10 @@ public sealed class AppDatabaseInitializer
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         // Keep initialization sequential because all stores share one SQLite
-        // file and the channel store may perform a legacy schema migration.
-        await _settings.EnsureDefaultsAsync(cancellationToken);
+        // file. The channel store must migrate the legacy channel schema before
+        // any other store creates tables in the same database.
         await _channels.InitializeAsync(cancellationToken);
+        await _settings.EnsureDefaultsAsync(cancellationToken);
         await _contentLibrary.InitializeAsync(cancellationToken);
         await _history.InitializeAsync(cancellationToken);
         if (_proxyPool is not null) await _proxyPool.InitializeAsync(cancellationToken);

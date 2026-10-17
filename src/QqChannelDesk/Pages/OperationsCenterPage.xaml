@@ -41,7 +41,7 @@
               <StackPanel><TextBlock Text="剩余任务" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RemainingTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,4,0,0"/><TextBlock x:Name="ScheduleStatusText" Text="计划执行器准备中" Foreground="{StaticResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
             </Border>
             <Border Grid.Column="2" Style="{StaticResource Card}" Margin="4,0" Padding="14,13">
-              <StackPanel><TextBlock Text="正在运行" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RunningTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Info}" Margin="0,4,0,0"/><TextBlock Text="后台执行中的计划" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
+              <StackPanel><TextBlock Text="正在运行" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="RunningTaskText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Info}" Margin="0,4,0,0"/><TextBlock x:Name="RunningTaskCaptionText" Text="后台任务空闲" Foreground="{StaticResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
             </Border>
             <Border Grid.Column="3" Style="{StaticResource Card}" Margin="4,0" Padding="14,13">
               <StackPanel><TextBlock Text="近 7 天成功率" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="SuccessRateText" Text="-" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,4,0,0"/><TextBlock x:Name="TodayMetricText" Text="今日暂无记录" Foreground="{StaticResource Muted}" FontSize="11"/></StackPanel>
@@ -148,6 +148,119 @@
               </StackPanel>
             </Border>
           </Grid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="后台任务">
+        <Grid Margin="0,4,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoLine}" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,12">
+            <TextBlock Text="开关代表你的选择，心跳代表执行器真实存活。关闭开关只会停止派发新任务，不会中断正在执行的发布或采集；心跳长时间不更新说明后台循环已经异常。" Foreground="{StaticResource Info}" TextWrapping="Wrap"/>
+          </Border>
+
+          <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,6,0" Padding="16,14">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0">
+                  <TextBlock Text="发布计划执行器" Style="{StaticResource SectionTitle}" />
+                  <CheckBox x:Name="PublishSchedulerSwitch" DockPanel.Dock="Right" Content="自动执行" VerticalAlignment="Center"
+                            Checked="PublishSchedulerSwitch_Changed" Unchecked="PublishSchedulerSwitch_Changed"
+                            ToolTip="关闭后不再自动派发到期计划，正在执行的发布不会被中断" />
+                </DockPanel>
+                <Border Grid.Row="1" x:Name="PublishSchedulerStatePill" Style="{StaticResource StatusPill}" Margin="0,10,0,0">
+                  <TextBlock x:Name="PublishSchedulerStateText" Text="未启动" Style="{StaticResource StatusPillText}" />
+                </Border>
+                <UniformGrid Grid.Row="2" Columns="2" Margin="0,12,0,0">
+                  <StackPanel Margin="0,0,10,8">
+                    <TextBlock Text="最近心跳" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="PublishSchedulerHeartbeatText" Text="暂无" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <StackPanel Margin="0,0,0,8">
+                    <TextBlock Text="下次检查" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="PublishSchedulerNextCheckText" Text="未安排" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <StackPanel Margin="0,0,10,0">
+                    <TextBlock Text="在途发布" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="PublishSchedulerRunningText" Text="0 条" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                  <StackPanel>
+                    <TextBlock Text="循环进程" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="PublishSchedulerLoopText" Text="未运行" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                </UniformGrid>
+                <TextBlock Grid.Row="3" x:Name="PublishSchedulerMessageText" Text="计划执行器未启动" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                <TextBlock Grid.Row="4" x:Name="PublishSchedulerWarningText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" />
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="6,0,0,0" Padding="16,14">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0">
+                  <TextBlock Text="TG 定时采集执行器" Style="{StaticResource SectionTitle}" />
+                  <CheckBox x:Name="TelegramSchedulerSwitch" DockPanel.Dock="Right" Content="定时采集" VerticalAlignment="Center"
+                            Checked="TelegramSchedulerSwitch_Changed" Unchecked="TelegramSchedulerSwitch_Changed"
+                            ToolTip="关闭后不再自动派发定时采集，正在执行的采集不会被中断" />
+                </DockPanel>
+                <Border Grid.Row="1" x:Name="TelegramSchedulerStatePill" Style="{StaticResource StatusPill}" Margin="0,10,0,0">
+                  <TextBlock x:Name="TelegramSchedulerStateText" Text="未启动" Style="{StaticResource StatusPillText}" />
+                </Border>
+                <UniformGrid Grid.Row="2" Columns="2" Margin="0,12,0,0">
+                  <StackPanel Margin="0,0,10,8">
+                    <TextBlock Text="最近心跳" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="TelegramSchedulerHeartbeatText" Text="暂无" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <StackPanel Margin="0,0,0,8">
+                    <TextBlock Text="下次检查" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="TelegramSchedulerNextCheckText" Text="未安排" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <StackPanel Margin="0,0,10,0">
+                    <TextBlock Text="在途采集" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="TelegramSchedulerRunningText" Text="0 个" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                  <StackPanel>
+                    <TextBlock Text="循环进程" Foreground="{StaticResource Muted}" FontSize="11" />
+                    <TextBlock x:Name="TelegramSchedulerLoopText" Text="未运行" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                </UniformGrid>
+                <ProgressBar Grid.Row="3" x:Name="TelegramSchedulerProgressBar" Height="8" Minimum="0" Maximum="1" Value="0" Margin="0,10,0,0"
+                             Foreground="{StaticResource Accent}" Background="{StaticResource ProgressTrack}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock Grid.Row="4" x:Name="TelegramSchedulerMessageText" Text="TG 定时采集未启动" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                <DockPanel Grid.Row="5" Margin="0,8,0,0">
+                  <Button x:Name="TelegramCancelRunButton" DockPanel.Dock="Right" Content="取消当前采集" Style="{StaticResource QuietButton}"
+                          Click="TelegramCancelRunButton_Click" Visibility="Collapsed" />
+                  <TextBlock x:Name="TelegramSchedulerWarningText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
+                </DockPanel>
+              </Grid>
+            </Border>
+          </Grid>
+
+          <TextBlock Grid.Row="3" x:Name="BackgroundTaskFooterText" Text="后台任务状态每秒自动刷新，心跳来自执行器循环本身。" Foreground="{StaticResource Muted}" Margin="0,12,0,0" TextWrapping="Wrap" />
         </Grid>
       </TabItem>
 

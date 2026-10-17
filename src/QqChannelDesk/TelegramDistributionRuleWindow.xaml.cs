@@ -34,7 +34,7 @@ public partial class TelegramDistributionRuleWindow : Window
             RuleKeywordBox.Text = initialRule.Keyword;
         }
 
-        Loaded += async (_, _) => await LoadGuildsAsync();
+        Loaded += (_, _) => UiAsync.Run("TG 分发规则初始化", LoadGuildsAsync);
     }
 
     private async Task LoadGuildsAsync()
@@ -73,8 +73,9 @@ public partial class TelegramDistributionRuleWindow : Window
         }
     }
 
-    private async void RuleGuildBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void RuleGuildBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("TG 分发规则频道切换", async () =>
+        {
         if (_suppressGuildSelection) return;
         if (RuleGuildBox.SelectedItem is not ChannelChoice guild)
         {
@@ -84,7 +85,7 @@ public partial class TelegramDistributionRuleWindow : Window
         }
 
         await LoadChannelsAsync(guild.Id, null);
-    }
+        });
 
     private async Task LoadChannelsAsync(string guildId, string? selectedChannelId)
     {
