@@ -294,13 +294,14 @@ public partial class MaterialsPage : UserControl
     private void EditMaterialButton_Click(object sender, RoutedEventArgs e) =>
         UiAsync.Run("编辑素材", async () =>
         {
-        if ((sender as FrameworkElement)?.DataContext is MaterialRecord record) await EditMaterialAsync(record);
+        if ((sender as FrameworkElement)?.DataContext is MaterialRecord { CanEdit: true } record)
+            await EditMaterialAsync(record);
         });
 
     private void DeleteMaterialButton_Click(object sender, RoutedEventArgs e) =>
         UiAsync.Run("删除素材", async () =>
         {
-        if ((sender as FrameworkElement)?.DataContext is not MaterialRecord record) return;
+        if ((sender as FrameworkElement)?.DataContext is not MaterialRecord { CanDelete: true } record) return;
         var display = string.IsNullOrWhiteSpace(record.Title) ? $"素材 #{record.Id}" : record.Title;
         if (MessageBox.Show(Window.GetWindow(this), $"确定删除素材“{display}”？\n\n素材只会标记为删除，不会从数据库物理移除。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
@@ -319,7 +320,7 @@ public partial class MaterialsPage : UserControl
 
     private void PublishMaterialButton_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not MaterialRecord record) return;
+        if ((sender as FrameworkElement)?.DataContext is not MaterialRecord { CanPublish: true } record) return;
         var error = ValidateMaterialForPublish(record);
         if (error.Length > 0)
         {

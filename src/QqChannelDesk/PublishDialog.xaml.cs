@@ -12,30 +12,27 @@ public partial class PublishDialog : Window
     private readonly ChannelSyncService _channelSync;
     private readonly PublishHistoryStore _historyStore;
     private readonly PublishExecutionService _publisher;
-    private readonly ContentLibraryStore? _contentLibrary;
     private readonly FeedType _feedType;
-    private readonly ContentDraft? _sourceDraft;
     private readonly MaterialRecord? _sourceMaterial;
     private readonly MediaStorageService _mediaStorage;
     private bool _loadingGuilds;
     private int _guildLoadVersion;
     private int _channelLoadVersion;
     private bool _syncSucceeded;
+    private int _publishInProgress;
     private readonly List<string> _mediaPaths = [];
 
     public PublishResult? Result { get; private set; }
 
     public PublishDialog(CliWorkflow workflow, ChannelSyncService channelSync, PublishHistoryStore historyStore, FeedType feedType,
-        ContentDraft? sourceDraft = null, ContentLibraryStore? contentLibrary = null, MaterialRecord? sourceMaterial = null,
+        MaterialRecord? sourceMaterial = null,
         MediaStorageService? mediaStorage = null, PublishExecutionService? publisher = null)
     {
         InitializeComponent();
         _workflow = workflow;
         _channelSync = channelSync;
         _historyStore = historyStore;
-        _sourceDraft = sourceDraft;
         _sourceMaterial = sourceMaterial;
-        _contentLibrary = contentLibrary;
         _mediaStorage = mediaStorage ?? new MediaStorageService();
         _publisher = publisher ?? new PublishExecutionService(_workflow, _historyStore, _mediaStorage);
         _feedType = feedType;
@@ -53,33 +50,6 @@ public partial class PublishDialog : Window
             : feedType == FeedType.Video
                 ? "短贴最多 1 个视频；带标题的长贴最多 5 个。正文限制分别为 1000 / 10000 字。"
                 : "标题留空时正文最多 1000 字；填写标题后正文最多 10000 字。";
-        if (sourceDraft is not null)
-        {
-            var isTelegramDraft = TelegramChannelParser.IsTelegramHost(
-                Uri.TryCreate(sourceDraft.SourceUrl, UriKind.Absolute, out var sourceUri) ? sourceUri.Host : null);
-            TitleBox.Text = isTelegramDraft ? "" : sourceDraft.Title;
-            ContentBox.Text = sourceDraft.Content;
-            SourceInfo.Text = string.IsNullOrWhiteSpace(sourceDraft.SourceUrl) ? "来源：手动素材" : $"来源：{sourceDraft.SourceUrl}";
-            SourceInfo.Visibility = Visibility.Visible;
-            Heading.Text = "发布内容草稿";
-            Description.Text = "来源信息仅供核对，不会自动加入帖子正文。";
-            if (isTelegramDraft)
-            {
-                TitleLabel.Visibility = Visibility.Collapsed;
-                TitleBox.Visibility = Visibility.Collapsed;
-                Description.Text = "TG 采集内容固定发布为短帖子；来源信息仅供核对，不会自动加入帖子正文。";
-            }
-            if (sourceDraft.Media.Count > 0 && _feedType != FeedType.Text)
-            {
-                MediaPanel.Visibility = Visibility.Visible;
-                MediaFilesText.Text = string.Join("、", sourceDraft.Media.Select(DisplayMediaSource));
-                MediaFilesText.ToolTip = string.Join(Environment.NewLine, sourceDraft.Media);
-                SelectMediaButton.IsEnabled = false;
-                Description.Text = isTelegramDraft
-                    ? "TG 采集内容固定发布为短帖子；草稿自带的本地媒体将作为附件上传。来源信息仅供核对。"
-                    : "来源信息仅供核对；草稿自带的本地媒体将作为附件上传。";
-            }
-        }
         if (sourceMaterial is not null)
         {
             TitleBox.Text = sourceMaterial.Title;
@@ -237,58 +207,62 @@ public partial class PublishDialog : Window
     private void PublishButton_Click(object sender, RoutedEventArgs e) =>
         UiAsync.Run("执行发布", async () =>
         {
-        var guild = GuildCombo.SelectedItem as ChannelChoice;
-        var channel = ChannelCombo.SelectedItem as ChannelChoice;
-        if (guild is null
-            || channel is null
-            || !await IsCachedChannelSelectionValidAsync(guild, channel))
-        {
-            MessageBox.Show(this, "频道或版块已变化，请重新选择后再发布。", "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        var sourceMedia = _sourceMaterial?.MediaLinks ?? (_sourceDraft?.Media is { Count: > 0 } draftMedia ? draftMedia : _mediaPaths);
-        var previewRequest = new PublishRequest(guild?.Id ?? "", channel?.Id ?? "", ContentBox.Text, TitleBox.Text, _feedType, sourceMedia);
-        var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest, allowUnknownSources: true);
-        if (validation.Length > 0)
-        {
-            MessageBox.Show(this, validation, "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
+            if (Interlocked.CompareExchange(ref _publishInProgress, 1, 0) != 0) return;
 
-        var media = previewRequest.MediaPaths.Count == 0 ? "（无）" : string.Join("\n", previewRequest.MediaPaths.Select(DisplayMediaSource));
-        var confirmation = MessageBox.Show(this,
-            $"将发布真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")}帖子：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{(string.IsNullOrWhiteSpace(previewRequest.Content) ? "（无正文）" : previewRequest.Content)}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
-            "确认真实发帖", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes) return;
+            PublishButton.IsEnabled = false;
+            try
+            {
+                var guild = GuildCombo.SelectedItem as ChannelChoice;
+                var channel = ChannelCombo.SelectedItem as ChannelChoice;
+                if (guild is null
+                    || channel is null
+                    || !await IsCachedChannelSelectionValidAsync(guild, channel))
+                {
+                    MessageBox.Show(this, "频道或版块已变化，请重新选择后再发布。", "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                var sourceMedia = _sourceMaterial?.MediaLinks ?? _mediaPaths;
+                var previewRequest = new PublishRequest(guild?.Id ?? "", channel?.Id ?? "", ContentBox.Text, TitleBox.Text, _feedType, sourceMedia);
+                var validation = CliWorkflow.ValidatePublishRequestSources(previewRequest, allowUnknownSources: true);
+                if (validation.Length > 0)
+                {
+                    MessageBox.Show(this, validation, "请检查输入", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
 
-        PublishButton.IsEnabled = false;
-        FooterStatus.Text = _feedType == FeedType.Text ? "正在发布，请稍候…" : "正在准备媒体文件…";
-        try
-        {
-            var outcome = await _publisher.ExecuteAsync(previewRequest, guild!.Name, channel!.Name);
-            Result = outcome.Result;
-            if (Result.Succeeded && _sourceDraft is not null && _contentLibrary is not null)
-                await _contentLibrary.MarkDraftPublishedAsync(_sourceDraft.Id);
-            var details = Result.Message;
-            if (!string.IsNullOrWhiteSpace(Result.Url)) details += $"\n帖子链接：{Result.Url}";
-            if (!string.IsNullOrWhiteSpace(Result.PostId)) details += $"\n帖子 ID：{Result.PostId}";
-            if (!Result.Succeeded && Result.Category == PublishErrorCategory.Timeout)
-                details += "\n请先核实目标频道，不要立即重试。";
-            DialogStatus.Text = details;
-            FooterStatus.Text = Result.Succeeded ? "发布成功" : $"发布未完成：{Result.Category}";
-            MessageBox.Show(this, details, Result.Succeeded ? "发布结果" : "发布未成功", MessageBoxButton.OK,
-                Result.Succeeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
-            DialogResult = true;
-        }
-        catch (Exception ex)
-        {
-            FooterStatus.Text = "发布结果待确认；请先核实频道。";
-            MessageBox.Show(this, $"发布结果尚未确认，请先核实目标频道是否已出现帖子。\n\n{CliDiagnostics.Sanitize(ex.Message)}\n\n不要立即重试。", "发布结果待确认", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            PublishButton.IsEnabled = true;
-        }
+                var media = previewRequest.MediaPaths.Count == 0 ? "（无）" : string.Join("\n", previewRequest.MediaPaths.Select(DisplayMediaSource));
+                var confirmation = MessageBox.Show(this,
+                    $"将发布真实{(_feedType == FeedType.Text ? "文本" : _feedType == FeedType.Image ? "图片" : "视频")}帖子：\n\n频道：{guild!.Name}（{guild.Id}）\n版块：{channel!.Name}（{channel.Id}）\n标题：{(string.IsNullOrWhiteSpace(previewRequest.Title) ? "（无标题，短贴）" : previewRequest.Title.Trim())}\n来源：{GetSourceDisplay()}\n\n正文：\n{(string.IsNullOrWhiteSpace(previewRequest.Content) ? "（无正文）" : previewRequest.Content)}\n\n媒体文件：\n{media}\n\n发布后可能无法撤回。确认发布？",
+                    "确认真实发帖", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (confirmation != MessageBoxResult.Yes) return;
+
+                FooterStatus.Text = _feedType == FeedType.Text ? "正在发布，请稍候…" : "正在准备媒体文件…";
+                try
+                {
+                    var outcome = await _publisher.ExecuteAsync(previewRequest, guild!.Name, channel!.Name);
+                    Result = outcome.Result;
+                    var details = Result.Message;
+                    if (!string.IsNullOrWhiteSpace(Result.Url)) details += $"\n帖子链接：{Result.Url}";
+                    if (!string.IsNullOrWhiteSpace(Result.PostId)) details += $"\n帖子 ID：{Result.PostId}";
+                    if (!Result.Succeeded && Result.Category == PublishErrorCategory.Timeout)
+                        details += "\n请先核实目标频道，不要立即重试。";
+                    DialogStatus.Text = details;
+                    FooterStatus.Text = Result.Succeeded ? "发布成功" : $"发布未完成：{Result.Category}";
+                    MessageBox.Show(this, details, Result.Succeeded ? "发布结果" : "发布未成功", MessageBoxButton.OK,
+                        Result.Succeeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                    DialogResult = true;
+                }
+                catch (Exception ex)
+                {
+                    FooterStatus.Text = "发布结果待确认；请先核实频道。";
+                    MessageBox.Show(this, $"发布结果尚未确认，请先核实目标频道是否已出现帖子。\n\n{CliDiagnostics.Sanitize(ex.Message)}\n\n不要立即重试。", "发布结果待确认", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _publishInProgress, 0);
+                PublishButton.IsEnabled = true;
+            }
         });
 
     private async Task<bool> IsCachedChannelSelectionValidAsync(ChannelChoice guild, ChannelChoice channel)
@@ -305,8 +279,6 @@ public partial class PublishDialog : Window
 
     private string GetSourceDisplay()
     {
-        if (_sourceDraft is not null)
-            return string.IsNullOrWhiteSpace(_sourceDraft.SourceUrl) ? "手动草稿" : _sourceDraft.SourceUrl;
         if (_sourceMaterial is not null)
             return "素材库";
         return "（无）";

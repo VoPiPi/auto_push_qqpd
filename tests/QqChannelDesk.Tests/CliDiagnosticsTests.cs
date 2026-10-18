@@ -550,6 +550,7 @@ public sealed class CliWorkflowTests
     [Theory]
     [InlineData("无权限", PublishErrorCategory.Permission)]
     [InlineData("rate limit exceeded", PublishErrorCategory.RateLimit)]
+    [InlineData("发帖失败（错误码 20063）：操作过于频繁，请稍候再试", PublishErrorCategory.RateLimit)]
     [InlineData("内容审核拒绝", PublishErrorCategory.ContentRejected)]
     [InlineData("未登录", PublishErrorCategory.Authentication)]
     public void ClassifiesPublishErrors(string message, PublishErrorCategory expected)

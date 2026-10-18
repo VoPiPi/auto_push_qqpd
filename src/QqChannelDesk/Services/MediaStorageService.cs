@@ -17,13 +17,6 @@ public sealed class MediaStorageService
         return settings.EffectiveMaterialStoragePath;
     }
 
-    public async Task<bool> ValidateAndPrepareDirectoryAsync(string path, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var result = await ValidateDirectoryAsync(path, cancellationToken);
-        return result.Succeeded;
-    }
-
     public static async Task<StorageDirectoryResult> ValidateDirectoryAsync(string path, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path)) return new(false, "请选择素材文件存储路径。", "");
@@ -123,7 +116,7 @@ public sealed class MediaStorageService
 
 
     /// <summary>
-    /// 判断是否为 TG 采集草稿的临时媒体（temp/telegram/日期/频道）。这类文件属于发布成功即清理的
+    /// 判断是否为 TG 采集的临时媒体（temp/telegram/日期/频道）。这类文件属于发布成功即清理的
     /// 暂存数据，与素材库原件（library/）和任务副本（jobs/）分开；预览缓存 preview/ 不在清理范围。
     /// </summary>
     public static bool IsTelegramStagingPath(string path, string? root = null)

@@ -14,6 +14,7 @@ public sealed class TelegramCollectionScheduler
     private readonly ContentLibraryStore _library;
     private readonly TelegramCollectorService _collector;
     private readonly TelegramMaterializer _materializer;
+    private readonly PublishAutoScheduleService? _autoSchedule;
     private readonly WebProxyProviderRegistry _proxyRegistry;
     private readonly AppLogger _logger;
     private readonly SemaphoreSlim _runLock = new(1, 1);
@@ -35,12 +36,14 @@ public sealed class TelegramCollectionScheduler
         ContentLibraryStore library,
         TelegramCollectorService? collector = null,
         WebProxyProviderRegistry? proxyRegistry = null,
-        AppLogger? logger = null)
+        AppLogger? logger = null,
+        PublishAutoScheduleService? autoSchedule = null)
     {
         _store = store;
         _library = library;
         _collector = collector ?? new TelegramCollectorService(proxyRegistry);
         _materializer = new TelegramMaterializer(_collector, _library);
+        _autoSchedule = autoSchedule;
         _proxyRegistry = proxyRegistry ?? new WebProxyProviderRegistry();
         _logger = logger ?? AppLogger.Instance;
     }
@@ -412,6 +415,8 @@ public sealed class TelegramCollectionScheduler
         var matched = 0;
         var unmatched = 0;
         var failedMedia = 0;
+        var autoScheduled = 0;
+        var autoScheduleSkipped = 0;
         try
         {
             Report(schedule, "准备", 0, 0, "正在准备采集…");
@@ -448,7 +453,41 @@ public sealed class TelegramCollectionScheduler
                 if (materialized.SkippedDuplicate || materialized.SkippedEmpty)
                     skipped++;
                 else if (materialized.Succeeded && materialized.FailedMediaCount == 0)
+                {
                     added++;
+                    if (schedule.AutoScheduleEnabled &&
+                        autoScheduled < schedule.AutoScheduleMaxPerRun &&
+                        _autoSchedule is not null &&
+                        target is not null &&
+                        materialized.MaterialId is long materialId)
+                    {
+                        try
+                        {
+                            var scheduleResult = await _autoSchedule.TryQueueAsync(
+                                materialId,
+                                target.GuildId,
+                                target.ChannelId,
+                                schedule.AutoScheduleDelayMinutes,
+                                cancellationToken);
+                            if (scheduleResult.Scheduled) autoScheduled++;
+                            else autoScheduleSkipped++;
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            autoScheduleSkipped++;
+                            _logger.Warning(
+                                $"TG 素材自动排期失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                        }
+                    }
+                    else if (schedule.AutoScheduleEnabled)
+                    {
+                        autoScheduleSkipped++;
+                    }
+                }
                 else
                     skipped++;
 
@@ -458,11 +497,14 @@ public sealed class TelegramCollectionScheduler
                 Report(schedule, "写入素材", index + 1, preview.Messages.Count, itemResult);
             }
 
-            var detail = $"新增 {added} 条，跳过 {skipped} 条，命中规则 {matched} 条，未命中 {unmatched} 条，媒体失败 {failedMedia} 个";
+            var autoScheduleDetail = schedule.AutoScheduleEnabled
+                ? $"，自动排期 {autoScheduled} 条，未排期 {autoScheduleSkipped} 条"
+                : "";
+            var detail = $"新增 {added} 条，跳过 {skipped} 条，命中规则 {matched} 条，未命中 {unmatched} 条，媒体失败 {failedMedia} 个{autoScheduleDetail}";
             await _store.UpdateResultAsync(schedule.Id, started, true, added, detail, cancellationToken: cancellationToken);
             _logger.Info($"TG 定时采集 {schedule.ChannelUrl}：{detail}");
             Report(schedule, "完成", preview.Messages.Count, preview.Messages.Count, $"采集完成，{detail}。");
-            return new(schedule.Id, true, added, skipped, matched, unmatched, failedMedia, detail);
+            return new(schedule.Id, true, added, skipped, matched, unmatched, failedMedia, detail, autoScheduled, autoScheduleSkipped);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -528,7 +570,9 @@ public sealed record TelegramCollectionRunResult(
     int MatchedRuleCount,
     int UnmatchedCount,
     int FailedMediaCount,
-    string Message);
+    string Message,
+    int AutoScheduledCount = 0,
+    int AutoScheduleSkippedCount = 0);
 public sealed record TelegramCollectionProgress(long ScheduleId, string ChannelName, string Stage, int Current, int Total, string Message);
 
 public sealed record TelegramCollectionSchedulerStatus(

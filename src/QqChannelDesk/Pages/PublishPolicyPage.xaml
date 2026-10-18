@@ -1,0 +1,154 @@
+<UserControl x:Class="QqChannelDesk.Pages.PublishPolicyPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="28,24,28,22">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <DockPanel Grid.Row="0" Margin="0,0,0,14">
+      <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource QuietButton}" VerticalAlignment="Top" Margin="12,4,0,0" Click="RefreshButton_Click"/>
+      <StackPanel>
+        <TextBlock Text="发布策略" Style="{StaticResource PageTitle}"/>
+        <TextBlock Text="设定采集素材入库后的自动排期窗口、随机间隔与每日额度；手工发布计划不受这些限制。"
+                   Foreground="{StaticResource Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+      </StackPanel>
+    </DockPanel>
+
+    <Border x:Name="NameHintBorder" Grid.Row="1" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoLine}"
+            BorderThickness="1" CornerRadius="5" Padding="12,8" Margin="0,0,0,12" Visibility="Collapsed">
+      <TextBlock x:Name="NameHintText" Foreground="{StaticResource Info}" TextWrapping="Wrap"/>
+    </Border>
+
+    <TabControl Grid.Row="2">
+      <TabItem Header="版块策略">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="0,2,0,10">
+            <TextBlock x:Name="PolicyCountText" DockPanel.Dock="Right" Text="共 0 条策略" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+            <Button Content="新增版块策略" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Click="NewPolicyButton_Click"/>
+          </DockPanel>
+          <Grid Grid.Row="1">
+            <DataGrid x:Name="PoliciesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                      SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" CanUserResizeColumns="True"
+                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Header="频道 / 版块" Width="2*">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding TargetDisplay}" Style="{StaticResource DataGridCellText}"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="状态" Width="78">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
+                        <TextBlock Text="{Binding StatusLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding StatusLabel, Converter={StaticResource StatusStrongBrushConverter}}"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="发布窗口" Binding="{Binding WindowDisplay}" Width="104" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="随机间隔" Binding="{Binding IntervalDisplay}" Width="110" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="每日" Binding="{Binding DailyLimitDisplay}" Width="74" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="并发" Binding="{Binding ConcurrencyDisplay}" Width="58" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="排队" Binding="{Binding QueueLimitDisplay}" Width="70" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="150">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Style="{StaticResource TableActionPanel}">
+                        <Button Content="{Binding ToggleLabel}" Style="{StaticResource TableLinkButton}" Click="TogglePolicyButton_Click" ToolTip="启用或停用该版块的自动排期"/>
+                        <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="EditPolicyButton_Click"/>
+                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="DeletePolicyButton_Click"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+            <Border x:Name="PoliciesEmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}" CornerRadius="0,0,5,5"
+                    IsHitTestVisible="False" Visibility="Collapsed">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="尚未配置版块策略" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                <TextBlock Text="新增策略后，匹配频道和版块的新素材会在发布窗口内自动排队。"
+                           Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" TextWrapping="Wrap" Margin="0,7,0,0"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Grid>
+      </TabItem>
+      <TabItem Header="频道预算">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="0,2,0,10">
+            <TextBlock x:Name="BudgetCountText" DockPanel.Dock="Right" Text="共 0 条预算" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+            <Button Content="新增频道预算" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Click="NewBudgetButton_Click"/>
+          </DockPanel>
+          <Grid Grid.Row="1">
+            <DataGrid x:Name="BudgetsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                      SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" CanUserResizeColumns="True"
+                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Header="频道" Width="2*">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding GuildDisplay}" Style="{StaticResource DataGridCellText}"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="状态" Width="78">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
+                        <TextBlock Text="{Binding StatusLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding StatusLabel, Converter={StaticResource StatusStrongBrushConverter}}"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="每日自动发布上限" Binding="{Binding DailyLimitDisplay}" Width="160" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="150">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Style="{StaticResource TableActionPanel}">
+                        <Button Content="{Binding ToggleLabel}" Style="{StaticResource TableLinkButton}" Click="ToggleBudgetButton_Click" ToolTip="启用或停用该频道的整体自动发布预算"/>
+                        <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="EditBudgetButton_Click"/>
+                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="DeleteBudgetButton_Click"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+            <Border x:Name="BudgetsEmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}" CornerRadius="0,0,5,5"
+                    IsHitTestVisible="False" Visibility="Collapsed">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="尚未配置频道预算" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                <TextBlock Text="频道预算限制整个频道内的自动发布总量；未配置时只受各版块策略约束。"
+                           Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" TextWrapping="Wrap" Margin="0,7,0,0"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Grid>
+      </TabItem>
+    </TabControl>
+
+    <Grid Grid.Row="3" Margin="0,12,0,0">
+      <TextBlock x:Name="StatusText" Text="尚未加载发布策略" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+      <TextBlock x:Name="LastRefreshText" Text="尚未刷新" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+    </Grid>
+  </Grid>
+</UserControl>

@@ -34,8 +34,14 @@ public sealed class DashboardService
         var today = DateOnly.FromDateTime(now.LocalDateTime);
 
         var pending = materials.Count(item => item.Status == "waitsend" && item.PublishAt is null);
-        var scheduled = schedules.Count(item => item.Status == ScheduleExecutionStatus.Pending && item.ScheduledAt > now);
-        var overdue = schedules.Count(item => item.Status == ScheduleExecutionStatus.Pending && item.ScheduledAt <= now);
+        var scheduled = schedules.Count(item =>
+            item.Status == ScheduleExecutionStatus.Pending &&
+            !item.IsPaused &&
+            item.ScheduledAt > now);
+        var overdue = schedules.Count(item =>
+            item.Status == ScheduleExecutionStatus.Pending &&
+            !item.IsPaused &&
+            item.ScheduledAt <= now);
         var running = schedules.Count(item => item.Status == ScheduleExecutionStatus.Running);
         var scheduleSucceeded = schedules.Count(item => item.Status == ScheduleExecutionStatus.Succeeded);
         var scheduleFailed = schedules.Count(item => item.Status == ScheduleExecutionStatus.Failed);

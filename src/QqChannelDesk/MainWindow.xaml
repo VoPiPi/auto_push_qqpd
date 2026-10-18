@@ -27,18 +27,6 @@
         </Setter.Value>
       </Setter>
     </Style>
-    <Style x:Key="SubNavigationButton" TargetType="Button" BasedOn="{StaticResource NavigationButton}">
-      <Setter Property="Height" Value="34" />
-      <Setter Property="Margin" Value="0,0,0,3" />
-      <Setter Property="Padding" Value="24,0,8,0" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="#BBC9C1" />
-    </Style>
-    <Style x:Key="ActiveSubNavigationButton" TargetType="Button" BasedOn="{StaticResource SubNavigationButton}">
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="Background" Value="{StaticResource Accent}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
     <Style x:Key="ActiveNavigationButton" TargetType="Button" BasedOn="{StaticResource NavigationButton}">
       <Setter Property="Foreground" Value="White" />
       <Setter Property="Background" Value="{StaticResource Accent}" />
@@ -89,6 +77,12 @@
               <StackPanel Orientation="Horizontal">
                 <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M8,2 v4 M16,2 v4 M5,4 h14 a2,2 0 0 1 2,2 v14 a2,2 0 0 1 -2,2 h-14 a2,2 0 0 1 -2,-2 v-14 a2,2 0 0 1 2,-2 z M3,10 h18 M12,14 v3 l2,1.5" />
                 <TextBlock Text="发布计划" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="PublishPolicyNavButton" Style="{StaticResource NavigationButton}" Tag="发布策略" Click="NavigationButton_Click" ToolTip="配置自动发布的频道版块策略与每日预算">
+              <StackPanel Orientation="Horizontal">
+                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M5,6 h14 M5,12 h14 M5,18 h14 M9,4 v4 M15,10 v4 M7,16 v4" />
+                <TextBlock Text="发布策略" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
               </StackPanel>
             </Button>
             <Button x:Name="HistoryNavButton" Style="{StaticResource NavigationButton}" Tag="发布记录" Click="NavigationButton_Click" ToolTip="查看已保存的发布历史">

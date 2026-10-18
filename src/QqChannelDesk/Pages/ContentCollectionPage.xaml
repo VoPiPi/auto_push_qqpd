@@ -199,6 +199,7 @@
               <DataGridTextColumn Header="执行计划" Binding="{Binding CronDisplay}" Width="82" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="采集数量" Binding="{Binding MessageLimitDisplay}" Width="88" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="分发目标" Binding="{Binding DistributionDisplay}" Width="1.3*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="自动排期" Binding="{Binding AutoScheduleDisplay}" Width="1.15*" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTemplateColumn Header="状态" Width="86"><DataGridTemplateColumn.CellTemplate><DataTemplate><Border Style="{StaticResource StatusPill}" Background="{Binding EnabledLabel, Converter={StaticResource StatusSoftBrushConverter}}"><TextBlock Text="{Binding EnabledLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding EnabledLabel, Converter={StaticResource StatusStrongBrushConverter}}"/></Border></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
               <DataGridTextColumn Header="下次执行" Binding="{Binding NextRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
               <DataGridTextColumn Header="最近采集" Binding="{Binding LastRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>

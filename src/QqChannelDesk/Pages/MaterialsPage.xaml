@@ -8,8 +8,8 @@
     <DockPanel Grid.Row="2" LastChildFill="True">
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
         <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
-        <ComboBox x:Name="MaterialStatusFilter" Width="130" SelectedIndex="0" Margin="8,0,0,0">
-          <ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
+        <ComboBox x:Name="MaterialStatusFilter" Width="150" SelectedIndex="0" Margin="8,0,0,0">
+          <ComboBoxItem Content="待发布及排队中" Tag="active"/><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
         </ComboBox>
         <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchMaterialsButton_Click"/>
         <Button Content="下载模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click"/>
@@ -58,7 +58,6 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="52" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="标题/正文" Binding="{Binding TitleContentDisplay}" Width="2*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="48" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="来源" Binding="{Binding SourceDisplay}" Width="1.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
@@ -78,9 +77,9 @@
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <StackPanel Style="{StaticResource TableActionPanel}">
-                  <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="EditMaterialButton_Click"/>
-                  <Button Content="发布" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="PublishMaterialButton_Click"/>
-                  <Button Content="删除" Style="{StaticResource TableLinkButton}" Click="DeleteMaterialButton_Click"/>
+                  <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" IsEnabled="{Binding CanEdit}" Click="EditMaterialButton_Click"/>
+                  <Button Content="发布" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" IsEnabled="{Binding CanPublish}" Click="PublishMaterialButton_Click"/>
+                  <Button Content="删除" Style="{StaticResource TableLinkButton}" IsEnabled="{Binding CanDelete}" Click="DeleteMaterialButton_Click"/>
                 </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>

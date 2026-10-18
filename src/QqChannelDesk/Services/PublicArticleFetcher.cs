@@ -22,12 +22,7 @@ public sealed class PublicArticleFetcher
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 EnsurePublicAddress(await Dns.GetHostAddressesAsync(current.DnsSafeHost, cancellationToken));
-                using var handler = new SocketsHttpHandler
-                {
-                    AllowAutoRedirect = false,
-                    ConnectTimeout = TimeSpan.FromSeconds(8),
-                    ConnectCallback = ConnectPublicAsync
-                };
+                using var handler = CreateHandler(current);
                 using var client = new HttpClient(handler) { Timeout = RequestTimeout };
                 using var request = new HttpRequestMessage(HttpMethod.Get, current);
                 request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-page-reader)");
@@ -95,7 +90,7 @@ public sealed class PublicArticleFetcher
         {
             cancellationToken.ThrowIfCancellationRequested();
             EnsurePublicAddress(await Dns.GetHostAddressesAsync(current.DnsSafeHost, cancellationToken));
-            using var handler = new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(8), ConnectCallback = ConnectPublicAsync };
+            using var handler = CreateHandler(current);
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-media-reader)");
@@ -187,17 +182,77 @@ public sealed class PublicArticleFetcher
         return (title.Length > 300 ? title[..300] : title, content);
     }
 
-    private static async ValueTask<Stream> ConnectPublicAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    internal static Uri? GetConfiguredProxyUri(Uri target, IWebProxy proxy)
     {
-        var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken);
-        EnsurePublicAddress(addresses);
+        if (proxy.IsBypassed(target)) return null;
+        var candidate = proxy.GetProxy(target);
+        return candidate is null || IsSameEndpoint(candidate, target) ? null : candidate;
+    }
+
+    internal static bool IsConfiguredProxyEndpoint(DnsEndPoint endpoint, Uri proxy)
+    {
+        if (endpoint.Port != proxy.Port) return false;
+        var endpointHost = endpoint.Host.Trim('[', ']');
+        var proxyHost = proxy.Host.Trim('[', ']');
+        if (IPAddress.TryParse(endpointHost, out var endpointAddress) &&
+            IPAddress.TryParse(proxyHost, out var proxyAddress))
+            return endpointAddress.Equals(proxyAddress);
+        return string.Equals(endpointHost, proxyHost, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(endpointHost, proxy.DnsSafeHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static SocketsHttpHandler CreateHandler(Uri target)
+    {
+        var systemProxy = HttpClient.DefaultProxy;
+        var proxyUri = GetConfiguredProxyUri(target, systemProxy);
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(8),
+            UseProxy = proxyUri is not null
+        };
+        if (proxyUri is null)
+        {
+            handler.ConnectCallback = ConnectPublicAsync;
+        }
+        else
+        {
+            handler.Proxy = systemProxy;
+            handler.ConnectCallback = (context, cancellationToken) =>
+                ConnectPublicOrConfiguredProxyAsync(context, proxyUri, cancellationToken);
+        }
+        return handler;
+    }
+
+    private static ValueTask<Stream> ConnectPublicOrConfiguredProxyAsync(
+        SocketsHttpConnectionContext context,
+        Uri proxyUri,
+        CancellationToken cancellationToken)
+    {
+        return IsConfiguredProxyEndpoint(context.DnsEndPoint, proxyUri)
+            ? ConnectEndpointAsync(context.DnsEndPoint, requirePublicAddress: false, cancellationToken)
+            : ConnectPublicAsync(context, cancellationToken);
+    }
+
+    private static ValueTask<Stream> ConnectPublicAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        return ConnectEndpointAsync(context.DnsEndPoint, requirePublicAddress: true, cancellationToken);
+    }
+
+    private static async ValueTask<Stream> ConnectEndpointAsync(
+        DnsEndPoint endpoint,
+        bool requirePublicAddress,
+        CancellationToken cancellationToken)
+    {
+        var addresses = await Dns.GetHostAddressesAsync(endpoint.Host, cancellationToken);
+        if (requirePublicAddress) EnsurePublicAddress(addresses);
         Exception? lastError = null;
         foreach (var address in addresses)
         {
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             try
             {
-                await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), cancellationToken);
+                await socket.ConnectAsync(new IPEndPoint(address, endpoint.Port), cancellationToken);
                 return new NetworkStream(socket, ownsSocket: true);
             }
             catch (Exception ex) when (ex is SocketException or OperationCanceledException)
@@ -210,12 +265,17 @@ public sealed class PublicArticleFetcher
         throw new HttpRequestException("无法连接到公开网页服务器。", lastError);
     }
 
-    private static void EnsurePublicAddress(IEnumerable<IPAddress> addresses)
+    internal static void EnsurePublicAddress(IEnumerable<IPAddress> addresses)
     {
         var resolved = addresses.ToArray();
         if (resolved.Length == 0 || resolved.Any(address => !IsPublic(address)))
             throw new HttpRequestException("网页域名解析到本机、私有或链路本地地址，已阻止访问。");
     }
+
+    private static bool IsSameEndpoint(Uri left, Uri right) =>
+        left.Scheme.Equals(right.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        left.Host.Equals(right.Host, StringComparison.OrdinalIgnoreCase) &&
+        left.Port == right.Port;
 
     private static bool IsPublic(IPAddress address)
     {

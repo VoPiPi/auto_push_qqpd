@@ -307,7 +307,7 @@ public sealed class CliWorkflow
     private static PublishErrorCategory ClassifyPublishError(string text)
     {
         if (Contains(text, "permission", "权限", "forbidden", "403")) return PublishErrorCategory.Permission;
-        if (Contains(text, "rate limit", "频率", "限流", "too many", "429")) return PublishErrorCategory.RateLimit;
+        if (Contains(text, "rate limit", "频率", "限流", "too many", "429", "操作过于频繁", "20063")) return PublishErrorCategory.RateLimit;
         if (Contains(text, "content", "内容", "审核", "违规", "拒绝")) return PublishErrorCategory.ContentRejected;
         if (Contains(text, "login", "未登录", "unauthorized", "授权", "token", "8011")) return PublishErrorCategory.Authentication;
         return PublishErrorCategory.Other;

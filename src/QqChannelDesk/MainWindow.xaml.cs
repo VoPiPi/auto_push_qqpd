@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     private readonly ContentLibraryStore _contentLibrary;
     private readonly ProxyPoolStore _proxyPoolStore;
     private readonly TelegramCollectionStore _telegramCollectionStore;
+    private readonly PublishPolicyStore _publishPolicyStore;
+    private readonly PublishAutoScheduleService _publishAutoScheduleService;
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
     private readonly TelegramCollectionScheduler _telegramCollectionScheduler;
@@ -43,6 +45,7 @@ public partial class MainWindow : Window
     private readonly ContentCollectionPage _contentCollectionPage;
     private readonly MaterialsPage _materialsPage;
     private readonly PublishSchedulePage _schedulePage;
+    private readonly PublishPolicyPage _publishPolicyPage;
     private readonly SettingPage _settingPage;
     private readonly IReadOnlyDictionary<string, UserControl> _pages;
     private bool _isChecking;
@@ -83,6 +86,8 @@ public partial class MainWindow : Window
         _contentLibrary = new ContentLibraryStore(accountContext: _accountContext);
         _proxyPoolStore = new ProxyPoolStore();
         _telegramCollectionStore = new TelegramCollectionStore(accountContext: _accountContext);
+        _publishPolicyStore = new PublishPolicyStore(accountContext: _accountContext);
+        _publishAutoScheduleService = new PublishAutoScheduleService(_contentLibrary, _publishPolicyStore);
         _mediaStorage = new MediaStorageService(_settingsStore);
         _channelSync = new ChannelSyncService(_workflow, _channelCache);
         _publisher = new PublishExecutionService(_workflow, _historyStore, _mediaStorage, _logger);
@@ -92,7 +97,8 @@ public partial class MainWindow : Window
             _contentLibrary,
             _historyStore,
             _proxyPoolStore,
-            _telegramCollectionStore);
+            _telegramCollectionStore,
+            publishPolicies: _publishPolicyStore);
         _scheduler = new PublishScheduler(
             _contentLibrary,
             _publisher,
@@ -102,11 +108,13 @@ public partial class MainWindow : Window
         _telegramCollectionScheduler = new TelegramCollectionScheduler(
             _telegramCollectionStore,
             _contentLibrary,
+            autoSchedule: _publishAutoScheduleService,
             logger: _logger);
         _historyPage = new HistoryPage(_historyStore);
         _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore, _telegramCollectionStore, _telegramCollectionScheduler, _channelSync);
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage, _scheduler);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
+        _publishPolicyPage = new PublishPolicyPage(_publishPolicyStore, _channelSync);
         _settingPage = new SettingPage(_settingsStore, _mediaStorage, _ffmpegManager);
         _dashboardService = new DashboardService(_contentLibrary, _historyStore, _settingsStore);
         _operationsCenterPage = new OperationsCenterPage(_dashboardService, _runtimeSession, _channelSync, _publisher);
@@ -120,6 +128,7 @@ public partial class MainWindow : Window
             ["内容采集"] = _contentCollectionPage,
             ["素材库"] = _materialsPage,
             ["发布计划"] = _schedulePage,
+            ["发布策略"] = _publishPolicyPage,
             ["发布记录"] = _historyPage,
             ["运行日志"] = _logPage,
             ["账号管理"] = new AccountManagementPage(),
@@ -426,6 +435,9 @@ public partial class MainWindow : Window
             if (ReferenceEquals(PageHost.Content, _schedulePage))
                 await _schedulePage.LoadSchedulesAsync();
 
+            if (ReferenceEquals(PageHost.Content, _publishPolicyPage))
+                await _publishPolicyPage.LoadPoliciesAsync();
+
             if (ReferenceEquals(PageHost.Content, _historyPage))
                 await _historyPage.LoadRecordsAsync();
         });
@@ -440,6 +452,7 @@ public partial class MainWindow : Window
             "内容采集" => ContentCollectionNavButton,
             "素材库" => MaterialsNavButton,
             "发布计划" => ScheduleNavButton,
+            "发布策略" => PublishPolicyNavButton,
             "发布记录" => HistoryNavButton,
             "运行日志" => LogNavButton,
             "账号管理" => AccountsNavButton,
@@ -559,54 +572,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private Task OpenPublishDialogAsync(FeedType type)
-    {
-        if (_operationsCenterPage.LoginState != "已登录")
-        {
-            MessageBox.Show(this, "请先扫码登录，再重新检查登录状态。", "需要登录", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return Task.CompletedTask;
-        }
-
-        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, type, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _operationsCenterPage.SetFooter($"正在验证{(type == FeedType.Text ? "文本" : type == FeedType.Image ? "图片" : "视频")} Feed…");
-        dialog.ShowDialog();
-        if (dialog.Result is { } result)
-        {
-            var details = result.Message;
-            if (!string.IsNullOrWhiteSpace(result.Url)) details += $"\n帖子链接：{result.Url}";
-            if (!string.IsNullOrWhiteSpace(result.PostId)) details += $"\n帖子 ID：{result.PostId}";
-            _logger.Info($"{(result.Succeeded ? "发布成功" : "发布未成功")}：{details}");
-            _operationsCenterPage.SetFooter(result.Succeeded ? "帖子已发布" : $"发布未完成：{result.Category}");
-        }
-        else
-        {
-            _operationsCenterPage.SetFooter("验证窗口已关闭，未发布或发布未成功");
-        }
-        return Task.CompletedTask;
-    }
-
-    private Task OpenDraftPublishDialogAsync(ContentDraft draft)
-    {
-        if (_operationsCenterPage.LoginState != "已登录")
-        {
-            MessageBox.Show(this, "请先扫码登录，再重新检查登录状态。", "需要登录", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return Task.CompletedTask;
-        }
-
-        var mediaType = MaterialMediaValidator.InferType(draft.Media) switch { "image" => FeedType.Image, "video" => FeedType.Video, _ => FeedType.Text };
-        if (draft.Media.Count > 0 && mediaType == FeedType.Text)
-            MessageBox.Show(this, "该草稿的媒体类型无法识别或混合了图片与视频，本次只发布文字，媒体不会随帖子发送。", "媒体未附加", MessageBoxButton.OK, MessageBoxImage.Information);
-        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, mediaType, draft, _contentLibrary, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
-        _operationsCenterPage.SetFooter(mediaType == FeedType.Text ? "正在从草稿箱打开文本发布窗口…" : "正在从草稿箱打开带媒体的发布窗口…");
-        dialog.ShowDialog();
-        if (dialog.Result is { } result)
-        {
-            _logger.Info($"草稿发布{(result.Succeeded ? "成功" : "未成功")}：{CliDiagnostics.Sanitize(result.Message)}");
-            _operationsCenterPage.SetFooter(result.Succeeded ? "草稿已发布" : $"草稿发布未完成：{result.Category}");
-        }
-        return Task.CompletedTask;
-    }
-
     private async Task OpenMaterialPublishDialogAsync(MaterialRecord material)
     {
         if (_operationsCenterPage.LoginState != "已登录")
@@ -641,7 +606,7 @@ public partial class MainWindow : Window
 
         var originalStatus = material.Status;
         await _materialsPage.SetMaterialStatusAsync(material.Id, "queue");
-        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, type, contentLibrary: _contentLibrary, sourceMaterial: material, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
+        var dialog = new PublishDialog(_workflow, _channelSync, _historyStore, type, sourceMaterial: material, mediaStorage: _mediaStorage, publisher: _publisher) { Owner = this };
         _operationsCenterPage.SetFooter($"正在发布素材：{material.Title}");
         dialog.ShowDialog();
         if (dialog.Result is { Succeeded: true } result)

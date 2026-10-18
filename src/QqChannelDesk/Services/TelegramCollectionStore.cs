@@ -52,6 +52,9 @@ public sealed class TelegramCollectionStore
                     Weekday INTEGER NOT NULL DEFAULT 1,
                     TriggerTime TEXT NOT NULL DEFAULT '00:00',
                     CronExpression TEXT NOT NULL DEFAULT '',
+                    AutoScheduleEnabled INTEGER NOT NULL DEFAULT 0,
+                    AutoScheduleDelayMinutes INTEGER NOT NULL DEFAULT 30,
+                    AutoScheduleMaxPerRun INTEGER NOT NULL DEFAULT 20,
                     AccountKey TEXT NULL,
                     UNIQUE (AccountKey, ChannelUrl)
                 );
@@ -82,6 +85,9 @@ public sealed class TelegramCollectionStore
             await EnsureColumnAsync(connection, "Weekday", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
             await EnsureColumnAsync(connection, "TriggerTime", "TEXT NOT NULL DEFAULT '00:00'", cancellationToken);
             await EnsureColumnAsync(connection, "CronExpression", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await EnsureColumnAsync(connection, "AutoScheduleEnabled", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(connection, "AutoScheduleDelayMinutes", "INTEGER NOT NULL DEFAULT 30", cancellationToken);
+            await EnsureColumnAsync(connection, "AutoScheduleMaxPerRun", "INTEGER NOT NULL DEFAULT 20", cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -97,7 +103,8 @@ public sealed class TelegramCollectionStore
         command.CommandText = $"""
             SELECT Id, ChannelUrl, ChannelName, IntervalHours, Enabled, ProxySelection, MessageLimit, Keyword,
                    LastCollectedAt, LastSuccessAt, LastStatus, LastError, LastAddedCount, CreatedAt, UpdatedAt,
-                   FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression
+                   FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression,
+                   AutoScheduleEnabled, AutoScheduleDelayMinutes, AutoScheduleMaxPerRun
             FROM TelegramCollectionSchedules
             WHERE {Scope("AccountKey")}
             ORDER BY Enabled DESC, ChannelName COLLATE NOCASE, Id;
@@ -117,7 +124,7 @@ public sealed class TelegramCollectionStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         var scope = Scope("AccountKey");
-        command.CommandText = $"SELECT Id, ChannelUrl, ChannelName, IntervalHours, Enabled, ProxySelection, MessageLimit, Keyword, LastCollectedAt, LastSuccessAt, LastStatus, LastError, LastAddedCount, CreatedAt, UpdatedAt, FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression FROM TelegramCollectionSchedules WHERE Id=$id AND {scope}";
+        command.CommandText = $"SELECT Id, ChannelUrl, ChannelName, IntervalHours, Enabled, ProxySelection, MessageLimit, Keyword, LastCollectedAt, LastSuccessAt, LastStatus, LastError, LastAddedCount, CreatedAt, UpdatedAt, FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression, AutoScheduleEnabled, AutoScheduleDelayMinutes, AutoScheduleMaxPerRun FROM TelegramCollectionSchedules WHERE Id=$id AND {scope}";
         command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -137,6 +144,8 @@ public sealed class TelegramCollectionStore
         var interval = NormalizeIntervalHours(draft.IntervalHours > 0 ? draft.IntervalHours : LegacyIntervalFor(frequencyType, frequencyValue));
         var limit = Math.Clamp(draft.MessageLimit, 0, 500);
         var cron = NormalizeCronExpression(draft.CronExpression, frequencyType, frequencyValue, weekday, triggerTime);
+        var autoScheduleDelay = NormalizeAutoScheduleDelay(draft.AutoScheduleDelayMinutes);
+        var autoScheduleMaxPerRun = NormalizeAutoScheduleMaxPerRun(draft.AutoScheduleMaxPerRun);
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -146,8 +155,10 @@ public sealed class TelegramCollectionStore
             command.CommandText = """
                 INSERT INTO TelegramCollectionSchedules
                     (ChannelUrl, ChannelName, IntervalHours, Enabled, ProxySelection, MessageLimit, Keyword,
-                     LastStatus, CreatedAt, UpdatedAt, FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression, AccountKey)
-                VALUES ($url,$name,$interval,$enabled,$proxy,$limit,$keyword,'从未采集',$now,$now,$frequencyType,$frequencyValue,$weekday,$triggerTime,$cron,$accountKey);
+                     LastStatus, CreatedAt, UpdatedAt, FrequencyType, FrequencyValue, Weekday, TriggerTime, CronExpression,
+                     AutoScheduleEnabled, AutoScheduleDelayMinutes, AutoScheduleMaxPerRun, AccountKey)
+                VALUES ($url,$name,$interval,$enabled,$proxy,$limit,$keyword,'从未采集',$now,$now,$frequencyType,$frequencyValue,$weekday,$triggerTime,$cron,
+                        $autoEnabled,$autoDelay,$autoMaxPerRun,$accountKey);
                 SELECT last_insert_rowid();
                 """;
         }
@@ -157,7 +168,9 @@ public sealed class TelegramCollectionStore
                 UPDATE TelegramCollectionSchedules SET ChannelUrl=$url, ChannelName=$name,
                     IntervalHours=$interval, Enabled=$enabled, ProxySelection=$proxy, MessageLimit=$limit,
                     Keyword=$keyword, FrequencyType=$frequencyType, FrequencyValue=$frequencyValue,
-                    Weekday=$weekday, TriggerTime=$triggerTime, CronExpression=$cron, UpdatedAt=$now
+                    Weekday=$weekday, TriggerTime=$triggerTime, CronExpression=$cron,
+                    AutoScheduleEnabled=$autoEnabled, AutoScheduleDelayMinutes=$autoDelay,
+                    AutoScheduleMaxPerRun=$autoMaxPerRun, UpdatedAt=$now
                 WHERE Id=$id AND {Scope("AccountKey")};
                 SELECT $id;
                 """;
@@ -175,6 +188,9 @@ public sealed class TelegramCollectionStore
         command.Parameters.AddWithValue("$weekday", weekday);
         command.Parameters.AddWithValue("$triggerTime", triggerTime);
         command.Parameters.AddWithValue("$cron", cron);
+        command.Parameters.AddWithValue("$autoEnabled", draft.AutoScheduleEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("$autoDelay", autoScheduleDelay);
+        command.Parameters.AddWithValue("$autoMaxPerRun", autoScheduleMaxPerRun);
         command.Parameters.AddWithValue("$now", now);
         AddAccountParameter(command, accountKey);
         try { return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)); }
@@ -445,6 +461,10 @@ public sealed class TelegramCollectionStore
 
     public static int NormalizeWeekday(int weekday) => Math.Clamp(weekday <= 0 ? 1 : weekday, 1, 7);
 
+    public static int NormalizeAutoScheduleDelay(int minutes) => Math.Clamp(minutes, 0, 7 * 24 * 60);
+
+    public static int NormalizeAutoScheduleMaxPerRun(int count) => Math.Clamp(count <= 0 ? 20 : count, 1, 200);
+
     public static string NormalizeTriggerTime(string? value) =>
         TimeSpan.TryParseExact(value?.Trim(), "hh\\:mm", System.Globalization.CultureInfo.InvariantCulture, out var time)
             ? time.ToString("hh\\:mm", System.Globalization.CultureInfo.InvariantCulture)
@@ -529,7 +549,9 @@ public sealed class TelegramCollectionStore
         reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4) == 1,
         reader.GetString(5), reader.GetInt32(6), reader.GetString(7), ParseDate(reader, 8), ParseDate(reader, 9),
         reader.GetString(10), reader.GetString(11), reader.GetInt32(12), DateTimeOffset.Parse(reader.GetString(13)), DateTimeOffset.Parse(reader.GetString(14)),
-        reader.GetString(15), reader.GetInt32(16), reader.GetInt32(17), reader.GetString(18), reader.GetString(19));
+        reader.GetString(15), reader.GetInt32(16), reader.GetInt32(17), reader.GetString(18), reader.GetString(19),
+        reader.GetInt32(20) == 1, NormalizeAutoScheduleDelay(reader.GetInt32(21)),
+        NormalizeAutoScheduleMaxPerRun(reader.GetInt32(22)));
 
     private static TelegramDistributionRule ReadRule(SqliteDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
@@ -566,7 +588,10 @@ public sealed record TelegramCollectionSchedule(
     int FrequencyValue = 1,
     int Weekday = 1,
     string TriggerTime = "00:00",
-    string CronExpression = "")
+    string CronExpression = "",
+    bool AutoScheduleEnabled = false,
+    int AutoScheduleDelayMinutes = 30,
+    int AutoScheduleMaxPerRun = 20)
 {
     public string EnabledLabel => Enabled ? "已启用" : "已停用";
     public string ToggleLabel => Enabled ? "关闭" : "开启";
@@ -601,6 +626,9 @@ public sealed record TelegramCollectionSchedule(
     public string MessageLimitDisplay => MessageLimit <= 0 ? "不限" : $"{MessageLimit} 条";
     public string DistributionDisplay { get; init; } = "未配置规则";
     public string ResultDisplay => LastStatus == "从未采集" ? "-" : $"{LastStatus}，新增 {LastAddedCount} 条";
+    public string AutoScheduleDisplay => AutoScheduleEnabled
+        ? $"延迟 {AutoScheduleDelayMinutes} 分钟，单次最多 {AutoScheduleMaxPerRun} 条"
+        : "未启用";
 }
 
 public sealed record TelegramCollectionScheduleDraft(
@@ -616,13 +644,19 @@ public sealed record TelegramCollectionScheduleDraft(
     int FrequencyValue = 1,
     int Weekday = 1,
     string TriggerTime = "00:00",
-    string CronExpression = "");
+    string CronExpression = "",
+    bool AutoScheduleEnabled = false,
+    int AutoScheduleDelayMinutes = 30,
+    int AutoScheduleMaxPerRun = 20);
 
 public sealed record TelegramScheduleAdvancedSettings(
     string CronExpression,
     string Keyword,
-    IReadOnlyList<TelegramDistributionRuleDraft> DistributionRules)
+    IReadOnlyList<TelegramDistributionRuleDraft> DistributionRules,
+    bool AutoScheduleEnabled = false,
+    int AutoScheduleDelayMinutes = 30,
+    int AutoScheduleMaxPerRun = 20)
 {
     public static TelegramScheduleAdvancedSettings Default { get; } =
-        new("0 0 * * *", "", []);
+        new("0 0 * * *", "", [], false, 30, 20);
 }
