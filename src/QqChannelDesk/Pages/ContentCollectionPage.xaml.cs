@@ -51,6 +51,9 @@ public partial class ContentCollectionPage : UserControl
     private string _scheduleCronExpression = "0 0 * * *";
     private string _scheduleKeyword = "";
     private IReadOnlyList<TelegramDistributionRuleDraft> _scheduleRules = [];
+    private bool _scheduleAutoScheduleEnabled;
+    private int _scheduleAutoScheduleDelayMinutes = 30;
+    private int _scheduleAutoScheduleMaxPerRun = 20;
     // 每一行采集各自持有一个令牌：只有正在采集（或排队等待执行）的那一行会被锁定。
     private readonly Dictionary<long, CancellationTokenSource> _telegramScheduleRuns = [];
     private readonly HashSet<long> _runningScheduleIds = [];
@@ -261,13 +264,6 @@ public partial class ContentCollectionPage : UserControl
         FetchButton.IsEnabled = enabled;
     }
 
-    private void SetItemMessage(string message, bool succeeded)
-    {
-        if (!IsPageActiveForUpdates) return;
-        ItemMessage.Text = message;
-        ItemMessage.Foreground = succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
-    }
-
     private void ShowMediaInfo(IReadOnlyList<string>? media = null)
     {
         var paths = media ?? _pendingMedia;
@@ -434,7 +430,7 @@ public partial class ContentCollectionPage : UserControl
         {
         var pageToken = CurrentPageToken;
         if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        if (MessageBox.Show(Window.GetWindow(this), "删除该采集素材？关联草稿会保留，但不再关联此素材。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show(Window.GetWindow(this), "删除该采集素材？此操作无法撤销。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         await _store.DeleteItemAsync(_selectedItem.Id);
         if (!IsPageActive(pageToken)) return;
         _selectedItem = null;
@@ -1015,6 +1011,9 @@ public partial class ContentCollectionPage : UserControl
         _scheduleCronExpression = "0 0 * * *";
         _scheduleKeyword = "";
         _scheduleRules = [];
+        _scheduleAutoScheduleEnabled = false;
+        _scheduleAutoScheduleDelayMinutes = 30;
+        _scheduleAutoScheduleMaxPerRun = 20;
         TgScheduleSaveButton.Content = "保存配置";
     }
 
@@ -1070,7 +1069,10 @@ public partial class ContentCollectionPage : UserControl
                 1,
                 1,
                 "00:00",
-                cron.Expression),
+                cron.Expression,
+                _scheduleAutoScheduleEnabled,
+                _scheduleAutoScheduleDelayMinutes,
+                _scheduleAutoScheduleMaxPerRun),
                 CancellationToken.None);
             await _telegramCollectionStore.ReplaceRulesAsync(id, rules, CancellationToken.None);
             if (!IsPageActive(pageToken)) return id;
@@ -1114,6 +1116,9 @@ public partial class ContentCollectionPage : UserControl
         _scheduleCronExpression = schedule.EffectiveCronExpression;
         _scheduleKeyword = schedule.Keyword;
         _scheduleRules = rules;
+        _scheduleAutoScheduleEnabled = schedule.AutoScheduleEnabled;
+        _scheduleAutoScheduleDelayMinutes = schedule.AutoScheduleDelayMinutes;
+        _scheduleAutoScheduleMaxPerRun = schedule.AutoScheduleMaxPerRun;
         var option = _proxyRegistry.Options.FirstOrDefault(item => string.Equals(item.Value, schedule.ProxySelection, StringComparison.OrdinalIgnoreCase));
         if (option is not null) TgScheduleProxyBox.SelectedItem = option;
         else TgScheduleProxyBox.Text = schedule.ProxySelection;
@@ -1273,7 +1278,13 @@ public partial class ContentCollectionPage : UserControl
         var pageToken = CurrentPageToken;
         if (!IsPageActive(pageToken)) return;
         var window = new TelegramScheduleAdvancedWindow(
-            new TelegramScheduleAdvancedSettings(_scheduleCronExpression, _scheduleKeyword, _scheduleRules),
+            new TelegramScheduleAdvancedSettings(
+                _scheduleCronExpression,
+                _scheduleKeyword,
+                _scheduleRules,
+                _scheduleAutoScheduleEnabled,
+                _scheduleAutoScheduleDelayMinutes,
+                _scheduleAutoScheduleMaxPerRun),
             _channelSync)
         { Owner = Window.GetWindow(this) };
         if (window.ShowDialog() != true) return;
@@ -1281,6 +1292,9 @@ public partial class ContentCollectionPage : UserControl
         _scheduleCronExpression = window.Settings.CronExpression;
         _scheduleKeyword = window.Settings.Keyword;
         _scheduleRules = window.Settings.DistributionRules;
+        _scheduleAutoScheduleEnabled = window.Settings.AutoScheduleEnabled;
+        _scheduleAutoScheduleDelayMinutes = window.Settings.AutoScheduleDelayMinutes;
+        _scheduleAutoScheduleMaxPerRun = window.Settings.AutoScheduleMaxPerRun;
         UiAsync.Observe("保存 TG 采集高级设置", SaveAdvancedSettingsAsync(pageToken));
     }
 

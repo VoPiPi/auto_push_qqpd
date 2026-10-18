@@ -90,6 +90,43 @@ public sealed class AccountIsolationTests : IDisposable
         Assert.Equal("Channel A", Assert.Single(await channels.GetChannelsAsync("guild")).Name);
     }
 
+    [Fact]
+    public async Task PublishScheduleMutations_AreIsolatedByAccount()
+    {
+        var context = new AccountContext();
+        var store = new ContentLibraryStore(_databasePath, context);
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        await store.SaveMaterialAsync(new MaterialDraft(
+            null,
+            "A 计划",
+            "text",
+            "正文",
+            "guild",
+            "频道",
+            "channel",
+            "版块",
+            DateTimeOffset.Now.AddHours(2),
+            "queue",
+            "",
+            []));
+        var execution = Assert.Single(await store.GetScheduleExecutionsAsync());
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "nickname-b"));
+        var pause = await store.SetScheduleExecutionsPausedAsync([execution.Id], true);
+        var delete = await store.DeleteScheduleExecutionsAsync([execution.Id]);
+
+        Assert.Empty(pause.AffectedIds);
+        Assert.Equal([execution.Id], pause.MissingIds);
+        Assert.Empty(delete.AffectedIds);
+        Assert.Equal([execution.Id], delete.MissingIds);
+
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        var unchanged = Assert.Single(await store.GetScheduleExecutionsAsync());
+        Assert.Equal(execution.Id, unchanged.Id);
+        Assert.Equal(ScheduleExecutionStatus.Pending, unchanged.Status);
+        Assert.False(unchanged.IsPaused);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

@@ -68,6 +68,7 @@ public sealed class StatusBrushConverter : IValueConverter
         if (status.Contains("处理中", StringComparison.Ordinal) ||
             status.Contains("执行中", StringComparison.Ordinal) ||
             status.Contains("发布中", StringComparison.Ordinal) ||
+            status.Contains("已暂停", StringComparison.Ordinal) ||
             status.Contains("待核实", StringComparison.Ordinal) ||
             status.Contains("未测", StringComparison.Ordinal))
             return StatusTone.Warning;

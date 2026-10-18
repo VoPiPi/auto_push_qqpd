@@ -25,6 +25,7 @@ public sealed class TelegramScheduleRow : INotifyPropertyChanged
     public string CronDisplay => _schedule.CronDisplay;
     public string MessageLimitDisplay => _schedule.MessageLimitDisplay;
     public string DistributionDisplay => _schedule.DistributionDisplay;
+    public string AutoScheduleDisplay => _schedule.AutoScheduleDisplay;
     public string EnabledLabel => _schedule.EnabledLabel;
     public string ToggleLabel => _schedule.ToggleLabel;
     public string NextRunDisplay => _schedule.NextRunDisplay;

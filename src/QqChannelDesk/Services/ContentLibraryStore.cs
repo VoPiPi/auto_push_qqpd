@@ -48,21 +48,6 @@ public sealed class ContentLibraryStore
                 DROP INDEX IF EXISTS UX_CollectedItems_Url;
                 CREATE INDEX IF NOT EXISTS IX_CollectedItems_Url ON CollectedItems (Url) WHERE Url <> '';
                 CREATE INDEX IF NOT EXISTS IX_CollectedItems_CollectedAt ON CollectedItems (CollectedAt DESC);
-                CREATE TABLE IF NOT EXISTS ContentDrafts (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    CollectedItemId INTEGER NULL,
-                    Title TEXT NOT NULL DEFAULT '',
-                    Content TEXT NOT NULL DEFAULT '',
-                    SourceUrl TEXT NOT NULL DEFAULT '',
-                    CreatedAt TEXT NOT NULL,
-                    UpdatedAt TEXT NOT NULL,
-                    PublishCount INTEGER NOT NULL DEFAULT 0,
-                    LastPublishedAt TEXT NULL,
-                    MediaJson TEXT NOT NULL DEFAULT '[]',
-                    AccountKey TEXT NULL,
-                    FOREIGN KEY (CollectedItemId) REFERENCES CollectedItems(Id) ON DELETE SET NULL
-                );
-                CREATE INDEX IF NOT EXISTS IX_ContentDrafts_UpdatedAt ON ContentDrafts (UpdatedAt DESC);
                 CREATE TABLE IF NOT EXISTS Materials (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     Title TEXT NOT NULL DEFAULT '',
@@ -102,6 +87,9 @@ public sealed class ContentLibraryStore
                     PublishRecordId INTEGER NULL,
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
+                    SchedulingMode TEXT NOT NULL DEFAULT 'Manual',
+                    RateLimitAttempts INTEGER NOT NULL DEFAULT 0,
+                    IsPaused INTEGER NOT NULL DEFAULT 0,
                     AccountKey TEXT NULL,
                     UNIQUE (MaterialId, ScheduledAt),
                     FOREIGN KEY (MaterialId) REFERENCES Materials(Id) ON DELETE CASCADE
@@ -119,11 +107,15 @@ public sealed class ContentLibraryStore
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
             await EnsureAccountKeyColumnAsync(connection, "CollectedItems", cancellationToken);
-            await EnsureAccountKeyColumnAsync(connection, "ContentDrafts", cancellationToken);
             await EnsureAccountKeyColumnAsync(connection, "Materials", cancellationToken);
             await EnsureAccountKeyColumnAsync(connection, "ScheduleExecutions", cancellationToken);
+            await EnsureColumnAsync(connection, "ScheduleExecutions", "SchedulingMode", "TEXT NOT NULL DEFAULT 'Manual'", cancellationToken);
+            await EnsureColumnAsync(connection, "ScheduleExecutions", "RateLimitAttempts", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(connection, "ScheduleExecutions", "IsPaused", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await using var pausedIndex = connection.CreateCommand();
+            pausedIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_ScheduleExecutions_PausedStatusTime ON ScheduleExecutions (IsPaused, Status, ScheduledAt)";
+            await pausedIndex.ExecuteNonQueryAsync(cancellationToken);
             await EnsureColumnAsync(connection, "CollectedItems", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
-            await EnsureColumnAsync(connection, "ContentDrafts", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceType", "TEXT NOT NULL DEFAULT '手工添加'", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceUrl", "TEXT NOT NULL DEFAULT ''", cancellationToken);
             // Older installations do not have the source columns yet. Create this
@@ -132,6 +124,7 @@ public sealed class ContentLibraryStore
             sourceIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_Materials_Source ON Materials (SourceType, SourceUrl)";
             await sourceIndex.ExecuteNonQueryAsync(cancellationToken);
             await EnsureMaterialSourceClaimsAsync(connection, cancellationToken);
+            await PublishPolicyStore.EnsureSchemaAsync(connection, cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -225,102 +218,9 @@ public sealed class ContentLibraryStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task<long> CreateDraftAsync(long? itemId, string title, string content, string sourceUrl, IReadOnlyList<string>? media = null, CancellationToken cancellationToken = default)
-    {
-        var accountKey = RequireAccountKey();
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        if (itemId is not null)
-        {
-            await using var itemCheck = connection.CreateCommand();
-            itemCheck.CommandText = $"SELECT 1 FROM CollectedItems WHERE Id=$itemId AND {AccountScope("AccountKey")} LIMIT 1";
-            itemCheck.Parameters.AddWithValue("$itemId", itemId.Value);
-            AddAccountParameter(itemCheck, accountKey);
-            if (await itemCheck.ExecuteScalarAsync(cancellationToken) is null)
-                throw new InvalidOperationException("采集条目不存在或不属于当前账号。");
-        }
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO ContentDrafts (CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, MediaJson, AccountKey)
-            VALUES ($itemId, $title, $content, $url, $now, $now, $media, $accountKey);
-            SELECT last_insert_rowid();
-            """;
-        command.Parameters.AddWithValue("$itemId", (object?)itemId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$title", title.Trim());
-        command.Parameters.AddWithValue("$content", content.Trim());
-        command.Parameters.AddWithValue("$url", sourceUrl.Trim());
-        command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
-        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(media ?? []));
-        AddAccountParameter(command, accountKey);
-        var id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-        if (itemId is not null) await SetItemStatusAsync(itemId.Value, "已转草稿", cancellationToken);
-        return id;
-    }
-
-    public async Task UpdateDraftAsync(ContentDraft draft, CancellationToken cancellationToken = default)
-    {
-        var accountKey = RequireAccountKey();
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE ContentDrafts SET Title=$title, Content=$content, SourceUrl=$url, MediaJson=$media, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
-        command.Parameters.AddWithValue("$title", draft.Title.Trim());
-        command.Parameters.AddWithValue("$content", draft.Content.Trim());
-        command.Parameters.AddWithValue("$url", draft.SourceUrl.Trim());
-        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(draft.Media));
-        command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
-        command.Parameters.AddWithValue("$id", draft.Id);
-        AddAccountParameter(command, accountKey);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    public async Task<IReadOnlyList<ContentDraft>> GetDraftsAsync(string? keyword = null, CancellationToken cancellationToken = default)
-    {
-        var accountKey = ReadAccountKey();
-        if (_accountContext is not null && accountKey is null) return [];
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, CollectedItemId, Title, Content, SourceUrl, CreatedAt, UpdatedAt, PublishCount, LastPublishedAt, MediaJson FROM ContentDrafts WHERE {AccountScope("AccountKey")} AND ($q='' OR Title LIKE $p OR Content LIKE $p OR SourceUrl LIKE $p) ORDER BY UpdatedAt DESC, Id DESC";
-        var query = keyword?.Trim() ?? "";
-        command.Parameters.AddWithValue("$q", query);
-        command.Parameters.AddWithValue("$p", $"%{query}%");
-        AddAccountParameter(command, accountKey);
-        var drafts = new List<ContentDraft>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            drafts.Add(new ContentDraft(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), DateTimeOffset.Parse(reader.GetString(6)), reader.GetInt32(7), reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8)), reader.IsDBNull(9) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(9)) ?? []));
-        return drafts;
-    }
-
-    public async Task DeleteDraftAsync(long id, CancellationToken cancellationToken = default)
-    {
-        var accountKey = RequireAccountKey();
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM ContentDrafts WHERE Id=$id AND {AccountScope("AccountKey")}";
-        command.Parameters.AddWithValue("$id", id);
-        AddAccountParameter(command, accountKey);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    public async Task MarkDraftPublishedAsync(long id, CancellationToken cancellationToken = default)
-    {
-        var accountKey = RequireAccountKey();
-        await InitializeAsync(cancellationToken);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE ContentDrafts SET PublishCount=PublishCount+1, LastPublishedAt=$now, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
-        command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
-        command.Parameters.AddWithValue("$id", id);
-        AddAccountParameter(command, accountKey);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     public async Task SetItemStatusAsync(long id, string status, CancellationToken cancellationToken = default)
     {
-        if (status is not ("待处理" or "保留" or "忽略" or "已入素材库" or "已转草稿")) throw new ArgumentOutOfRangeException(nameof(status));
+        if (status is not ("待处理" or "保留" or "忽略" or "已入素材库")) throw new ArgumentOutOfRangeException(nameof(status));
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
@@ -342,7 +242,8 @@ public sealed class ContentLibraryStore
         command.CommandText = """
             SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
             FROM Materials
-            WHERE ACCOUNT_SCOPE AND Status <> 'delete' AND ($status='' OR Status=$status)
+            WHERE ACCOUNT_SCOPE AND Status <> 'delete'
+              AND ($status='' OR Status=$status OR ($status='active' AND Status IN ('waitsend','queue')))
               AND ($keyword='' OR Title LIKE $pattern OR Content LIKE $pattern OR Link LIKE $pattern OR GuildName LIKE $pattern OR ChannelName LIKE $pattern)
             ORDER BY CASE Status WHEN 'queue' THEN 0 ELSE 1 END, PublishAt, Id DESC;
             """;
@@ -972,6 +873,203 @@ public sealed class ContentLibraryStore
         return ids;
     }
 
+    /// <summary>
+    /// Queues one newly collected material through an automatic publishing
+    /// policy. The policy, queue count, daily quota, and final slot are checked
+    /// again inside the write transaction so multiple TG tasks cannot oversubscribe
+    /// the same guild/channel by racing their in-memory checks.
+    /// </summary>
+    public async Task<PublishAutoScheduleResult> TryQueueAutomaticMaterialAsync(
+        long materialId,
+        DateTimeOffset notBefore,
+        PublishPolicy policy,
+        TimeSpan interval,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (materialId <= 0) throw new ArgumentOutOfRangeException(nameof(materialId));
+        if (!policy.Enabled) return PublishAutoScheduleResult.Disabled();
+        if (interval <= TimeSpan.Zero) interval = TimeSpan.FromMinutes(Math.Max(1, policy.MinIntervalMinutes));
+
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.Now;
+        var nowText = now.ToString("O");
+
+        await using (var material = connection.CreateCommand())
+        {
+            material.Transaction = transaction;
+            material.CommandText = $"""
+                SELECT GuildId, ChannelId, Status, Content, MediaJson
+                FROM Materials
+                WHERE Id=$id AND {AccountScope("AccountKey")} AND Status <> 'delete'
+                LIMIT 1;
+                """;
+            material.Parameters.AddWithValue("$id", materialId);
+            AddAccountParameter(material, accountKey);
+            await using var reader = await material.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return PublishAutoScheduleResult.NotScheduled("素材不存在或已删除。");
+            }
+
+            var guildId = reader.GetString(0);
+            var channelId = reader.GetString(1);
+            var status = reader.GetString(2);
+            var content = reader.GetString(3);
+            var mediaJson = reader.GetString(4);
+            if (!string.Equals(guildId, policy.GuildId, StringComparison.Ordinal) ||
+                !string.Equals(channelId, policy.ChannelId, StringComparison.Ordinal))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return PublishAutoScheduleResult.NotScheduled("素材目标与发布策略不一致。");
+            }
+            if (status is not ("waitsend" or "queue"))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return PublishAutoScheduleResult.NotScheduled("素材已经发布或正在处理。");
+            }
+
+            var media = JsonSerializer.Deserialize<string[]>(mediaJson) ?? [];
+            if (string.IsNullOrWhiteSpace(content) && media.Length == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return PublishAutoScheduleResult.NotScheduled("素材没有可发布内容。");
+            }
+        }
+
+        await using (var existing = connection.CreateCommand())
+        {
+            existing.Transaction = transaction;
+            existing.CommandText = $"""
+                SELECT ScheduledAt
+                FROM ScheduleExecutions
+                WHERE MaterialId=$materialId AND SchedulingMode='Auto' AND Status='Pending'
+                  AND {AccountScope("AccountKey")}
+                ORDER BY ScheduledAt ASC
+                LIMIT 1;
+                """;
+            existing.Parameters.AddWithValue("$materialId", materialId);
+            AddAccountParameter(existing, accountKey);
+            if (await existing.ExecuteScalarAsync(cancellationToken) is string existingAt)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return PublishAutoScheduleResult.AlreadyQueued(DateTimeOffset.Parse(existingAt));
+            }
+        }
+
+        var queueCount = await CountAutomaticExecutionsAsync(
+            connection,
+            transaction,
+            accountKey,
+            policy,
+            statuses: "('Pending','Running')",
+            day: null,
+            cancellationToken);
+        if (queueCount >= policy.QueueLimit)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return PublishAutoScheduleResult.QueueFull();
+        }
+
+        DateTimeOffset? latestScheduledAt = null;
+        await using (var latest = connection.CreateCommand())
+        {
+            latest.Transaction = transaction;
+            latest.CommandText = $"""
+                SELECT MAX(e.ScheduledAt)
+                FROM ScheduleExecutions e
+                INNER JOIN Materials m ON m.Id=e.MaterialId
+                WHERE e.SchedulingMode='Auto'
+                  AND e.Status IN ('Pending','Running','Succeeded','NeedsVerification')
+                  AND m.GuildId=$guildId AND m.ChannelId=$channelId
+                  AND {AccountScope("e.AccountKey")} AND {AccountScope("m.AccountKey")};
+                """;
+            latest.Parameters.AddWithValue("$guildId", policy.GuildId);
+            latest.Parameters.AddWithValue("$channelId", policy.ChannelId);
+            AddAccountParameter(latest, accountKey);
+            if (await latest.ExecuteScalarAsync(cancellationToken) is string latestAt)
+                latestScheduledAt = DateTimeOffset.Parse(latestAt);
+        }
+
+        var candidate = notBefore <= now ? now.AddSeconds(1) : notBefore;
+        if (latestScheduledAt is { } latestAtValue && latestAtValue + interval > candidate)
+            candidate = latestAtValue + interval;
+
+        var guildBudget = await ReadGuildBudgetAsync(connection, transaction, policy.GuildId, accountKey, cancellationToken);
+        for (var dayOffset = 0; dayOffset < 370; dayOffset++)
+        {
+            candidate = policy.MoveIntoWindow(candidate);
+            var day = candidate.ToString("yyyy-MM-dd");
+
+            if (await CountAutomaticExecutionsAsync(
+                    connection,
+                    transaction,
+                    accountKey,
+                    policy,
+                    statuses: "('Pending','Running','Succeeded','NeedsVerification')",
+                    day,
+                    cancellationToken) >= policy.DailyLimit)
+            {
+                candidate = policy.MoveIntoWindow(candidate.Date.AddDays(1).Add(policy.WindowStartTime.ToTimeSpan()));
+                continue;
+            }
+
+            if (guildBudget is { Enabled: true } budget &&
+                await CountAutomaticExecutionsAsync(
+                    connection,
+                    transaction,
+                    accountKey,
+                    policy,
+                    statuses: "('Pending','Running','Succeeded','NeedsVerification')",
+                    day,
+                    cancellationToken,
+                    guildOnly: true) >= budget.DailyLimit)
+            {
+                candidate = policy.MoveIntoWindow(candidate.Date.AddDays(1).Add(policy.WindowStartTime.ToTimeSpan()));
+                continue;
+            }
+
+            await using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = $"""
+                    UPDATE Materials
+                    SET Status='queue', PublishAt=$scheduledAt, UpdatedAt=$now
+                    WHERE Id=$id AND {AccountScope("AccountKey")} AND Status IN ('waitsend','queue');
+                    """;
+                update.Parameters.AddWithValue("$scheduledAt", candidate.ToString("O"));
+                update.Parameters.AddWithValue("$now", nowText);
+                update.Parameters.AddWithValue("$id", materialId);
+                AddAccountParameter(update, accountKey);
+                if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return PublishAutoScheduleResult.NotScheduled("素材状态已变化，请稍后重试。");
+                }
+            }
+
+            await CancelPendingExecutionsAsync(connection, transaction, materialId, nowText, accountKey, cancellationToken);
+            await InsertPendingExecutionAsync(
+                connection,
+                transaction,
+                materialId,
+                candidate,
+                nowText,
+                accountKey,
+                cancellationToken,
+                ScheduleExecutionMode.Auto);
+            await transaction.CommitAsync(cancellationToken);
+            return PublishAutoScheduleResult.Queued(candidate);
+        }
+
+        await transaction.RollbackAsync(cancellationToken);
+        return PublishAutoScheduleResult.QuotaFull();
+    }
+
     public async Task<bool> CancelMaterialScheduleAsync(long id, CancellationToken cancellationToken = default)
     {
         var accountKey = RequireAccountKey();
@@ -999,7 +1097,7 @@ public sealed class ContentLibraryStore
         }
         await using var cancel = connection.CreateCommand();
         cancel.Transaction = transaction;
-        cancel.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', UpdatedAt=$now, CompletedAt=$now, LastError='用户取消计划' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
+        cancel.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', IsPaused=0, UpdatedAt=$now, CompletedAt=$now, LastError='用户取消计划' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
         cancel.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         cancel.Parameters.AddWithValue("$id", id);
         AddAccountParameter(cancel, accountKey);
@@ -1019,7 +1117,7 @@ public sealed class ContentLibraryStore
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
-                   m.Content, m.MediaJson
+                   m.Content, m.MediaJson, e.SchedulingMode, e.RateLimitAttempts, e.IsPaused
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
             WHERE ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
@@ -1035,6 +1133,173 @@ public sealed class ContentLibraryStore
         return records;
     }
 
+    /// <summary>
+    /// 批量暂停或启动待执行计划。运行中的计划不会被抢占，终态记录也不会被改写。
+    /// </summary>
+    public async Task<ScheduleExecutionMutationResult> SetScheduleExecutionsPausedAsync(
+        IReadOnlyList<long> executionIds,
+        bool isPaused,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionIds);
+        var ids = executionIds.Where(id => id > 0).Distinct().ToArray();
+        if (ids.Length == 0) return new([], [], [], []);
+
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.Now.ToString("O");
+        var affectedIds = new List<long>(ids.Length);
+        var runningIds = new List<long>();
+        var finishedIds = new List<long>();
+        var missingIds = new List<long>();
+
+        foreach (var id in ids)
+        {
+            await using var read = connection.CreateCommand();
+            read.Transaction = transaction;
+            read.CommandText = $"SELECT Status FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey")} LIMIT 1";
+            read.Parameters.AddWithValue("$id", id);
+            AddAccountParameter(read, accountKey);
+            var statusText = await read.ExecuteScalarAsync(cancellationToken) as string;
+            if (statusText is null)
+            {
+                missingIds.Add(id);
+                continue;
+            }
+
+            if (!Enum.TryParse<ScheduleExecutionStatus>(statusText, true, out var status) ||
+                status != ScheduleExecutionStatus.Pending)
+            {
+                if (status == ScheduleExecutionStatus.Running) runningIds.Add(id);
+                else finishedIds.Add(id);
+                continue;
+            }
+
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = $"""
+                UPDATE ScheduleExecutions
+                SET IsPaused=$isPaused, UpdatedAt=$now
+                WHERE Id=$id AND Status='Pending' AND {AccountScope("AccountKey")};
+                """;
+            update.Parameters.AddWithValue("$isPaused", isPaused ? 1 : 0);
+            update.Parameters.AddWithValue("$now", now);
+            update.Parameters.AddWithValue("$id", id);
+            AddAccountParameter(update, accountKey);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) == 1)
+            {
+                affectedIds.Add(id);
+                continue;
+            }
+
+            await using var current = connection.CreateCommand();
+            current.Transaction = transaction;
+            current.CommandText = $"SELECT Status FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey")} LIMIT 1";
+            current.Parameters.AddWithValue("$id", id);
+            AddAccountParameter(current, accountKey);
+            var currentStatusText = await current.ExecuteScalarAsync(cancellationToken) as string;
+            if (currentStatusText is null) missingIds.Add(id);
+            else if (Enum.TryParse<ScheduleExecutionStatus>(currentStatusText, true, out var currentStatus) &&
+                     currentStatus == ScheduleExecutionStatus.Running)
+                runningIds.Add(id);
+            else
+                finishedIds.Add(id);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new(affectedIds, runningIds, finishedIds, missingIds);
+    }
+
+    /// <summary>
+    /// 删除计划执行记录，不删除素材或发布历史。待执行计划被删除后，只有在该素材
+    /// 已没有其他待执行/运行中计划时才恢复为待发布。
+    /// </summary>
+    public async Task<ScheduleExecutionMutationResult> DeleteScheduleExecutionsAsync(
+        IReadOnlyList<long> executionIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionIds);
+        var ids = executionIds.Where(id => id > 0).Distinct().ToArray();
+        if (ids.Length == 0) return new([], [], [], []);
+
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.Now.ToString("O");
+        var deletedIds = new List<long>(ids.Length);
+        var runningIds = new List<long>();
+        var finishedIds = new List<long>();
+        var missingIds = new List<long>();
+
+        foreach (var id in ids)
+        {
+            await using var read = connection.CreateCommand();
+            read.Transaction = transaction;
+            read.CommandText = $"SELECT MaterialId, Status FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey")} LIMIT 1";
+            read.Parameters.AddWithValue("$id", id);
+            AddAccountParameter(read, accountKey);
+            long materialId;
+            string statusText;
+            await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    missingIds.Add(id);
+                    continue;
+                }
+
+                materialId = reader.GetInt64(0);
+                statusText = reader.GetString(1);
+            }
+
+            if (Enum.TryParse<ScheduleExecutionStatus>(statusText, true, out var status) &&
+                status == ScheduleExecutionStatus.Running)
+            {
+                runningIds.Add(id);
+                continue;
+            }
+
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = $"DELETE FROM ScheduleExecutions WHERE Id=$id AND Status<>'Running' AND {AccountScope("AccountKey")}";
+            delete.Parameters.AddWithValue("$id", id);
+            AddAccountParameter(delete, accountKey);
+            if (await delete.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                runningIds.Add(id);
+                continue;
+            }
+
+            deletedIds.Add(id);
+            if (status != ScheduleExecutionStatus.Pending) continue;
+
+            await using var release = connection.CreateCommand();
+            release.Transaction = transaction;
+            release.CommandText = $"""
+                UPDATE Materials
+                SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now
+                WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM ScheduleExecutions e
+                      WHERE e.MaterialId=$materialId
+                        AND e.Status IN ('Pending','Running')
+                        AND {AccountScope("e.AccountKey")}
+                  );
+                """;
+            release.Parameters.AddWithValue("$now", now);
+            release.Parameters.AddWithValue("$materialId", materialId);
+            AddAccountParameter(release, accountKey);
+            await release.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new(deletedIds, runningIds, finishedIds, missingIds);
+    }
+
     public async Task<ScheduleExecutionRecord?> TryClaimDueExecutionAsync(
         DateTimeOffset now,
         bool includeOverdue = true,
@@ -1046,39 +1311,27 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
-        await using var select = connection.CreateCommand();
-        select.Transaction = transaction;
-        select.CommandText = """
-            SELECT e.Id
-            FROM ScheduleExecutions e
-            INNER JOIN Materials m ON m.Id=e.MaterialId
-            WHERE ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
-              AND e.Status='Pending' AND e.ScheduledAt <= $now AND m.Status='queue' AND m.PublishAt IS NOT NULL
-              AND ($includeOverdue=1 OR e.ScheduledAt >= $notBefore)
-            ORDER BY e.ScheduledAt ASC, e.MaterialId ASC, e.Id ASC
-            LIMIT 1;
-            """;
-        select.CommandText = select.CommandText
-            .Replace("ACCOUNT_SCOPE_EXECUTION", AccountScope("e.AccountKey"), StringComparison.Ordinal)
-            .Replace("ACCOUNT_SCOPE_MATERIAL", AccountScope("m.AccountKey"), StringComparison.Ordinal);
-        select.Parameters.AddWithValue("$now", now.ToString("O"));
-        select.Parameters.AddWithValue("$includeOverdue", includeOverdue ? 1 : 0);
-        select.Parameters.AddWithValue("$notBefore", (object?)(notBefore?.ToString("O")) ?? DBNull.Value);
-        AddAccountParameter(select, accountKey);
-        var idValue = await select.ExecuteScalarAsync(cancellationToken);
-        if (idValue is null || idValue is DBNull)
+        var executionId = await SelectClaimableExecutionAsync(
+            connection,
+            transaction,
+            now,
+            includeOverdue,
+            notBefore,
+            accountKey,
+            cancellationToken);
+        if (executionId is null)
         {
             await transaction.RollbackAsync(cancellationToken);
             return null;
         }
 
-        var executionId = Convert.ToInt64(idValue);
         var startedAt = DateTimeOffset.Now.ToString("O");
         await using var claim = connection.CreateCommand();
         claim.Transaction = transaction;
-        claim.CommandText = "UPDATE ScheduleExecutions SET Status='Running', StartedAt=$started, UpdatedAt=$started WHERE Id=$id AND Status='Pending'";
+        claim.CommandText = $"UPDATE ScheduleExecutions SET Status='Running', StartedAt=$started, UpdatedAt=$started WHERE Id=$id AND Status='Pending' AND IsPaused=0 AND {AccountScope("AccountKey")}";
         claim.Parameters.AddWithValue("$started", startedAt);
         claim.Parameters.AddWithValue("$id", executionId);
+        AddAccountParameter(claim, accountKey);
         if (await claim.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -1091,7 +1344,7 @@ public sealed class ContentLibraryStore
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
-                   m.Content, m.MediaJson
+                   m.Content, m.MediaJson, e.SchedulingMode, e.RateLimitAttempts, e.IsPaused
             FROM ScheduleExecutions e
             INNER JOIN Materials m ON m.Id=e.MaterialId
             WHERE e.Id=$id AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL;
@@ -1115,6 +1368,176 @@ public sealed class ContentLibraryStore
         return result;
     }
 
+    /// <summary>
+    /// 领取到期计划：手工计划优先且不受自动发布策略限制；自动计划逐条重新校验
+    /// 策略开关、发布窗口、版块/频道额度和版块并发，被阻塞时保持 Pending，
+    /// 从而不会让队首一个被阻塞的自动任务挡住后面的任务。
+    /// </summary>
+    private async Task<long?> SelectClaimableExecutionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        bool includeOverdue,
+        DateTimeOffset? notBefore,
+        string? accountKey,
+        CancellationToken cancellationToken)
+    {
+        var manualCandidates = await SelectDueClaimCandidatesAsync(
+            connection,
+            transaction,
+            now,
+            includeOverdue,
+            notBefore,
+            accountKey,
+            ScheduleExecutionMode.Manual,
+            1,
+            cancellationToken);
+        if (manualCandidates.Count > 0) return manualCandidates[0].Id;
+
+        var candidates = await SelectDueClaimCandidatesAsync(
+            connection,
+            transaction,
+            now,
+            includeOverdue,
+            notBefore,
+            accountKey,
+            ScheduleExecutionMode.Auto,
+            300,
+            cancellationToken);
+        var decisions = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = $"{candidate.GuildId}\u001f{candidate.ChannelId}";
+            if (!decisions.TryGetValue(key, out var allowed))
+            {
+                allowed = await CanClaimAutoExecutionAsync(
+                    connection,
+                    transaction,
+                    candidate,
+                    now,
+                    accountKey,
+                    cancellationToken);
+                decisions[key] = allowed;
+            }
+            if (allowed) return candidate.Id;
+        }
+        return null;
+    }
+
+    private async Task<IReadOnlyList<ClaimCandidate>> SelectDueClaimCandidatesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        bool includeOverdue,
+        DateTimeOffset? notBefore,
+        string? accountKey,
+        ScheduleExecutionMode schedulingMode,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT e.Id, e.SchedulingMode, m.GuildId, m.ChannelId, e.ScheduledAt
+            FROM ScheduleExecutions e
+            INNER JOIN Materials m ON m.Id=e.MaterialId
+            WHERE {AccountScope("e.AccountKey")} AND {AccountScope("m.AccountKey")}
+              AND e.Status='Pending' AND e.IsPaused=0 AND e.ScheduledAt <= $now AND m.Status='queue' AND m.PublishAt IS NOT NULL
+              AND e.SchedulingMode=$mode
+              AND ($includeOverdue=1 OR e.ScheduledAt >= $notBefore)
+            ORDER BY e.ScheduledAt ASC, e.MaterialId ASC, e.Id ASC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$now", now.ToString("O"));
+        command.Parameters.AddWithValue("$includeOverdue", includeOverdue ? 1 : 0);
+        command.Parameters.AddWithValue("$notBefore", (object?)(notBefore?.ToString("O")) ?? DBNull.Value);
+        command.Parameters.AddWithValue("$mode", schedulingMode.ToString());
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 1000));
+        AddAccountParameter(command, accountKey);
+
+        var candidates = new List<ClaimCandidate>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            candidates.Add(new ClaimCandidate(
+                reader.GetInt64(0),
+                Enum.TryParse<ScheduleExecutionMode>(reader.GetString(1), true, out var mode)
+                    ? mode
+                    : ScheduleExecutionMode.Manual,
+                reader.GetString(2),
+                reader.GetString(3),
+                DateTimeOffset.Parse(reader.GetString(4))));
+        }
+        return candidates;
+    }
+
+    private async Task<bool> CanClaimAutoExecutionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ClaimCandidate candidate,
+        DateTimeOffset now,
+        string? accountKey,
+        CancellationToken cancellationToken)
+    {
+        var policy = await ReadClaimPolicyAsync(
+            connection,
+            transaction,
+            candidate.GuildId,
+            candidate.ChannelId,
+            accountKey,
+            cancellationToken);
+        if (policy is null || !policy.Enabled) return false;
+
+        var localNow = now.ToLocalTime();
+        if (!policy.IsWithinWindow(localNow)) return false;
+
+        var day = localNow.ToString("yyyy-MM-dd");
+        // 当天已经真正开始执行的自动任务才算占用额度；Pending 在排期阶段已经计入
+        // 每日上限，这里重复统计会把队列自身算满并造成永久阻塞。
+        var committedToday = await CountAutomaticExecutionsAsync(
+            connection,
+            transaction,
+            accountKey,
+            policy,
+            "('Running','Succeeded','NeedsVerification')",
+            day,
+            cancellationToken);
+        if (committedToday >= policy.DailyLimit) return false;
+
+        var runningSameChannel = await CountAutomaticExecutionsAsync(
+            connection,
+            transaction,
+            accountKey,
+            policy,
+            "('Running')",
+            null,
+            cancellationToken);
+        if (runningSameChannel >= Math.Max(1, policy.MaxConcurrency)) return false;
+
+        var budget = await ReadGuildBudgetAsync(
+            connection,
+            transaction,
+            candidate.GuildId,
+            accountKey,
+            cancellationToken);
+        if (budget is { Enabled: true })
+        {
+            var guildCommittedToday = await CountAutomaticExecutionsAsync(
+                connection,
+                transaction,
+                accountKey,
+                policy,
+                "('Running','Succeeded','NeedsVerification')",
+                day,
+                cancellationToken,
+                guildOnly: true);
+            if (guildCommittedToday >= budget.DailyLimit) return false;
+        }
+
+        return true;
+    }
+
     public async Task<ScheduleExecutionRecord?> GetActiveScheduleExecutionAsync(long materialId, CancellationToken cancellationToken = default)
     {
         var accountKey = ReadAccountKey();
@@ -1126,7 +1549,7 @@ public sealed class ContentLibraryStore
             SELECT e.Id, e.MaterialId, e.ScheduledAt, e.Status, e.StartedAt, e.CompletedAt,
                    e.LastError, e.PublishRecordId, e.CreatedAt, e.UpdatedAt,
                    m.Title, m.Type, m.GuildName, m.ChannelName, m.PublishAt, m.Link,
-                   m.Content, m.MediaJson
+                   m.Content, m.MediaJson, e.SchedulingMode, e.RateLimitAttempts, e.IsPaused
             FROM ScheduleExecutions e
             LEFT JOIN Materials m ON m.Id=e.MaterialId
             WHERE e.MaterialId=$materialId AND ACCOUNT_SCOPE_EXECUTION AND ACCOUNT_SCOPE_MATERIAL
@@ -1149,9 +1572,53 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
-        var now = DateTimeOffset.Now.ToString("O");
+        var now = DateTimeOffset.Now;
+        var nowText = now.ToString("O");
         var status = result.Succeeded ? ScheduleExecutionStatus.Succeeded :
             result.Category == PublishErrorCategory.Timeout ? ScheduleExecutionStatus.NeedsVerification : ScheduleExecutionStatus.Failed;
+
+        long materialId;
+        var materialStatus = "";
+        var schedulingMode = ScheduleExecutionMode.Manual;
+        var rateLimitAttempts = 0;
+        string? guildId = null;
+        string? channelId = null;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = $"""
+                SELECT e.MaterialId, e.SchedulingMode, e.RateLimitAttempts, m.Status, m.GuildId, m.ChannelId
+                FROM ScheduleExecutions e
+                INNER JOIN Materials m ON m.Id=e.MaterialId
+                WHERE e.Id=$id AND {AccountScope("e.AccountKey")} AND {AccountScope("m.AccountKey")}
+                LIMIT 1;
+                """;
+            read.Parameters.AddWithValue("$id", executionId);
+            AddAccountParameter(read, accountKey);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+            materialId = reader.GetInt64(0);
+            schedulingMode = Enum.TryParse<ScheduleExecutionMode>(reader.IsDBNull(1) ? "" : reader.GetString(1), true, out var mode)
+                ? mode
+                : ScheduleExecutionMode.Manual;
+            rateLimitAttempts = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+            materialStatus = reader.GetString(3);
+            guildId = reader.IsDBNull(4) ? "" : reader.GetString(4);
+            channelId = reader.IsDBNull(5) ? "" : reader.GetString(5);
+        }
+
+        // 只有自动排期的限流失败才需要退避重排；超时保持待核实，绝不自动重试。
+        var requeueAfterRateLimit = !result.Succeeded
+            && result.Category == PublishErrorCategory.RateLimit
+            && schedulingMode == ScheduleExecutionMode.Auto
+            && materialStatus == "queue"
+            && !string.IsNullOrWhiteSpace(guildId)
+            && !string.IsNullOrWhiteSpace(channelId);
+
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
@@ -1159,7 +1626,7 @@ public sealed class ContentLibraryStore
             // This prevents a late publisher from overwriting a recovery result.
             update.CommandText = $"UPDATE ScheduleExecutions SET Status=$status, CompletedAt=$now, UpdatedAt=$now, LastError=$error, PublishRecordId=$record WHERE Id=$id AND {AccountScope("AccountKey")} AND Status='Running'";
             update.Parameters.AddWithValue("$status", status.ToString());
-            update.Parameters.AddWithValue("$now", now);
+            update.Parameters.AddWithValue("$now", nowText);
             update.Parameters.AddWithValue("$error", result.Succeeded ? "" : AppLogger.Redact(result.Message));
             update.Parameters.AddWithValue("$record", (object?)publishRecordId ?? DBNull.Value);
             update.Parameters.AddWithValue("$id", executionId);
@@ -1173,15 +1640,74 @@ public sealed class ContentLibraryStore
         await using (var material = connection.CreateCommand())
         {
             material.Transaction = transaction;
-            material.CommandText = result.Succeeded
-                ? $"UPDATE Materials SET Status='published', Link=$link, PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey", "ScheduleExecutions")}) AND {AccountScope("AccountKey")}"
-                : $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=(SELECT MaterialId FROM ScheduleExecutions WHERE Id=$id AND {AccountScope("AccountKey", "ScheduleExecutions")}) AND {AccountScope("AccountKey")} AND Status='queue'";
+            material.CommandText = requeueAfterRateLimit
+                // 限流重排的素材保持 queue，稍后写入新的发布时间。
+                ? $"UPDATE Materials SET Status='queue', UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}"
+                : result.Succeeded
+                    ? $"UPDATE Materials SET Status='published', Link=$link, PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}"
+                    : $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
             material.Parameters.AddWithValue("$link", result.Url ?? result.PostId ?? "");
-            material.Parameters.AddWithValue("$now", now);
-            material.Parameters.AddWithValue("$id", executionId);
+            material.Parameters.AddWithValue("$now", nowText);
+            material.Parameters.AddWithValue("$materialId", materialId);
             AddAccountParameter(material, accountKey);
             await material.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        if (requeueAfterRateLimit)
+        {
+            var policy = await ReadClaimPolicyAsync(
+                connection,
+                transaction,
+                guildId!,
+                channelId!,
+                accountKey,
+                cancellationToken);
+            DateTimeOffset? retryAt = null;
+            var attempts = Math.Max(1, rateLimitAttempts + 1);
+            if (policy is { Enabled: true })
+            {
+                var baseMinutes = Math.Clamp(policy.RateLimitBaseMinutes, 1, 24 * 60);
+                var maxMinutes = Math.Clamp(policy.RateLimitMaxMinutes, baseMinutes, 7 * 24 * 60);
+                var factor = Math.Pow(2, Math.Min(attempts - 1, 20));
+                var delayMinutes = Math.Min(maxMinutes, baseMinutes * factor);
+                if (!double.IsFinite(delayMinutes) || delayMinutes <= 0) delayMinutes = maxMinutes;
+                retryAt = policy.MoveIntoWindow(now.AddMinutes(Math.Clamp(delayMinutes, 1, 30 * 24 * 60)));
+            }
+
+            if (retryAt is { } scheduledAt)
+            {
+                await InsertPendingExecutionAsync(
+                    connection,
+                    transaction,
+                    materialId,
+                    scheduledAt,
+                    nowText,
+                    accountKey,
+                    cancellationToken,
+                    ScheduleExecutionMode.Auto,
+                    attempts);
+                await using var reschedule = connection.CreateCommand();
+                reschedule.Transaction = transaction;
+                reschedule.CommandText = $"UPDATE Materials SET Status='queue', PublishAt=$at, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}";
+                reschedule.Parameters.AddWithValue("$at", scheduledAt.ToString("O"));
+                reschedule.Parameters.AddWithValue("$now", nowText);
+                reschedule.Parameters.AddWithValue("$materialId", materialId);
+                AddAccountParameter(reschedule, accountKey);
+                await reschedule.ExecuteNonQueryAsync(cancellationToken);
+            }
+            else
+            {
+                // 策略已被删除或停用：把素材退回待发布，交给用户手工处理，避免永久卡在队列。
+                await using var release = connection.CreateCommand();
+                release.Transaction = transaction;
+                release.CommandText = $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
+                release.Parameters.AddWithValue("$now", nowText);
+                release.Parameters.AddWithValue("$materialId", materialId);
+                AddAccountParameter(release, accountKey);
+                await release.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
@@ -1440,39 +1966,174 @@ public sealed class ContentLibraryStore
         reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14)),
         reader.IsDBNull(15) ? "" : reader.GetString(15),
         reader.IsDBNull(16) ? "" : reader.GetString(16),
-        reader.IsDBNull(17) ? [] : (JsonSerializer.Deserialize<string[]>(reader.GetString(17)) ?? []));
+        reader.IsDBNull(17) ? [] : (JsonSerializer.Deserialize<string[]>(reader.GetString(17)) ?? []),
+        Enum.TryParse<ScheduleExecutionMode>(reader.IsDBNull(18) ? "" : reader.GetString(18), true, out var mode)
+            ? mode
+            : ScheduleExecutionMode.Manual,
+        reader.IsDBNull(19) ? 0 : reader.GetInt32(19),
+        !reader.IsDBNull(20) && reader.GetInt32(20) != 0);
 
     private async Task CancelPendingExecutionsAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, string now, string accountKey, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', CompletedAt=$now, UpdatedAt=$now, LastError='计划已重新安排' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
+        command.CommandText = $"UPDATE ScheduleExecutions SET Status='Cancelled', IsPaused=0, CompletedAt=$now, UpdatedAt=$now, LastError='计划已重新安排' WHERE MaterialId=$id AND {AccountScope("AccountKey")} AND Status='Pending'";
         command.Parameters.AddWithValue("$now", now);
         command.Parameters.AddWithValue("$id", materialId);
         AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task InsertPendingExecutionAsync(SqliteConnection connection, SqliteTransaction transaction, long materialId, DateTimeOffset scheduledAt, string now, string accountKey, CancellationToken cancellationToken)
+    private async Task InsertPendingExecutionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long materialId,
+        DateTimeOffset scheduledAt,
+        string now,
+        string accountKey,
+        CancellationToken cancellationToken,
+        ScheduleExecutionMode schedulingMode = ScheduleExecutionMode.Manual,
+        int rateLimitAttempts = 0)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO ScheduleExecutions (MaterialId, ScheduledAt, Status, CreatedAt, UpdatedAt, AccountKey)
-            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now, $accountKey)
+            INSERT INTO ScheduleExecutions (
+                MaterialId, ScheduledAt, Status, CreatedAt, UpdatedAt,
+                SchedulingMode, RateLimitAttempts, IsPaused, AccountKey)
+            VALUES ($materialId, $scheduledAt, 'Pending', $now, $now, $schedulingMode, $attempts, 0, $accountKey)
             ON CONFLICT(MaterialId, ScheduledAt) DO UPDATE SET
                 Status='Pending',
                 UpdatedAt=$now,
                 CompletedAt=NULL,
                 StartedAt=NULL,
-                LastError=''
+                LastError='',
+                SchedulingMode=$schedulingMode,
+                RateLimitAttempts=$attempts,
+                IsPaused=0
             WHERE ScheduleExecutions.Status <> 'Running';
             """;
         command.Parameters.AddWithValue("$materialId", materialId);
         command.Parameters.AddWithValue("$scheduledAt", scheduledAt.ToString("O"));
         command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$schedulingMode", schedulingMode.ToString());
+        command.Parameters.AddWithValue("$attempts", Math.Max(0, rateLimitAttempts));
         AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<PublishPolicy?> ReadClaimPolicyAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string guildId,
+        string channelId,
+        string? accountKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT GuildId, ChannelId, Enabled, WindowStart, WindowEnd,
+                   MinIntervalMinutes, MaxIntervalMinutes, DailyLimit, QueueLimit,
+                   MaxConcurrency, RateLimitBaseMinutes, RateLimitMaxMinutes,
+                   CreatedAt, UpdatedAt
+            FROM PublishPolicies
+            WHERE GuildId=$guildId AND ChannelId=$channelId AND {AccountScope("AccountKey")}
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$guildId", guildId);
+        command.Parameters.AddWithValue("$channelId", channelId);
+        AddAccountParameter(command, accountKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new PublishPolicy(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetInt32(2) == 1,
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetInt32(5),
+            reader.GetInt32(6),
+            reader.GetInt32(7),
+            reader.GetInt32(8),
+            reader.GetInt32(9),
+            reader.GetInt32(10),
+            reader.GetInt32(11),
+            DateTimeOffset.Parse(reader.GetString(12)),
+            DateTimeOffset.Parse(reader.GetString(13)));
+    }
+
+    private async Task<PublishGuildBudget?> ReadGuildBudgetAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string guildId,
+        string? accountKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT GuildId, Enabled, DailyLimit, CreatedAt, UpdatedAt
+            FROM PublishGuildBudgets
+            WHERE GuildId=$guildId AND {AccountScope("AccountKey")}
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$guildId", guildId);
+        AddAccountParameter(command, accountKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new PublishGuildBudget(
+            reader.GetString(0),
+            reader.GetInt32(1) == 1,
+            reader.GetInt32(2),
+            DateTimeOffset.Parse(reader.GetString(3)),
+            DateTimeOffset.Parse(reader.GetString(4)));
+    }
+
+    /// <summary>
+    /// 统计自动排期的执行记录。<paramref name="statuses"/> 只允许内部固定集合，
+    /// 避免把外部输入拼接到 SQL；<paramref name="guildOnly"/> 为 true 时按频道总预算统计。
+    /// </summary>
+    private async Task<int> CountAutomaticExecutionsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string? accountKey,
+        PublishPolicy policy,
+        string statuses,
+        string? day,
+        CancellationToken cancellationToken,
+        bool guildOnly = false)
+    {
+        var statusFilter = statuses switch
+        {
+            "('Pending','Running')" => statuses,
+            "('Running')" => statuses,
+            "('Running','Succeeded','NeedsVerification')" => statuses,
+            "('Pending','Running','Succeeded','NeedsVerification')" => statuses,
+            _ => throw new ArgumentOutOfRangeException(nameof(statuses), "自动排期统计的状态集合无效。")
+        };
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT COUNT(1)
+            FROM ScheduleExecutions e
+            INNER JOIN Materials m ON m.Id=e.MaterialId
+            WHERE e.SchedulingMode='Auto'
+              AND e.Status IN {statusFilter}
+              AND m.Status<>'delete'
+              AND m.GuildId=$guildId
+              {(guildOnly ? "" : "AND m.ChannelId=$channelId")}
+              {(day is null ? "" : "AND substr(e.ScheduledAt,1,10)=$day")}
+              AND {AccountScope("e.AccountKey")}
+              AND {AccountScope("m.AccountKey")};
+            """;
+        command.Parameters.AddWithValue("$guildId", policy.GuildId);
+        if (!guildOnly) command.Parameters.AddWithValue("$channelId", policy.ChannelId);
+        if (day is not null) command.Parameters.AddWithValue("$day", day);
+        AddAccountParameter(command, accountKey);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is null || value is DBNull ? 0 : Convert.ToInt32(value);
     }
 
     private static void AddItemParameters(SqliteCommand command, CollectedItemDraft item, bool includeCollectedAt = true)
@@ -1505,6 +2166,13 @@ public sealed class ContentLibraryStore
         await pragma.ExecuteNonQueryAsync(token);
         return connection;
     }
+
+    private sealed record ClaimCandidate(
+        long Id,
+        ScheduleExecutionMode Mode,
+        string GuildId,
+        string ChannelId,
+        DateTimeOffset ScheduledAt);
 }
 
 public sealed record MaterialSourceSaveResult(long MaterialId, bool Created, MaterialRecord? ExistingMaterial);
@@ -1517,12 +2185,6 @@ public sealed record CollectedItemDraft(string Url, string SourceHost, string Ti
 public sealed record CollectedItem(long Id, string Url, string SourceHost, string Title, string Content, DateTimeOffset CollectedAt, string Status, string Notes, IReadOnlyList<string> Tags, string ParseError, IReadOnlyList<string> Media)
 {
     public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个（{string.Join("、", Media.Select(Path.GetFileName))}）";
-}
-public sealed record ContentDraft(long Id, long? CollectedItemId, string Title, string Content, string SourceUrl, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int PublishCount, DateTimeOffset? LastPublishedAt, IReadOnlyList<string> Media)
-{
-    public string PublishStatus => PublishCount > 0 ? $"已发布 {PublishCount} 次" : "未发布";
-    public string PublishStatusTone => PublishCount > 0 ? "success" : "info";
-    public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个";
 }
 public sealed record MaterialDraft(long? Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, string SourceType = "手工添加", string SourceUrl = "");
 public sealed record MaterialRecord(long Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string SourceType = "手工添加", string SourceUrl = "") : INotifyPropertyChanged
@@ -1542,6 +2204,9 @@ public sealed record MaterialRecord(long Id, string Title, string Type, string C
     }
 
     public string TypeLabel => Type switch { "image" => "图片", "video" => "视频", _ => "文本" };
+    public bool CanEdit => Status is "waitsend" or "queue";
+    public bool CanPublish => Status is "waitsend" or "queue";
+    public bool CanDelete => Status is "waitsend" or "queue";
     public string TargetDisplay => string.IsNullOrWhiteSpace(GuildName) || string.IsNullOrWhiteSpace(ChannelName) ? "-" : $"{GuildName}/{ChannelName}";
     public string PublishAtDisplay => PublishAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
     public string StatusLabel => Status switch { "queue" => "发布中", "published" => "已发布", "delete" => "已删除", _ => "待发布" };
@@ -1584,18 +2249,57 @@ public sealed record BatchMaterialPublishAtResult(
     IReadOnlyList<long> PublishedIds,
     IReadOnlyList<long> MissingIds);
 
+public sealed record ScheduleExecutionMutationResult(
+    IReadOnlyList<long> AffectedIds,
+    IReadOnlyList<long> RunningIds,
+    IReadOnlyList<long> FinishedIds,
+    IReadOnlyList<long> MissingIds);
+
+/// <summary>
+/// 自动排期结果。Scheduled 为 true 表示素材已经落在未来的自动发布队列里
+/// （既包括本次排期成功，也包括此前已经排期、无需重复插入的情况）。
+/// </summary>
+public sealed record PublishAutoScheduleResult(
+    bool Scheduled,
+    DateTimeOffset? ScheduledAt,
+    string Reason)
+{
+    public static PublishAutoScheduleResult Queued(DateTimeOffset scheduledAt) =>
+        new(true, scheduledAt, $"已安排在 {scheduledAt:yyyy-MM-dd HH:mm} 自动发布。");
+
+    public static PublishAutoScheduleResult AlreadyQueued(DateTimeOffset scheduledAt) =>
+        new(true, scheduledAt, $"素材已在自动发布队列中（{scheduledAt:yyyy-MM-dd HH:mm}）。");
+
+    public static PublishAutoScheduleResult Disabled() =>
+        new(false, null, "该频道版块未启用或已关闭自动发布策略。");
+
+    public static PublishAutoScheduleResult QueueFull() =>
+        new(false, null, "该频道版块的自动发布队列已满，已停止继续排期。");
+
+    public static PublishAutoScheduleResult QuotaFull() =>
+        new(false, null, "该频道版块或频道的发布额度已用满，暂时无法排期。");
+
+    public static PublishAutoScheduleResult NotScheduled(string reason) =>
+        new(false, null, reason);
+}
+
 public enum ScheduleExecutionStatus { Pending, Running, Succeeded, Failed, NeedsVerification, Cancelled }
+public enum ScheduleExecutionMode { Manual, Auto }
 
 public sealed record ScheduleExecutionRecord(
     long Id, long MaterialId, DateTimeOffset ScheduledAt, ScheduleExecutionStatus Status,
     DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, string LastError, long? PublishRecordId,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string Title, string Type, string GuildName,
     string ChannelName, DateTimeOffset? MaterialPublishAt, string MaterialLink,
-    string Content, IReadOnlyList<string> MediaLinks)
+    string Content, IReadOnlyList<string> MediaLinks,
+    ScheduleExecutionMode SchedulingMode = ScheduleExecutionMode.Manual,
+    int RateLimitAttempts = 0,
+    bool IsPaused = false)
 {
     public string TypeLabel => Type switch { "image" => "图片", "video" => "视频", _ => "文本" };
     public string StatusLabel => Status switch
     {
+        ScheduleExecutionStatus.Pending when IsPaused => "已暂停",
         ScheduleExecutionStatus.Pending when ScheduledAt <= DateTimeOffset.Now => "已逾期",
         ScheduleExecutionStatus.Pending => "等待发布",
         ScheduleExecutionStatus.Running => "发布中",
@@ -1622,6 +2326,7 @@ public sealed record ScheduleExecutionRecord(
         ScheduleExecutionStatus.Succeeded => string.IsNullOrWhiteSpace(MaterialLink) ? "发布成功" : MaterialLink,
         ScheduleExecutionStatus.Failed => string.IsNullOrWhiteSpace(LastError) ? "发布未完成，请查看失败原因后重试" : LastError,
         ScheduleExecutionStatus.NeedsVerification => string.IsNullOrWhiteSpace(LastError) ? "请核实频道是否已发布" : LastError,
+        ScheduleExecutionStatus.Pending when IsPaused => "已暂停，等待手动启动",
         ScheduleExecutionStatus.Pending => ScheduledAt <= DateTimeOffset.Now ? "已逾期，等待执行" : "等待执行",
         ScheduleExecutionStatus.Running => "执行中",
         ScheduleExecutionStatus.Cancelled => "已取消",

@@ -21,12 +21,16 @@ public partial class TelegramScheduleAdvancedWindow : Window
         RulesGrid.ItemsSource = _rules;
         CronBox.Text = settings?.CronExpression ?? TelegramScheduleAdvancedSettings.Default.CronExpression;
         KeywordBox.Text = settings?.Keyword ?? "";
+        AutoScheduleCheckBox.IsChecked = settings?.AutoScheduleEnabled ?? false;
+        AutoScheduleDelayBox.Text = (settings?.AutoScheduleDelayMinutes ?? 30).ToString();
+        AutoScheduleMaxPerRunBox.Text = (settings?.AutoScheduleMaxPerRun ?? 20).ToString();
         if (settings is not null)
         {
             foreach (var rule in settings.DistributionRules)
                 _rules.Add(TelegramDistributionRuleEditorRow.From(rule));
         }
         UpdateRulesState();
+        UpdateAutoScheduleState();
         Loaded += (_, _) => UiAsync.Run("TG 高级计划初始化", LoadGuildsAsync);
         UpdateCronPreview();
     }
@@ -61,6 +65,16 @@ public partial class TelegramScheduleAdvancedWindow : Window
     }
 
     private void CronBox_TextChanged(object sender, TextChangedEventArgs e) => UpdateCronPreview();
+
+    private void AutoScheduleCheckBox_Changed(object sender, RoutedEventArgs e) => UpdateAutoScheduleState();
+
+    private void UpdateAutoScheduleState()
+    {
+        if (AutoScheduleDelayBox is null || AutoScheduleMaxPerRunBox is null) return;
+        var enabled = AutoScheduleCheckBox.IsChecked == true;
+        AutoScheduleDelayBox.IsEnabled = enabled;
+        AutoScheduleMaxPerRunBox.IsEnabled = enabled;
+    }
 
     private void UpdateCronPreview()
     {
@@ -135,10 +149,26 @@ public partial class TelegramScheduleAdvancedWindow : Window
             CronErrorText.Text = error;
             return;
         }
+        if (!int.TryParse(AutoScheduleDelayBox.Text.Trim(), out var autoScheduleDelay) ||
+            autoScheduleDelay < 0 || autoScheduleDelay > 7 * 24 * 60)
+        {
+            ShowFormMessage("自动排期首条延迟请填写 0 到 10080 的整数。");
+            return;
+        }
+        if (!int.TryParse(AutoScheduleMaxPerRunBox.Text.Trim(), out var autoScheduleMaxPerRun) ||
+            autoScheduleMaxPerRun < 1 || autoScheduleMaxPerRun > 200)
+        {
+            ShowFormMessage("单次最多排期请填写 1 到 200 的整数。");
+            return;
+        }
+        HideFormMessage();
         Settings = new TelegramScheduleAdvancedSettings(
             parsed.Expression,
             KeywordBox.Text.Trim(),
-            _rules.Select((item, index) => item.ToDraft(index)).ToArray());
+            _rules.Select((item, index) => item.ToDraft(index)).ToArray(),
+            AutoScheduleCheckBox.IsChecked == true,
+            autoScheduleDelay,
+            autoScheduleMaxPerRun);
         DialogResult = true;
     }
 

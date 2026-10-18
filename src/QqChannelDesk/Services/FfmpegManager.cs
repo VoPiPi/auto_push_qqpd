@@ -213,18 +213,6 @@ public sealed class FfmpegManager
             configuredPathInvalid);
     }
 
-    public async Task<string?> FindExecutableDirectoryAsync(CancellationToken cancellationToken = default)
-    {
-        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
-        return resolution.ExecutableDirectory;
-    }
-
-    public async Task<string?> FindExecutablePathAsync(CancellationToken cancellationToken = default)
-    {
-        var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);
-        return resolution.ExecutablePath;
-    }
-
     public async Task<string> BuildCliPathAsync(string? inheritedPath, CancellationToken cancellationToken = default)
     {
         var resolution = await ResolveAsync(cancellationToken).ConfigureAwait(false);

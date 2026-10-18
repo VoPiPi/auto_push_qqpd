@@ -43,11 +43,12 @@ public sealed class AppDatabaseInitializerTests : IDisposable
             "AppSettings",
             "Channels",
             "CollectedItems",
-            "ContentDrafts",
             "Guilds",
             "MaterialImports",
             "MaterialSourceClaims",
             "Materials",
+            "PublishGuildBudgets",
+            "PublishPolicies",
             "PublishRecords",
             "ScheduleExecutions"
         }, tables);

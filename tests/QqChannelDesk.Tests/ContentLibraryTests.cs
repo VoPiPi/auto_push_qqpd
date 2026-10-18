@@ -43,7 +43,7 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
-    public async Task Store_AllowsMultipleManualItemsAndTracksDraftPublication()
+    public async Task Store_AllowsMultipleManualItemsAndDeletesOneItem()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
         var store = new ContentLibraryStore(databasePath);
@@ -63,13 +63,6 @@ public sealed class ContentLibraryTests
         Assert.Equal(original.CollectedAt, edited!.CollectedAt);
         Assert.Equal("手动修改", edited.Title);
 
-        var draftId = await store.CreateDraftAsync(collectedId, "草稿标题", "草稿正文", "https://example.com/a");
-        await store.MarkDraftPublishedAsync(draftId);
-        var draft = Assert.Single(await store.GetDraftsAsync("草稿标题"));
-        Assert.Equal(collectedId, draft.CollectedItemId);
-        Assert.Equal(1, draft.PublishCount);
-        Assert.NotNull(draft.LastPublishedAt);
-
         var items = await store.GetItemsAsync("素材", "待处理");
         Assert.Equal(2, items.Count);
         var article = await store.FindByUrlAsync("https://example.com/a");
@@ -77,9 +70,10 @@ public sealed class ContentLibraryTests
         Assert.Equal(new[] { "技术", "频道" }, article.Tags);
 
         await store.DeleteItemAsync(collectedId);
-        draft = Assert.Single(await store.GetDraftsAsync("草稿标题"));
-        Assert.Null(draft.CollectedItemId);
-        Assert.Equal("https://example.com/a", draft.SourceUrl);
+        var remaining = await store.FindByUrlAsync("https://example.com/a");
+        Assert.NotNull(remaining);
+        Assert.Equal("更新标题", remaining.Title);
+        Assert.Equal(3, (await store.GetItemsAsync()).Count);
     }
 
     [Fact]
@@ -110,7 +104,57 @@ public sealed class ContentLibraryTests
 
         await store.UpdateMaterialStatusAsync(id, "delete");
         Assert.Empty(await store.GetMaterialsAsync());
+        Assert.Empty(await store.GetMaterialsAsync("", "published"));
         Assert.Null(await store.GetMaterialAsync(id));
+    }
+
+    [Fact]
+    public async Task MaterialStore_ActiveFilterOnlyReturnsWaitingAndQueuedMaterials()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-material-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        await store.SaveMaterialAsync(new MaterialDraft(
+            null, "待发布素材", "text", "正文", "", "", "", "", null, "waitsend", "", []));
+        await store.SaveMaterialAsync(new MaterialDraft(
+            null, "排队素材", "text", "正文", "", "", "", "", DateTimeOffset.Now.AddHours(1), "queue", "", []));
+        await store.SaveMaterialAsync(new MaterialDraft(
+            null, "已发布素材", "text", "正文", "", "", "", "", null, "published", "", []));
+        var deletedId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "已删除素材", "text", "正文", "", "", "", "", null, "waitsend", "", []));
+        await store.UpdateMaterialStatusAsync(deletedId, "delete");
+
+        var active = await store.GetMaterialsAsync("", "active");
+
+        Assert.Equal(2, active.Count);
+        Assert.Contains(active, material => material.Title == "待发布素材");
+        Assert.Contains(active, material => material.Title == "排队素材");
+        Assert.DoesNotContain(active, material => material.Title is "已发布素材" or "已删除素材");
+    }
+
+    [Fact]
+    public void MaterialRecord_DisablesActionsForPublishedAndDeletedMaterials()
+    {
+        var waiting = new MaterialRecord(
+            1, "待发布", "text", "正文", "guild", "频道", "channel", "版块",
+            null, "waitsend", "", [], DateTimeOffset.Now, DateTimeOffset.Now);
+        Assert.True(waiting.CanEdit);
+        Assert.True(waiting.CanPublish);
+        Assert.True(waiting.CanDelete);
+
+        var queued = waiting with { Status = "queue" };
+        Assert.True(queued.CanEdit);
+        Assert.True(queued.CanPublish);
+        Assert.True(queued.CanDelete);
+
+        var published = waiting with { Status = "published" };
+        Assert.False(published.CanEdit);
+        Assert.False(published.CanPublish);
+        Assert.False(published.CanDelete);
+
+        var deleted = waiting with { Status = "delete" };
+        Assert.False(deleted.CanEdit);
+        Assert.False(deleted.CanPublish);
+        Assert.False(deleted.CanDelete);
     }
 
     [Fact]
@@ -726,54 +770,7 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
-    public async Task Store_RoundTripsDraftMediaPaths()
-    {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
-        var store = new ContentLibraryStore(databasePath);
-
-        var media = new[] { Path.Combine("tools", "media-cache", "a.mp4") };
-        var collectedId = await store.SaveItemAsync(new CollectedItemDraft("https://t.me/TGWenAnGuan/736", "t.me", "这城市那么空", "正文", MediaList: media));
-        var draftId = await store.CreateDraftAsync(collectedId, "草稿标题", "草稿正文", "https://t.me/TGWenAnGuan/736", media);
-
-        var draft = Assert.Single(await store.GetDraftsAsync("草稿标题"));
-        Assert.Equal(draftId, draft.Id);
-        Assert.Equal(media, draft.Media);
-        Assert.Contains("媒体 1 个", draft.MediaSummary, StringComparison.Ordinal);
-
-        await store.UpdateDraftAsync(draft with { Title = "新标题", Media = [] });
-        draft = Assert.Single(await store.GetDraftsAsync("新标题"));
-        Assert.Empty(draft.Media);
-
-        await store.CreateDraftAsync(null, "纯文本草稿", "正文", "");
-        Assert.Empty(Assert.Single(await store.GetDraftsAsync("纯文本草稿")).Media);
-    }
-
-    [Fact]
-    public async Task Store_CreatesDraftFromTemporaryTelegramMessage()
-    {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
-        var store = new ContentLibraryStore(databasePath);
-
-        var media = new[]
-        {
-            Path.Combine("temp", "telegram", "20261011", "TGWenAnGuan_718", "a.jpg"),
-            Path.Combine("temp", "telegram", "20261011", "TGWenAnGuan_718", "b.mp4")
-        };
-        var draftId = await store.CreateDraftAsync(
-            null, "这城市那么空", "第一行正文", "https://t.me/TGWenAnGuan/718", media);
-
-        var draft = Assert.Single(await store.GetDraftsAsync("这城市那么空"));
-        Assert.Equal(draftId, draft.Id);
-        Assert.Null(draft.CollectedItemId);
-        Assert.Equal("https://t.me/TGWenAnGuan/718", draft.SourceUrl);
-        Assert.Equal(media, draft.Media);
-        Assert.Contains("媒体 2 个", draft.MediaSummary, StringComparison.Ordinal);
-
-        await store.DeleteDraftAsync(draftId);
-        Assert.Empty(await store.GetDraftsAsync("这城市那么空"));
-    }
-    [Fact]
-    public async Task Store_MigratesLegacyDraftsWithoutMediaColumn()
+    public async Task InitializationPreservesLegacyDraftTableData()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString()))
@@ -806,12 +803,12 @@ public sealed class ContentLibraryTests
         }
 
         var store = new ContentLibraryStore(databasePath);
-        var legacy = Assert.Single(await store.GetDraftsAsync("旧草稿"));
-        Assert.Equal("旧草稿", legacy.Title);
-        Assert.Empty(legacy.Media);
+        await store.InitializeAsync();
 
-        var media = new[] { Path.Combine("tools", "media-cache", "a.mp4") };
-        await store.CreateDraftAsync(null, "新草稿", "新正文", "", media);
-        Assert.Equal(media, Assert.Single(await store.GetDraftsAsync("新草稿")).Media);
+        await using var verificationConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString());
+        await verificationConnection.OpenAsync();
+        await using var command = verificationConnection.CreateCommand();
+        command.CommandText = "SELECT Title FROM ContentDrafts ORDER BY Id";
+        Assert.Equal("旧草稿", await command.ExecuteScalarAsync());
     }
 }
