@@ -38,6 +38,7 @@ public sealed class PublishHistoryStore
                     ChannelId TEXT NOT NULL,
                     ChannelName TEXT NOT NULL,
                     Title TEXT NOT NULL DEFAULT '',
+                    Content TEXT NOT NULL DEFAULT '',
                     MediaNames TEXT NOT NULL DEFAULT '',
                     Status TEXT NOT NULL,
                     ErrorCategory TEXT NOT NULL DEFAULT '',
@@ -49,7 +50,7 @@ public sealed class PublishHistoryStore
                 CREATE INDEX IF NOT EXISTS IX_PublishRecords_StartedAt ON PublishRecords (StartedAt DESC);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
-            await EnsureAccountKeyColumnAsync(connection, cancellationToken);
+            await EnsureRecordColumnsAsync(connection, cancellationToken);
             _initialized = true;
         }
         finally
@@ -66,9 +67,9 @@ public sealed class PublishHistoryStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO PublishRecords
-                (StartedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName, Title, MediaNames, Status, AccountKey)
+                (StartedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName, Title, Content, MediaNames, Status, AccountKey)
             VALUES
-                ($startedAt, $feedType, $guildId, $guildName, $channelId, $channelName, $title, $mediaNames, $status, $accountKey);
+                ($startedAt, $feedType, $guildId, $guildName, $channelId, $channelName, $title, $content, $mediaNames, $status, $accountKey);
             SELECT last_insert_rowid();
             """;
         command.Parameters.AddWithValue("$startedAt", DateTimeOffset.Now.ToString("O"));
@@ -78,6 +79,7 @@ public sealed class PublishHistoryStore
         command.Parameters.AddWithValue("$channelId", draft.ChannelId);
         command.Parameters.AddWithValue("$channelName", draft.ChannelName);
         command.Parameters.AddWithValue("$title", draft.Title);
+        command.Parameters.AddWithValue("$content", draft.Content);
         command.Parameters.AddWithValue("$mediaNames", string.Join("\n", draft.MediaNames));
         command.Parameters.AddWithValue("$status", PublishRecordStatus.Processing.ToString());
         AddAccountParameter(command, accountKey);
@@ -136,7 +138,7 @@ public sealed class PublishHistoryStore
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
             SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
-                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
+                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId, Content
             FROM PublishRecords WHERE {AccountScope("AccountKey")} ORDER BY Id DESC LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 5000));
@@ -156,7 +158,7 @@ public sealed class PublishHistoryStore
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
             SELECT Id, StartedAt, CompletedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName,
-                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId
+                   Title, MediaNames, Status, ErrorCategory, Summary, PostUrl, PostId, Content
             FROM PublishRecords
             WHERE {AccountScope("AccountKey")} AND COALESCE(CompletedAt, StartedAt) >= $start
             ORDER BY COALESCE(CompletedAt, StartedAt) DESC, Id DESC;
@@ -178,25 +180,28 @@ public sealed class PublishHistoryStore
         if (accountKey is not null) command.Parameters.AddWithValue("$accountKey", accountKey);
     }
 
-    private static async Task EnsureAccountKeyColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    private static async Task EnsureRecordColumnsAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA table_info(PublishRecords)";
-        var found = false;
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            if (string.Equals(reader.GetString(1), "AccountKey", StringComparison.OrdinalIgnoreCase))
-            {
-                found = true;
-                break;
-            }
+            columns.Add(reader.GetString(1));
         }
-        if (found) return;
         await reader.DisposeAsync();
         await using var alter = connection.CreateCommand();
-        alter.CommandText = "ALTER TABLE PublishRecords ADD COLUMN AccountKey TEXT NULL";
-        await alter.ExecuteNonQueryAsync(cancellationToken);
+        if (!columns.Contains("AccountKey"))
+        {
+            alter.CommandText = "ALTER TABLE PublishRecords ADD COLUMN AccountKey TEXT NULL";
+            await alter.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("Content"))
+        {
+            alter.CommandText = "ALTER TABLE PublishRecords ADD COLUMN Content TEXT NOT NULL DEFAULT ''";
+            await alter.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static PublishRecord ReadRecord(SqliteDataReader reader) => new(
@@ -204,7 +209,7 @@ public sealed class PublishHistoryStore
         Enum.Parse<FeedType>(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
         reader.GetString(8), reader.GetString(9).Split('\n', StringSplitOptions.RemoveEmptyEntries),
         Enum.Parse<PublishRecordStatus>(reader.GetString(10)), reader.GetString(11), reader.GetString(12),
-        reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14));
+        reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -229,21 +234,30 @@ public enum PublishRecordStatus { Processing, Succeeded, Failed, NeedsVerificati
 
 public sealed record PublishRecordDraft(
     FeedType FeedType, string GuildId, string GuildName, string ChannelId, string ChannelName,
-    string Title, IReadOnlyList<string> MediaNames);
+    string Title, IReadOnlyList<string> MediaNames, string Content = "");
 
 public sealed record PublishRecord(
     long Id, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, FeedType FeedType,
     string GuildId, string GuildName, string ChannelId, string ChannelName,
     string Title, IReadOnlyList<string> MediaNames, PublishRecordStatus Status,
-    string ErrorCategory, string Summary, string? PostUrl, string? PostId)
+    string ErrorCategory, string Summary, string? PostUrl, string? PostId, string Content = "")
 {
+    public string ContentDisplay => !string.IsNullOrWhiteSpace(Title) ? Title
+        : !string.IsNullOrWhiteSpace(Content) ? Content
+        : MediaNames.Count == 0 ? "（无内容）"
+        : FeedType switch
+        {
+            FeedType.Image => $"图片 · {MediaNames.Count} 张",
+            FeedType.Video => $"视频 · {MediaNames.Count} 个",
+            _ => $"媒体 · {MediaNames.Count} 个"
+        };
     public string TypeName => FeedType switch { FeedType.Image => "图片", FeedType.Video => "视频", _ => "文本" };
     public string StatusName => Status switch
     {
         PublishRecordStatus.Processing => "处理中",
         PublishRecordStatus.Succeeded => "成功",
         PublishRecordStatus.NeedsVerification => "待核实",
-        _ => "失败"
+        _ => "发布未完成"
     };
     public string Target => $"{GuildName}/{ChannelName}";
 }

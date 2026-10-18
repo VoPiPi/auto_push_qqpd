@@ -98,7 +98,7 @@ public sealed class DashboardService
                 }, record.CompletedAt ?? record.StartedAt))
             .Concat(schedules.Where(item => item.Status == ScheduleExecutionStatus.Running)
                 .Select(item => new DashboardActivity(
-                    item.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm"), $"计划执行中 · {item.Title}", "info", item.UpdatedAt)))
+                    item.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm"), $"计划执行中 · {item.TitleContentDisplay}", "info", item.UpdatedAt)))
             .OrderByDescending(item => item.SortAt)
             .Take(8)
             .ToArray();
@@ -115,7 +115,7 @@ public sealed class DashboardService
                 var elapsed = now - started;
                 if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
                 return new DashboardRunningTask(
-                    string.IsNullOrWhiteSpace(item.Title) ? $"素材 #{item.MaterialId}" : item.Title,
+                    item.TitleContentDisplay,
                     item.TypeLabel,
                     item.TargetDisplay,
                     started.ToLocalTime().ToString("HH:mm:ss"),
@@ -129,11 +129,11 @@ public sealed class DashboardService
         if (summary.NeedsVerificationCount > 0)
             alerts.Add(new("有任务待核实", $"当前有 {summary.NeedsVerificationCount} 条任务未能确认是否已发帖，请先检查频道。", "warning"));
         if (summary.FailedCount > 0)
-            alerts.Add(new("发布失败待处理", $"当前有 {summary.FailedCount} 条失败结果，建议在素材仓库检查内容和权限。", "danger"));
+            alerts.Add(new("发布未完成", $"有 {summary.FailedCount} 条结果需要处理，请到素材库检查内容和权限。", "danger"));
         if (summary.OverdueCount > 0)
             alerts.Add(new("有计划已逾期", $"当前有 {summary.OverdueCount} 条计划等待执行。", "warning"));
         if (materials.Count == 0)
-            alerts.Add(new("还没有素材", "可以从内容采集或素材仓库添加第一条待发布内容。", "info"));
+            alerts.Add(new("还没有素材", "可以从内容采集或素材库添加第一条待发布内容。", "info"));
         if (alerts.Count == 0)
             alerts.Add(new("运行状态良好", "当前没有需要立即处理的异常。", "success"));
         return alerts;

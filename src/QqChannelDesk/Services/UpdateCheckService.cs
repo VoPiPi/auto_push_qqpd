@@ -54,15 +54,15 @@ public sealed class UpdateCheckService
                 return new(true, false, "Gitee 目前没有可用的正式发布版本。");
 
             if (!response.IsSuccessStatusCode)
-                return new(false, false, $"Gitee 版本服务返回 HTTP {(int)response.StatusCode}。");
+                return new(false, false, $"Gitee 版本检查未完成，请稍后重试或打开 Gitee Releases 查看。HTTP {(int)response.StatusCode}");
 
             var payload = await ReadLimitedResponseAsync(response, timeout.Token);
             var release = ParseRelease(payload);
             if (release is null)
-                return new(false, false, "Gitee 返回的版本信息格式无法识别。");
+                return new(false, false, "无法读取 Gitee 版本信息，请稍后重试或打开 Gitee Releases 查看。");
 
             if (!ApplicationVersionInfo.TryParseVersion(release.Version, out var latest))
-                return new(false, false, $"Gitee Release 版本号无法识别：{release.Version}");
+                return new(false, false, $"无法识别 Gitee 新版本号，请打开 Gitee Releases 查看：{release.Version}");
 
             var hasUpdate = latest > current;
             var message = hasUpdate
@@ -76,15 +76,15 @@ public sealed class UpdateCheckService
         }
         catch (HttpRequestException ex)
         {
-            return new(false, false, $"无法连接 Gitee：{CliDiagnostics.Sanitize(ex.Message)}");
+            return new(false, false, $"无法连接 Gitee，请检查网络后重试：{CliDiagnostics.Sanitize(ex.Message)}");
         }
         catch (JsonException)
         {
-            return new(false, false, "Gitee 返回的版本信息不是有效 JSON。");
+            return new(false, false, "Gitee 版本信息无法读取，请稍后重试或打开 Gitee Releases 查看。");
         }
         catch (IOException ex)
         {
-            return new(false, false, $"读取版本信息失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            return new(false, false, $"读取版本信息失败，请稍后重试或打开 Gitee Releases 查看：{CliDiagnostics.Sanitize(ex.Message)}");
         }
     }
 

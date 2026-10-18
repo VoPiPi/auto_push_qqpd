@@ -37,13 +37,14 @@ public partial class HistoryPage : UserControl
             RecordsGrid.ItemsSource = null;
             _filteredRecords = [];
             UpdatePagination();
-            StatusText.Text = $"读取发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Text = $"未能读取发布记录：{CliDiagnostics.Sanitize(ex.Message)}";
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
         }
     }
 
-    private async void HistoryRefreshButton_Click(object sender, RoutedEventArgs e) => await LoadRecordsAsync();
+    private void HistoryRefreshButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("刷新发布记录", LoadRecordsAsync);
     private void HistoryFilterButton_Click(object sender, RoutedEventArgs e) => ApplyFilters();
 
     private void HistoryResetButton_Click(object sender, RoutedEventArgs e)
@@ -75,7 +76,7 @@ public partial class HistoryPage : UserControl
         if (startDate.HasValue && endDate.HasValue && startDate.Value.Date > endDate.Value.Date)
         {
             StatusText.Text = "开始日期不能晚于结束日期，请调整筛选条件。";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
             return;
         }
@@ -92,8 +93,8 @@ public partial class HistoryPage : UserControl
         catch (Exception ex)
         {
             RecordsGrid.ItemsSource = null;
-            StatusText.Text = $"筛选发布记录失败：{CliDiagnostics.Sanitize(ex.Message)}";
-            StatusText.Foreground = Brushes.Firebrick;
+            StatusText.Text = $"未能筛选发布记录：{CliDiagnostics.Sanitize(ex.Message)}";
+            StatusText.Foreground = UiStatusBrushes.Danger;
             EmptyState.Visibility = Visibility.Collapsed;
             return;
         }
@@ -180,10 +181,10 @@ public partial class HistoryPage : UserControl
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
         {
-            MessageBox.Show(Window.GetWindow(this), "帖子链接无效，无法打开。", "无法打开", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "帖子链接无效，请检查记录后重试。", "帖子链接无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
-        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), $"无法打开帖子链接：{CliDiagnostics.Sanitize(ex.Message)}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), $"未能打开帖子链接：{CliDiagnostics.Sanitize(ex.Message)}", "未能打开", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 }

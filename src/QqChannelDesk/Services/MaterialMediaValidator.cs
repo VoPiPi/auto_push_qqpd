@@ -7,31 +7,47 @@ public static class MaterialMediaValidator
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"];
 
+    public static string ValidateContent(string content, IReadOnlyList<string> media) =>
+        string.IsNullOrWhiteSpace(content) && !media.Any(source => !string.IsNullOrWhiteSpace(source))
+            ? "请填写正文，或添加图片或视频。"
+            : "";
+
+    public static string ValidatePost(
+        string type,
+        string title,
+        string content,
+        IReadOnlyList<string> media,
+        bool allowUnknownSources = false)
+    {
+        var mediaError = Validate(type, title, media, allowUnknownSources);
+        return mediaError.Length > 0 ? mediaError : ValidateContent(content, media);
+    }
+
     public static string Validate(
         string type,
         string title,
         IReadOnlyList<string> media,
         bool allowUnknownSources = false)
     {
-        if (type == "text") return media.Count == 0 ? "" : "文本素材不能包含媒体文件或链接。";
+        if (type == "text") return media.Count == 0 ? "" : "文本素材不能包含媒体，请删除媒体后重试。";
         if (type == "image")
         {
-            if (media.Count == 0) return "图片素材至少需要一个有效的图片链接或本地文件。";
-            if (IsMixedMedia(media)) return "图片和视频媒体不能混合，请拆分为不同素材。";
+            if (media.Count == 0) return "请至少添加一张有效图片。";
+            if (IsMixedMedia(media)) return "图片和视频不能混用，请拆分为两个素材。";
             var limit = string.IsNullOrWhiteSpace(title) ? 18 : 50;
-            if (media.Count > limit) return $"图片数量不能超过 {limit} 个。";
+            if (media.Count > limit) return $"最多添加 {limit} 张图片，请减少后重试。";
             if (media.Any(item => !IsValidSource(item, "image", allowUnknownSources)))
                 return "图片素材包含无效链接或文件；请使用图片文件，链接须为公开 HTTP/HTTPS 地址。";
         }
         else if (type == "video")
         {
             if (media.Count != 1)
-                return "视频素材需要一个视频链接或本地文件。";
-            if (IsMixedMedia(media)) return "图片和视频媒体不能混合，请拆分为不同素材。";
+                return "请选择一个有效视频。";
+            if (IsMixedMedia(media)) return "图片和视频不能混用，请拆分为两个素材。";
             if (media.Any(item => !IsValidSource(item, "video", allowUnknownSources)))
                 return "视频素材包含无效链接或文件；请使用视频文件，链接须为公开 HTTP/HTTPS 地址。";
         }
-        else return "素材类型无效。";
+        else return "素材类型无效，请选择文本、图片或视频。";
 
         return "";
     }

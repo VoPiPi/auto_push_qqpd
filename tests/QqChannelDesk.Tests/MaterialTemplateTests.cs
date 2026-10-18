@@ -34,7 +34,7 @@ public sealed class MaterialTemplateTests : IDisposable
         var dataSource = workbook.Worksheet("数据源");
         Assert.Equal(XLWorksheetVisibility.Visible, dataSource.Visibility);
         Assert.Equal("频道名称", dataSource.Cell(1, 1).GetString());
-        Assert.Equal("板块名称", dataSource.Cell(1, 2).GetString());
+        Assert.Equal("版块名称", dataSource.Cell(1, 2).GetString());
         Assert.Equal("频道一", dataSource.Cell(2, 1).GetString());
         Assert.Equal("板块一", dataSource.Cell(2, 2).GetString());
         Assert.Equal(2, dataSource.LastColumnUsed()!.ColumnNumber());
@@ -91,6 +91,31 @@ public sealed class MaterialTemplateTests : IDisposable
         Assert.Equal("guild-1", row.GuildId);
         Assert.Equal("channel-1", row.ChannelId);
         Assert.Equal("queue", row.Status);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_AcceptsLegacyBoardHeader()
+    {
+        var path = Path.Combine(_directory, "legacy-header.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            sheet.Cell(1, 6).Value = "板块名称";
+            sheet.Cell(2, 1).Value = "旧模板标题";
+            sheet.Cell(2, 2).Value = "旧模板正文";
+            sheet.Cell(2, 5).Value = "频道一";
+            sheet.Cell(2, 6).Value = "板块一";
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        Assert.True(result.IsValid, string.Join("；", result.Errors.Concat(result.Rows.Select(row => row.Error))));
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("channel-1", row.ChannelId);
+        Assert.Equal("板块一", row.ChannelName);
     }
 
     [Fact]
@@ -188,7 +213,7 @@ public sealed class MaterialTemplateTests : IDisposable
         var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
 
         Assert.False(result.IsValid);
-        Assert.Contains(result.Rows, row => row.Error.Contains("频道“频道一”中找不到板块“板块三”"));
+        Assert.Contains(result.Rows, row => row.Error.Contains("找不到版块"));
     }
 
     [Fact]
@@ -218,9 +243,33 @@ public sealed class MaterialTemplateTests : IDisposable
         Assert.False(result.IsValid);
         var emptyFieldError = result.Rows.Single(row => row.RowNumber == 2).Error;
         Assert.Contains("第 2 行", emptyFieldError);
-        Assert.Contains("正文不能为空", emptyFieldError);
+        Assert.Contains("请填写正文，或添加图片或视频", emptyFieldError);
         Assert.Contains("第 4 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 3).Error);
         Assert.Contains("第 3 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 4).Error);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_AllowsMediaOnlyRows()
+    {
+        var path = Path.Combine(_directory, "media-only.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            sheet.Cell(2, 3).Value = "https://example.com/photo.jpg";
+            sheet.Cell(2, 5).Value = "频道一";
+            sheet.Cell(2, 6).Value = "板块一";
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        Assert.True(result.IsValid, string.Join("；", result.Errors.Concat(result.Rows.Select(row => row.Error))));
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("image", row.Type);
+        Assert.Empty(row.Title);
+        Assert.Empty(row.Content);
     }
 
     [Fact]
@@ -321,6 +370,8 @@ public sealed class MaterialTemplateTests : IDisposable
         var databasePath = Path.Combine(_directory, "materials.db");
         var importHistoryPath = Path.Combine(_directory, "import-history.db");
         var typesPath = Path.Combine(_directory, "types.xlsx");
+        var mediaOnlyPath = Path.Combine(_directory, "media-only.xlsx");
+        var legacyHeaderPath = Path.Combine(_directory, "legacy-header.xlsx");
         if (File.Exists(templatePath)) File.Delete(templatePath);
         if (File.Exists(importPath)) File.Delete(importPath);
         if (File.Exists(invalidPath)) File.Delete(invalidPath);
@@ -331,6 +382,8 @@ public sealed class MaterialTemplateTests : IDisposable
         if (File.Exists(databasePath)) File.Delete(databasePath);
         if (File.Exists(importHistoryPath)) File.Delete(importHistoryPath);
         if (File.Exists(typesPath)) File.Delete(typesPath);
+        if (File.Exists(mediaOnlyPath)) File.Delete(mediaOnlyPath);
+        if (File.Exists(legacyHeaderPath)) File.Delete(legacyHeaderPath);
         if (Directory.Exists(_directory)) Directory.Delete(_directory, false);
     }
 }

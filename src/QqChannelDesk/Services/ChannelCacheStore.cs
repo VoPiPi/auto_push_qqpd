@@ -21,6 +21,8 @@ public sealed class ChannelCacheStore
 
     public string DatabasePath => _databasePath;
 
+    internal bool CanSynchronize => _accountContext is null || !string.IsNullOrWhiteSpace(_accountContext.CurrentAccountKey);
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         if (_initialized) return;
@@ -179,11 +181,11 @@ public sealed class ChannelCacheStore
         }
         catch (JsonException)
         {
-            return new(accountKey, false, null, "频道同步状态文件无效，请重新刷新频道数据");
+            return new(accountKey, false, null, "频道同步状态异常，请刷新频道后重试。");
         }
         catch (IOException)
         {
-            return new(accountKey, false, null, "无法读取频道同步状态，请重新刷新频道数据");
+            return new(accountKey, false, null, "无法读取频道同步状态，请刷新频道后重试。");
         }
     }
 
@@ -233,7 +235,8 @@ public sealed class ChannelCacheStore
         }
 
         await transaction.CommitAsync(cancellationToken);
-        await WriteSyncStateAsync(new(accountKey, true, DateTimeOffset.Now, null), cancellationToken);
+        var now = DateTimeOffset.Now;
+        await WriteSyncStateAsync(new(accountKey, true, now, null, now), cancellationToken);
     }
 
     public async Task MarkSyncFailedAsync(string error, CancellationToken cancellationToken = default)
@@ -241,7 +244,17 @@ public sealed class ChannelCacheStore
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         var previous = await GetSyncStateAsync(cancellationToken);
-        await WriteSyncStateAsync(new(accountKey, false, previous.SyncedAt, error), cancellationToken);
+        await WriteSyncStateAsync(new(accountKey, false, previous.SyncedAt, error, DateTimeOffset.Now), cancellationToken);
+    }
+
+    public async Task MarkSyncAttemptedAsync(CancellationToken cancellationToken = default)
+    {
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        var previous = await GetSyncStateAsync(cancellationToken);
+        await WriteSyncStateAsync(
+            new(accountKey, previous.Succeeded, previous.SyncedAt, previous.Error, DateTimeOffset.Now),
+            cancellationToken);
     }
 
     private async Task WriteSyncStateAsync(ChannelSyncState state, CancellationToken cancellationToken)
@@ -308,4 +321,9 @@ public sealed class ChannelCacheStore
 }
 
 public sealed record CachedGuild(string Id, string Name, string Role, IReadOnlyList<ChannelChoice> Channels);
-public sealed record ChannelSyncState(string? AccountKey, bool Succeeded, DateTimeOffset? SyncedAt, string? Error);
+public sealed record ChannelSyncState(
+    string? AccountKey,
+    bool Succeeded,
+    DateTimeOffset? SyncedAt,
+    string? Error,
+    DateTimeOffset? LastAttemptedAt = null);

@@ -94,6 +94,85 @@ public sealed class MediaStorageTests : IDisposable
         Assert.True(File.Exists(jobPath));
     }
 
+    [Fact]
+    public void TelegramStagingPathCoversChannelMediaButNotPreviewOrLibrary()
+    {
+        var root = Path.Combine(_directory, "app");
+
+        Assert.True(MediaStorageService.IsTelegramStagingPath(
+            Path.Combine(root, "temp", "telegram", "20261013", "TGWenAnGuan", "video.mp4"), root));
+        Assert.False(MediaStorageService.IsTelegramStagingPath(
+            Path.Combine(root, "temp", "telegram", "preview", "725", "video.mp4"), root));
+        Assert.False(MediaStorageService.IsTelegramStagingPath(
+            Path.Combine(root, "temp", "media", "library", "video.mp4"), root));
+        Assert.False(MediaStorageService.IsTelegramStagingPath(
+            Path.Combine(root, "temp", "media", "jobs", "video.mp4"), root));
+        Assert.False(MediaStorageService.IsTelegramStagingPath("", root));
+    }
+
+    [Fact]
+    public async Task SuccessfulPublishRemovesTelegramStagingMediaButKeepsLibraryOriginal()
+    {
+        var service = await CreateServiceAsync();
+        var root = Path.Combine(_directory, "app");
+        var staging = CreateStagingFile(root, "channel-a");
+        var libraryPath = await service.ImportToLibraryAsync(_sourcePath, "image");
+
+        await service.DeleteTelegramStagingAsync([staging], root);
+
+        Assert.False(File.Exists(staging));
+        Assert.True(File.Exists(libraryPath));
+    }
+
+    [Theory]
+    [InlineData(MaterialRetentionPolicy.KeepSevenDays)]
+    [InlineData(MaterialRetentionPolicy.KeepForever)]
+    public async Task RetentionPoliciesKeepTelegramStagingMedia(MaterialRetentionPolicy policy)
+    {
+        var service = await CreateServiceAsync(policy);
+        var root = Path.Combine(_directory, "app");
+        var staging = CreateStagingFile(root, "channel-b");
+
+        await service.DeleteTelegramStagingAsync([staging], root);
+
+        Assert.True(File.Exists(staging));
+    }
+
+    [Fact]
+    public async Task OrphanStagingMediaIsRemovedEvenWhenMaterialWasNeverCreated()
+    {
+        var service = await CreateServiceAsync(MaterialRetentionPolicy.KeepForever);
+        var root = Path.Combine(_directory, "app");
+        var staging = CreateStagingFile(root, "channel-c");
+        var libraryPath = await service.ImportToLibraryAsync(_sourcePath, "image");
+
+        await service.DeleteOrphanStagingAsync([staging], root);
+
+        Assert.False(File.Exists(staging));
+        Assert.True(File.Exists(libraryPath));
+    }
+
+    [Fact]
+    public async Task StagingCleanupIgnoresMissingFilesAndForeignPaths()
+    {
+        var service = await CreateServiceAsync();
+        var root = Path.Combine(_directory, "app");
+        var missing = Path.Combine(root, "temp", "telegram", "20261013", "channel-d", "missing.mp4");
+        var libraryPath = await service.ImportToLibraryAsync(_sourcePath, "image");
+
+        await service.DeleteTelegramStagingAsync([missing, libraryPath], root);
+
+        Assert.True(File.Exists(libraryPath));
+    }
+
+    private static string CreateStagingFile(string root, string channel)
+    {
+        var directory = Path.Combine(root, "temp", "telegram", "20261013", channel);
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "video.mp4");
+        File.WriteAllBytes(path, [9, 9, 9]);
+        return path;
+    }
     private async Task<MediaStorageService> CreateServiceAsync(
         MaterialRetentionPolicy policy = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish)
     {

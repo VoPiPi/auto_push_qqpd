@@ -39,7 +39,7 @@ public partial class MaterialEditorWindow : Window
                 _settingSchedule = false;
             }
         }
-        Loaded += async (_, _) => await LoadGuildsAsync();
+        Loaded += (_, _) => UiAsync.Run("素材编辑器初始化", LoadGuildsAsync);
     }
 
     private async Task LoadGuildsAsync()
@@ -67,7 +67,7 @@ public partial class MaterialEditorWindow : Window
             }
             else ChannelCombo.ItemsSource = null;
         }
-        catch (Exception ex) { FormMessage.Text = $"读取频道缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        catch (Exception ex) { FormMessage.Text = $"未能读取频道数据：{CliDiagnostics.Sanitize(ex.Message)}"; }
         finally { _loading = false; }
     }
 
@@ -87,8 +87,9 @@ public partial class MaterialEditorWindow : Window
             selectFirstWhenMissing);
     }
 
-    private async void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
+    private void GuildCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("素材编辑器频道切换", async () =>
+        {
         if (_loading) return;
         if (GuildCombo.SelectedItem is not ChannelChoice guild)
         {
@@ -96,21 +97,22 @@ public partial class MaterialEditorWindow : Window
             return;
         }
         try { await LoadChannelsAsync(guild, selectFirstWhenMissing: true); }
-        catch (Exception ex) { FormMessage.Text = $"读取版块缓存失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
-    }
+        catch (Exception ex) { FormMessage.Text = $"未能读取版块数据：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        });
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void RefreshButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("素材编辑器刷新频道", async () =>
+        {
         try
         {
             FormMessage.Text = "正在刷新频道和版块…";
             var result = await _channelSync.SynchronizeAsync();
-            if (!result.Succeeded) { FormMessage.Text = $"刷新失败：{result.Error}"; return; }
+            if (!result.Succeeded) { FormMessage.Text = $"刷新未完成：{result.Error}"; return; }
             await LoadGuildsAsync();
             FormMessage.Text = "频道数据已刷新。";
         }
-        catch (Exception ex) { FormMessage.Text = $"刷新失败：{CliDiagnostics.Sanitize(ex.Message)}"; }
-    }
+        catch (Exception ex) { FormMessage.Text = $"刷新未完成：{CliDiagnostics.Sanitize(ex.Message)}"; }
+        });
 
     private void MediaLinksBox_TextChanged(object sender, TextChangedEventArgs e) => InferTypeFromLinks();
 
@@ -152,16 +154,12 @@ public partial class MaterialEditorWindow : Window
         PublishTimeBox.Text = now.ToString("HH:mm:ss");
     }
 
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void SaveButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("保存素材", async () =>
+        {
         var title = TitleBox.Text.Trim();
         var content = ContentBox.Text.Trim();
         var links = ParseMediaLinks();
-        if (content.Length == 0)
-        {
-            FormMessage.Text = "请填写帖子正文。";
-            return;
-        }
         var detectedType = MaterialMediaValidator.InferType(links);
         if (detectedType is null)
         {
@@ -170,7 +168,7 @@ public partial class MaterialEditorWindow : Window
         }
 
         var type = detectedType;
-        var mediaError = MaterialMediaValidator.Validate(type, title, links);
+        var mediaError = MaterialMediaValidator.ValidatePost(type, title, content, links);
         if (mediaError.Length > 0) { FormMessage.Text = mediaError; return; }
 
         var storedLinks = new List<string>(links.Count);
@@ -190,7 +188,7 @@ public partial class MaterialEditorWindow : Window
         }
         catch (Exception ex)
         {
-            FormMessage.Text = $"保存媒体文件失败：{CliDiagnostics.Sanitize(ex.Message)}";
+            FormMessage.Text = $"未能保存媒体文件：{CliDiagnostics.Sanitize(ex.Message)}";
             return;
         }
 
@@ -215,9 +213,10 @@ public partial class MaterialEditorWindow : Window
         }
         var status = ResolveMaterialStatus(publishAt, _existing?.Status, DateTimeOffset.Now);
         var materialLink = status == "published" ? _existing?.Link ?? "" : "";
-        Material = new MaterialDraft(_existing?.Id, title, type, content, guild?.Id ?? "", guild?.Name ?? "", channel?.Id ?? "", channel?.Name ?? "", publishAt, status, materialLink, storedLinks);
+        Material = new MaterialDraft(_existing?.Id, title, type, content, guild?.Id ?? "", guild?.Name ?? "", channel?.Id ?? "", channel?.Name ?? "", publishAt, status, materialLink, storedLinks,
+            _existing?.SourceType ?? "手工添加", _existing?.SourceUrl ?? "");
         DialogResult = true;
-    }
+        });
 
     public static string ResolveMaterialStatus(DateTimeOffset? publishAt, string? existingStatus, DateTimeOffset now)
     {

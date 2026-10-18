@@ -46,6 +46,7 @@ public sealed class AppDatabaseInitializerTests : IDisposable
             "ContentDrafts",
             "Guilds",
             "MaterialImports",
+            "MaterialSourceClaims",
             "Materials",
             "PublishRecords",
             "ScheduleExecutions"
@@ -77,8 +78,51 @@ public sealed class AppDatabaseInitializerTests : IDisposable
         Assert.Equal(3, persisted.MaxScheduleConcurrency);
     }
 
+    [Fact]
+    public async Task InitializationMigratesLegacyChannelTablesBeforeCreatingOtherTables()
+    {
+        Directory.CreateDirectory(_directory);
+        await using (var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _databasePath, Pooling = false }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA foreign_keys = ON;
+                CREATE TABLE Accounts (AccountKey TEXT PRIMARY KEY, LastSyncSucceeded INTEGER NOT NULL, LastSyncAt TEXT NULL, LastSyncError TEXT NULL);
+                INSERT INTO Accounts VALUES ('default-cli-profile', 1, '2026-10-01T12:00:00+08:00', NULL);
+                CREATE TABLE Guilds (AccountKey TEXT NOT NULL, GuildId TEXT NOT NULL, Name TEXT NOT NULL, Role TEXT NOT NULL, PRIMARY KEY (AccountKey, GuildId), FOREIGN KEY (AccountKey) REFERENCES Accounts(AccountKey));
+                INSERT INTO Guilds VALUES ('default-cli-profile', '1', '保留频道', '管理员');
+                CREATE TABLE Channels (AccountKey TEXT NOT NULL, GuildId TEXT NOT NULL, ChannelId TEXT NOT NULL, Name TEXT NOT NULL, PRIMARY KEY (AccountKey, GuildId, ChannelId), FOREIGN KEY (AccountKey, GuildId) REFERENCES Guilds(AccountKey, GuildId));
+                INSERT INTO Channels VALUES ('default-cli-profile', '1', '11', '保留版块');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var settings = new SystemSettingsStore(_databasePath);
+        var channels = new ChannelCacheStore(_databasePath);
+        await new AppDatabaseInitializer(
+            settings,
+            channels,
+            new ContentLibraryStore(_databasePath),
+            new PublishHistoryStore(_databasePath),
+            new ProxyPoolStore(_databasePath),
+            new TelegramCollectionStore(_databasePath)).InitializeAsync();
+
+        Assert.Equal("保留频道", Assert.Single(await channels.GetGuildsAsync()).Name);
+        Assert.Equal("保留版块", Assert.Single(await channels.GetChannelsAsync("1")).Name);
+        Assert.True((await settings.GetAsync()).AutoExecuteSchedules);
+
+        var tables = await ReadTableNamesAsync(_databasePath);
+        Assert.DoesNotContain("Accounts", tables);
+        Assert.Contains("AppSettings", tables);
+        Assert.Contains("ProxySources", tables);
+        Assert.Contains("TelegramCollectionSchedules", tables);
+    }
+
     public void Dispose()
     {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         if (File.Exists(_databasePath)) File.Delete(_databasePath);
         if (Directory.Exists(_directory)) Directory.Delete(_directory, false);
     }

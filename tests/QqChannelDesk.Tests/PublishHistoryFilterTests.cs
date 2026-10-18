@@ -73,6 +73,21 @@ public sealed class PublishHistoryFilterTests
     }
 
     [Fact]
+    public void Apply_Keyword_SearchesBodyWithOrWithoutTitle()
+    {
+        var records = new[]
+        {
+            CreateRecord(1, new DateTime(2026, 10, 2), title: "") with { Content = "Release body" },
+            CreateRecord(2, new DateTime(2026, 10, 2), title: "Title") with { Content = "RELEASE body" },
+            CreateRecord(3, new DateTime(2026, 10, 2)) with { Content = "Other body" }
+        };
+
+        var filtered = PublishHistoryFilter.Apply(records, new PublishHistoryFilterCriteria(KeywordQuery: "release"));
+
+        Assert.Equal(new long[] { 1, 2 }, filtered.Select(record => record.Id));
+    }
+
+    [Fact]
     public void Apply_CombinedCriteria_UsesAndSemantics()
     {
         var records = new[]
