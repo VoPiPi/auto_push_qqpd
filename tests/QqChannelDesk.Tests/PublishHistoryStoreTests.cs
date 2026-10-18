@@ -17,10 +17,10 @@ public sealed class PublishHistoryStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateAndComplete_PersistsOutcomeWithoutContentOrFullMediaPath()
+    public async Task CreateAndComplete_PersistsContentAndOutcomeWithoutFullMediaPath()
     {
         var id = await _store.CreateAsync(new PublishRecordDraft(
-            FeedType.Image, "1", "测试频道", "11", "公告", "标题", ["photo.png"]));
+            FeedType.Image, "1", "测试频道", "11", "公告", "标题", ["photo.png"], "正文第一行\n正文第二行"));
 
         await _store.CompleteAsync(id, new PublishResult(true, PublishErrorCategory.None, "已提交", "https://example.test/post/1", "post-1"));
 
@@ -30,6 +30,8 @@ public sealed class PublishHistoryStoreTests : IDisposable
         Assert.Equal("photo.png", Assert.Single(record.MediaNames));
         Assert.Equal("https://example.test/post/1", record.PostUrl);
         Assert.Equal("post-1", record.PostId);
+        Assert.Equal("正文第一行\n正文第二行", record.Content);
+        Assert.Equal("标题", record.ContentDisplay);
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _databasePath }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -37,8 +39,101 @@ public sealed class PublishHistoryStoreTests : IDisposable
         var columns = new List<string>();
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
-        Assert.DoesNotContain("Content", columns);
+        Assert.Contains("Content", columns);
         Assert.DoesNotContain("MediaPath", columns);
+    }
+
+    [Theory]
+    [InlineData("标题", "正文", "标题")]
+    [InlineData("", "正文第一行\n正文第二行", "正文第一行\n正文第二行")]
+    [InlineData(" \t\r\n", "正文", "正文")]
+    [InlineData("", "", "（无内容）")]
+    public async Task ContentDisplay_PrefersTitleAndFallsBackToBody(string title, string content, string expected)
+    {
+        await _store.CreateAsync(new PublishRecordDraft(FeedType.Text, "1", "频道", "2", "版块", title, [], content));
+
+        var record = Assert.Single(await _store.GetRecentAsync());
+        Assert.Equal(expected, record.ContentDisplay);
+        var sinceRecord = Assert.Single(await _store.GetSinceAsync(DateTimeOffset.Now.AddDays(-1)));
+        Assert.Equal(content, sinceRecord.Content);
+        Assert.Equal(expected, sinceRecord.ContentDisplay);
+    }
+
+    [Fact]
+    public async Task ContentDisplayFallsBackToMediaSummaryForMediaOnlyRecord()
+    {
+        await _store.CreateAsync(new PublishRecordDraft(FeedType.Image, "1", "频道", "2", "版块", "", ["a.png", "b.png"]));
+
+        var record = Assert.Single(await _store.GetRecentAsync());
+
+        Assert.Equal("图片 · 2 张", record.ContentDisplay);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Initialize_UpgradesLegacyHistoryAndPreservesRecords(bool hasAccountKey)
+    {
+        Directory.CreateDirectory(_directory);
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Pooling = false
+        }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE PublishRecords (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    StartedAt TEXT NOT NULL, CompletedAt TEXT NULL,
+                    FeedType TEXT NOT NULL, GuildId TEXT NOT NULL, GuildName TEXT NOT NULL,
+                    ChannelId TEXT NOT NULL, ChannelName TEXT NOT NULL,
+                    Title TEXT NOT NULL DEFAULT '', MediaNames TEXT NOT NULL DEFAULT '',
+                    Status TEXT NOT NULL, ErrorCategory TEXT NOT NULL DEFAULT '',
+                    Summary TEXT NOT NULL DEFAULT '', PostUrl TEXT NULL, PostId TEXT NULL
+                );
+                INSERT INTO PublishRecords
+                    (StartedAt, FeedType, GuildId, GuildName, ChannelId, ChannelName, Title, Status)
+                VALUES
+                    ('2026-10-12T10:00:00+08:00', 'Text', '1', 'guild', '2', 'channel', 'Legacy title', 'Succeeded');
+                """;
+            await command.ExecuteNonQueryAsync();
+            if (hasAccountKey)
+            {
+                command.CommandText = "ALTER TABLE PublishRecords ADD COLUMN AccountKey TEXT NULL";
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        await _store.InitializeAsync();
+        var reopened = new PublishHistoryStore(_databasePath);
+        await reopened.InitializeAsync();
+        var legacy = Assert.Single(await reopened.GetRecentAsync());
+        Assert.Equal("Legacy title", legacy.ContentDisplay);
+        Assert.Equal("", legacy.Content);
+        Assert.Equal(PublishRecordStatus.Succeeded, legacy.Status);
+
+        await reopened.CreateAsync(new PublishRecordDraft(FeedType.Text, "1", "guild", "2", "channel", "", [], "New body"));
+        var records = await reopened.GetRecentAsync();
+        Assert.Equal(2, records.Count);
+        Assert.Equal("New body", records[0].ContentDisplay);
+        Assert.Equal(legacy, records[1]);
+    }
+
+    [Fact]
+    public async Task Execute_RecordsBodyEvenWhenRequestFailsValidation()
+    {
+        var executor = new PublishExecutionService(new CliWorkflow(), _store, new MediaStorageService());
+        var request = new PublishRequest("", "2", "Body without a title");
+
+        var outcome = await executor.ExecuteAsync(request, "guild", "channel");
+
+        Assert.Equal(PublishErrorCategory.Validation, outcome.Result.Category);
+        var record = Assert.Single(await _store.GetRecentAsync());
+        Assert.Equal(outcome.PublishRecordId, record.Id);
+        Assert.Equal(request.Content, record.Content);
+        Assert.Equal(request.Content, record.ContentDisplay);
     }
 
     [Theory]

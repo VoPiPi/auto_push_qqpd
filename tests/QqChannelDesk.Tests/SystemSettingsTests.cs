@@ -23,6 +23,7 @@ public sealed class SystemSettingsTests : IDisposable
         Assert.False(defaults.NotifyUpgrade);
         Assert.False(defaults.RunTasksOnStartup);
         Assert.True(defaults.AutoExecuteSchedules);
+        Assert.True(defaults.TelegramCollectionSchedulerEnabled);
         Assert.Equal(1, defaults.MaxScheduleConcurrency);
         Assert.False(defaults.StartWithWindows);
         Assert.Equal(CloseWindowBehavior.ExitApplication, defaults.CloseWindowBehavior);
@@ -30,13 +31,15 @@ public sealed class SystemSettingsTests : IDisposable
         Assert.Null(defaults.FfmpegPath);
         Assert.Equal(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "temp")), defaults.EffectiveMaterialStoragePath);
 
-        await store.SaveAsync(new AppSettings(true, true, AutoExecuteSchedules: true, MaxScheduleConcurrency: 3,
+        await store.SaveAsync(new AppSettings(true, true, AutoExecuteSchedules: true,
+            TelegramCollectionSchedulerEnabled: false, MaxScheduleConcurrency: 3,
             StartWithWindows: true, CloseWindowBehavior: CloseWindowBehavior.MinimizeToTray));
 
         var persisted = await new SystemSettingsStore(_databasePath).GetAsync();
         Assert.True(persisted.NotifyUpgrade);
         Assert.True(persisted.RunTasksOnStartup);
         Assert.True(persisted.AutoExecuteSchedules);
+        Assert.False(persisted.TelegramCollectionSchedulerEnabled);
         Assert.Equal(3, persisted.MaxScheduleConcurrency);
         Assert.True(persisted.StartWithWindows);
         Assert.Equal(CloseWindowBehavior.MinimizeToTray, persisted.CloseWindowBehavior);

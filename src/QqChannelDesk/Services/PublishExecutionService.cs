@@ -48,7 +48,8 @@ public sealed class PublishExecutionService : IPublishExecutor
             sourceRequest.ChannelId,
             channelName,
             sourceRequest.Title.Trim(),
-            sourceRequest.MediaPaths.Select(GetMediaName).ToArray()), cancellationToken);
+            sourceRequest.MediaPaths.Select(GetMediaName).ToArray(),
+            sourceRequest.Content), cancellationToken);
 
         if (sourceValidation.Length > 0)
         {
@@ -58,6 +59,7 @@ public sealed class PublishExecutionService : IPublishExecutor
         }
 
         var jobPaths = new List<string>();
+        var stagingPaths = new List<string>();
         try
         {
             var publishPaths = new List<string>(sourceRequest.MediaPaths.Count);
@@ -67,8 +69,15 @@ public sealed class PublishExecutionService : IPublishExecutor
                 if (MaterialMediaValidator.IsLocalPath(source) && await _mediaStorage.IsManagedLibraryPathAsync(source, cancellationToken))
                 {
                     if (!File.Exists(source))
-                        throw new FileNotFoundException($"素材仓库原件已不存在：{Path.GetFileName(source)}。", source);
+                        throw new FileNotFoundException($"素材库文件已不存在：{Path.GetFileName(source)}。请重新选择媒体。", source);
                     publishPaths.Add(source);
+                }
+                else if (MaterialMediaValidator.IsLocalPath(source) && MediaStorageService.IsTelegramStagingPath(source))
+                {
+                    if (!File.Exists(source))
+                        throw new FileNotFoundException($"TG 暂存媒体已不存在：{Path.GetFileName(source)}。", source);
+                    publishPaths.Add(source);
+                    stagingPaths.Add(source);
                 }
                 else if (MaterialMediaValidator.IsLocalPath(source))
                 {
@@ -100,7 +109,10 @@ public sealed class PublishExecutionService : IPublishExecutor
 
             await _historyStore.CompleteAsync(recordId, result, cancellationToken);
             if (result.Succeeded)
+            {
                 await _mediaStorage.CompleteSuccessfulJobAsync(jobPaths, cancellationToken);
+                await _mediaStorage.DeleteTelegramStagingAsync(stagingPaths, cancellationToken: cancellationToken);
+            }
 
             return new PublishExecutionOutcome(result, recordId);
         }
@@ -114,9 +126,9 @@ public sealed class PublishExecutionService : IPublishExecutor
         catch (Exception ex)
         {
             var message = CliDiagnostics.Sanitize(ex.Message);
-            var failure = new PublishResult(false, PublishErrorCategory.Other, $"发布准备失败：{message}", null, null);
+            var failure = new PublishResult(false, PublishErrorCategory.Other, $"发布未开始，请重试或查看运行日志：{message}", null, null);
             await CompleteSafelyAsync(recordId, failure);
-            _logger.Error($"发布执行异常：{message}");
+            _logger.Error($"发布未完成：{message}");
             return new PublishExecutionOutcome(failure, recordId);
         }
     }

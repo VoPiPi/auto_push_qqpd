@@ -7,9 +7,10 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock x:Name="Heading" Text="新增素材" Style="{StaticResource PageTitle}" Margin="0,0,0,16"/>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel>
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
         <TextBlock Text="标题（选填）" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/><TextBox x:Name="TitleBox"/>
-        <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><TextBox x:Name="ContentBox" MinHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+        <TextBlock Text="正文（可选；无媒体时必填）" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/><TextBox x:Name="ContentBox" MinHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
         <TextBlock Text="媒体文件或链接" Foreground="{StaticResource Muted}" Margin="0,12,0,4"/>
         <TextBlock Text="可选择本地文件，也可粘贴公开 HTTP/HTTPS 链接；每行一个。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6"/>
         <DockPanel Margin="0,0,0,6">
@@ -31,11 +32,12 @@
           <TextBox x:Name="PublishTimeBox" Grid.Column="2" VerticalContentAlignment="Center" ToolTip="时:分:秒，例如 14:30:00"/>
         </Grid>
         <TextBlock x:Name="FormMessage" Foreground="{StaticResource Warn}" TextWrapping="Wrap" Margin="0,12,0,0"/>
-      </StackPanel>
+        </StackPanel>
+      </Border>
     </ScrollViewer>
     <DockPanel Grid.Row="2" Margin="0,16,0,0">
-      <Button DockPanel.Dock="Right" Content="取消" IsCancel="True" Margin="8,0,0,0"/>
-      <Button DockPanel.Dock="Right" Content="保存素材" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click"/>
+      <Button DockPanel.Dock="Right" Content="取消" Style="{StaticResource QuietButton}" IsCancel="True" Margin="8,0,0,0"/>
+      <Button DockPanel.Dock="Right" Content="保存" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click"/>
       <Button Content="刷新频道" Style="{StaticResource QuietButton}" Click="RefreshButton_Click"/>
     </DockPanel>
   </Grid>

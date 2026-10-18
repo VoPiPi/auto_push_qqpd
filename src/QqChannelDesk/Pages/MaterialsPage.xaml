@@ -3,66 +3,98 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Grid.Row="0" Text="素材仓库" Style="{StaticResource PageTitle}" Margin="0,0,0,6" />
-    <TextBlock Grid.Row="1" Text="管理待发布和已发布素材；发布操作仍需逐条确认。" Foreground="{StaticResource Muted}" Margin="0,0,0,14" />
+    <TextBlock Grid.Row="0" Text="素材库" Style="{StaticResource PageTitle}" Margin="0,0,0,6"/>
+    <TextBlock Grid.Row="1" Text="管理素材，可批量设置频道和发布时间。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
     <DockPanel Grid.Row="2" LastChildFill="True">
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-        <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown" />
+        <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
         <ComboBox x:Name="MaterialStatusFilter" Width="130" SelectedIndex="0" Margin="8,0,0,0">
           <ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
         </ComboBox>
-        <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchMaterialsButton_Click" />
-        <Button Content="下载导入模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click" />
-        <Button Content="导入数据" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportDataButton_Click" />
-        <Button Content="手动添加素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click" />
+        <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchMaterialsButton_Click"/>
+        <Button Content="下载模板" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="DownloadTemplateButton_Click"/>
+        <Button Content="导入" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportDataButton_Click"/>
+        <Button Content="新增素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddMaterialButton_Click"/>
       </WrapPanel>
-      <DataGrid x:Name="MaterialsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+      <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" HorizontalAlignment="Left" Background="{StaticResource AccentSoft}" CornerRadius="9" Padding="9,2" VerticalAlignment="Center">
+          <TextBlock x:Name="SelectedCountText" Text="已选 0 个" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+        </Border>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <ComboBox x:Name="BatchActionBox" Width="176" SelectedIndex="0" SelectionChanged="BatchActionBox_SelectionChanged">
+            <ComboBoxItem Content="批量操作" IsEnabled="False"/>
+            <ComboBoxItem Content="全选" Tag="select-all"/>
+            <ComboBoxItem Content="反选" Tag="invert"/>
+            <ComboBoxItem Content="批量删除" Tag="delete"/>
+            <ComboBoxItem Content="立即发布" Tag="publish"/>
+            <ComboBoxItem Content="设置发布频道" Tag="target"/>
+            <ComboBoxItem Content="设置发布时间" Tag="time"/>
+          </ComboBox>
+        </StackPanel>
+      </Grid>
+      <DataGrid x:Name="MaterialsGrid"
+                AutoGenerateColumns="False"
+                IsReadOnly="False"
+                CanUserAddRows="False"
+                SelectionMode="Extended"
+                SelectionUnit="FullRow"
+                SelectionChanged="MaterialsGrid_SelectionChanged"
+                PreviewMouseLeftButtonDown="MaterialsGrid_PreviewMouseLeftButtonDown"
+                HeadersVisibility="Column"
+                CanUserResizeColumns="True"
+                CanUserReorderColumns="False"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Auto"
+                RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="140" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="50" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="正文" Binding="{Binding Content}" Width="165" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="发布频道" Binding="{Binding TargetDisplay}" Width="125" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" Width="132" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTemplateColumn Header="状态" Width="86">
+          <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
-                <Border x:Name="pill" Style="{StaticResource StatusPill}"><TextBlock x:Name="pillText" Text="{Binding StatusLabel}" FontSize="11" /></Border>
-                <DataTemplate.Triggers>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="成功"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="已发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource AccentSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Accent}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="失败"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="已逾期"><Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Danger}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="待核实"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="处理中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="执行中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="发布中"><Setter TargetName="pill" Property="Background" Value="{StaticResource WarnSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Warn}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="待发布"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
-            <DataTrigger Binding="{Binding StatusLabel}" Value="等待执行"><Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSoft}" /><Setter TargetName="pillText" Property="Foreground" Value="{StaticResource Info}" /></DataTrigger>
-                </DataTemplate.Triggers>
+                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource TableCheckBox}" PreviewMouseLeftButtonDown="MaterialSelectionCheckBox_PreviewMouseLeftButtonDown" Click="MaterialSelectionCheckBox_Click" ToolTip="选择此素材"/>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="链接" Binding="{Binding LinkDisplay}" Width="150" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="52" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="标题/正文" Binding="{Binding TitleContentDisplay}" Width="2*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="48" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="来源" Binding="{Binding SourceDisplay}" Width="1.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="频道/版块" Binding="{Binding TargetDisplay}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" Width="132" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTemplateColumn Header="状态" Width="86">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
+                  <TextBlock Text="{Binding StatusLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding StatusLabel, Converter={StaticResource StatusStrongBrushConverter}}"/>
+                </Border>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+          <DataGridTextColumn Header="链接" Binding="{Binding LinkDisplay}" Width="1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTemplateColumn Header="操作" Width="138">
-            <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <StackPanel Orientation="Horizontal">
-                <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="EditMaterialButton_Click"/>
-                <Button Content="发布" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="PublishMaterialButton_Click"/>
-                <Button Content="删除" Style="{StaticResource TableLinkButton}" Click="DeleteMaterialButton_Click"/>
-              </StackPanel>
-            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <StackPanel Style="{StaticResource TableActionPanel}">
+                  <Button Content="编辑" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="EditMaterialButton_Click"/>
+                  <Button Content="发布" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="PublishMaterialButton_Click"/>
+                  <Button Content="删除" Style="{StaticResource TableLinkButton}" Click="DeleteMaterialButton_Click"/>
+                </StackPanel>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
         </DataGrid.Columns>
       </DataGrid>
     </DockPanel>
     <Grid Grid.Row="3" Margin="0,12,0,0">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock x:Name="MaterialsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+        <TextBlock x:Name="MaterialsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
         <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-          <Button x:Name="PreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click" />
-          <TextBlock x:Name="PageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
-          <Button x:Name="NextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="NextPageButton_Click" />
+          <Button x:Name="PreviousPageButton" Content="‹" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="PreviousPageButton_Click"/>
+          <TextBlock x:Name="PageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center"/>
+          <Button x:Name="NextPageButton" Content="›" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="NextPageButton_Click"/>
         </StackPanel>
       </StackPanel>
     </Grid>

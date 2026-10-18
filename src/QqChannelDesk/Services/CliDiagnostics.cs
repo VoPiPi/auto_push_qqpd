@@ -18,6 +18,8 @@ public sealed class CliDiagnostics
     private static readonly TimeSpan NodeInstallTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan VersionIndexTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DownloadHeadersTimeout = TimeSpan.FromSeconds(30);
+    private const long MaxNodeIndexBytes = 1L * 1024 * 1024;
+    private const long MaxNodeMsiBytes = 512L * 1024 * 1024;
 
     public CliDiagnostics(FfmpegManager? ffmpegManager = null, string? cliEntryPoint = null)
     {
@@ -36,20 +38,20 @@ public sealed class CliDiagnostics
         var nodeTask = CheckIndependentlyAsync(
             "Node.js",
             () => CheckNodeAsync(cancellationToken),
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "Node.js 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "Node.js 检查失败，请重新检查或查看运行日志。"),
             nodeLog);
 
         var cliTask = CheckIndependentlyAsync(
-            "CLI",
+            "频道工具",
             async () =>
             {
                 cliPath = _cliEntryPoint ?? await FindCliEntryPointAsync(cancellationToken);
                 if (cliPath is null)
-                    return new DiagnosticItem(DiagnosticState.Warning, "未安装", "未找到全局或当前目录的 tencent-channel-cli NPM 包");
+                    return new DiagnosticItem(DiagnosticState.Warning, "未安装", "未找到 tencent-channel-cli，请安装后重新检查。");
 
                 var versionResult = await RunNodeScriptAsync(cliPath, ["version"], cancellationToken);
                 if (!versionResult.Started)
-                    return new DiagnosticItem(DiagnosticState.Error, "无法启动", Sanitize(versionResult.ErrorMessage));
+                    return new DiagnosticItem(DiagnosticState.Error, "无法启动", $"{Sanitize(versionResult.ErrorMessage)} 请重新检查或重新安装频道工具。");
 
                 var version = ExtractVersion(versionResult.CombinedOutput);
                 var parsedVersion = ParseVersion(version);
@@ -57,9 +59,9 @@ public sealed class CliDiagnostics
                 return new DiagnosticItem(
                     versionOk ? DiagnosticState.Ready : DiagnosticState.Warning,
                     versionOk ? "可用" : "需升级或无法识别",
-                    string.IsNullOrWhiteSpace(version) ? "版本命令没有返回可识别信息" : $"版本 {version}（最低要求 {MinimumCliVersion}）");
+                    string.IsNullOrWhiteSpace(version) ? "无法读取频道工具版本，请重新检查或重新安装。" : $"版本 {version}（最低要求 {MinimumCliVersion}）");
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "CLI 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "频道工具检查失败，请重新检查或查看运行日志。"),
             cliLog);
 
         var ffmpegTask = CheckIndependentlyAsync(
@@ -72,7 +74,7 @@ public sealed class CliDiagnostics
                     result.StateLabel,
                     result.Detail);
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "FFmpeg 检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "FFmpeg 检查失败，请重新检查或查看运行日志。"),
             ffmpegLog);
 
         await Task.WhenAll(nodeTask, cliTask, ffmpegTask);
@@ -88,19 +90,19 @@ public sealed class CliDiagnostics
             async () =>
             {
                 if (cliPath is null || cli.State != DiagnosticState.Ready)
-                    return new DiagnosticItem(DiagnosticState.Unknown, "未检查", "CLI 未通过检查，无法检查登录状态");
+                    return new DiagnosticItem(DiagnosticState.Unknown, "未检查", "频道工具不可用，无法检查登录状态。请先处理频道工具问题。");
 
                 var statusResult = await RunNodeScriptAsync(cliPath, ["login", "status"], cancellationToken);
                 return ClassifyLoginStatus(statusResult.ExitCode, statusResult.CombinedOutput, statusResult.ErrorMessage);
             },
-            new DiagnosticItem(DiagnosticState.Error, "检查失败", "登录状态检查失败"),
+            new DiagnosticItem(DiagnosticState.Error, "检查未通过", "登录状态检查失败，请重试。"),
             log);
 
         var overallMessage = login.State == DiagnosticState.Ready
             ? "运行环境检查通过。"
             : cli.State != DiagnosticState.Ready
-                ? "频道 CLI 未通过检查。"
-                : "请按 CLI 官方扫码授权流程登录，然后重新检查";
+                ? "频道工具未通过检查。请先处理检测项。"
+                : "请使用频道工具官方扫码授权流程登录，然后重新检查。";
         return new DiagnosticReport(node, cli, ffmpeg, login, log, overallMessage);
     }
 
@@ -130,7 +132,10 @@ public sealed class CliDiagnostics
 
     public async Task<CliInstallResult> InstallAsync(CancellationToken cancellationToken = default)
     {
-        var node = await RunCommandAsync("node", ["--version"], cancellationToken);
+        var nodePath = NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+        var node = nodePath is null
+            ? new ProcessResult(false, null, "", "", "未找到 Node.js")
+            : await RunCommandAsync(nodePath, ["--version"], cancellationToken);
         if (!node.Started || node.ExitCode != 0)
         {
             return new CliInstallResult(false, "未检测到可用的 Node.js。请先安装 Node.js，再重新检查。", null);
@@ -255,6 +260,9 @@ public sealed class CliDiagnostics
                         route.Client, downloadUrl, DownloadHeadersTimeout, cancellationToken);
                     response.EnsureSuccessStatusCode();
                     var totalBytes = response.Content.Headers.ContentLength;
+                    if (totalBytes is > MaxNodeMsiBytes)
+                        throw new InvalidOperationException(
+                            $"Node.js 安装包超过 {FormatBytes(MaxNodeMsiBytes)} 限制。");
                     await using (var stream = await response.Content
                         .ReadAsStreamAsync(cancellationToken)
                         .WaitAsync(cancellationToken))
@@ -283,6 +291,10 @@ public sealed class CliDiagnostics
 
                             if (read == 0)
                                 break;
+
+                            if (downloadedBytes + read > MaxNodeMsiBytes)
+                                throw new InvalidOperationException(
+                                    $"Node.js 安装包超过 {FormatBytes(MaxNodeMsiBytes)} 限制。");
 
                             await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
                                 .AsTask()
@@ -353,10 +365,13 @@ public sealed class CliDiagnostics
                 return new CliInstallResult(false, "等待 Node.js 安装程序超时。若安装仍在进行，请完成安装后重新检查。", null);
             }
 
-            RefreshNodePath();
             ReportNodeProgress(progress, 95, "Windows 安装器已结束，正在验证 Node.js…",
                 "正在检查 node --version。", canCancel: false);
-            var check = await RunCommandAsync("node", ["--version"], cancellationToken);
+            var installedNodePath = NodeRuntimeLocator.FindNodeExecutablePath(
+                currentDirectory: Environment.CurrentDirectory);
+            var check = installedNodePath is null
+                ? new ProcessResult(false, null, "", "", "未找到 Node.js")
+                : await RunCommandAsync(installedNodePath, ["--version"], cancellationToken);
             ReportNodeProgress(progress, 100, check.Started && check.ExitCode == 0
                 ? "Node.js 安装完成"
                 : "Windows 安装器已结束，但 Node.js 验证未通过",
@@ -404,27 +419,27 @@ public sealed class CliDiagnostics
         var text = Sanitize(string.IsNullOrWhiteSpace(message) ? rawText : message);
         if (exitCode is null)
         {
-            return new DiagnosticItem(DiagnosticState.Error, "检查失败", "CLI 未能返回有效状态");
+            return new DiagnosticItem(DiagnosticState.Error, "检查未通过", "频道工具未返回登录状态，请重新检查。");
         }
 
         if (ContainsAny(text, "未登录", "not logged in", "unauthorized", "未授权", "login required", "8011"))
         {
-            return new DiagnosticItem(DiagnosticState.Warning, "未登录", "请使用 CLI 官方扫码授权流程登录");
+            return new DiagnosticItem(DiagnosticState.Warning, "未登录", "请使用频道工具官方扫码授权流程登录");
         }
 
         if (ContainsAny(text, "expired", "过期", "token"))
         {
-            return new DiagnosticItem(DiagnosticState.Warning, "授权可能过期", "请使用 CLI 官方流程重新授权");
+            return new DiagnosticItem(DiagnosticState.Warning, "授权可能过期", "登录凭证可能已过期，请使用频道工具重新授权。");
         }
 
         var successFlag = TryReadSuccessFlag(rawText);
         if (successFlag == false || exitCode != 0)
-            return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "CLI 未能确认当前登录状态，请重新检查或扫码登录");
+            return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "无法确认登录状态，请重新检查或扫码登录。");
 
         if (successFlag == true || ContainsAny(text, "logged in", "已登录", "登录状态正常", "authenticated", "authorized", "授权有效"))
-            return new DiagnosticItem(DiagnosticState.Ready, "已登录", FirstUsefulLine(text, "CLI 登录状态正常"));
+            return new DiagnosticItem(DiagnosticState.Ready, "已登录", FirstUsefulLine(text, "频道工具登录状态正常"));
 
-        return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "CLI 未能确认当前登录状态，请重新检查或扫码登录");
+        return new DiagnosticItem(DiagnosticState.Warning, "状态不确定", "无法确认登录状态，请重新检查或扫码登录。");
     }
 
     private static bool? TryReadSuccessFlag(string text)
@@ -470,49 +485,63 @@ public sealed class CliDiagnostics
 
     private async Task<DiagnosticItem> CheckNodeAsync(CancellationToken cancellationToken)
     {
-        RefreshNodePath();
-        var result = await RunCommandAsync("node", ["--version"], cancellationToken);
+        var nodePath = NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+        if (nodePath is null)
+        {
+            return new DiagnosticItem(DiagnosticState.Error, "未安装", "未找到 Node.js，请安装后重新检查。");
+        }
+
+        var result = await RunCommandAsync(nodePath, ["--version"], cancellationToken);
         if (!result.Started)
         {
-            return new DiagnosticItem(DiagnosticState.Error, "未安装", "PATH 中未找到 Node.js");
+            return new DiagnosticItem(DiagnosticState.Error, "未安装", "未找到 Node.js，请安装后重新检查。");
         }
 
         var version = FirstUsefulLine(result.CombinedOutput);
         return result.ExitCode == 0
             ? new DiagnosticItem(DiagnosticState.Ready, "可用", string.IsNullOrWhiteSpace(version) ? "Node.js 已启动" : version)
-            : new DiagnosticItem(DiagnosticState.Error, "异常", FirstUsefulLine(result.CombinedOutput, "Node.js 检查失败"));
+            : new DiagnosticItem(DiagnosticState.Error, "异常", FirstUsefulLine(result.CombinedOutput, "Node.js 检查未通过，请重新检查或查看运行日志。"));
     }
 
     private async Task<string?> FindCliEntryPointAsync(CancellationToken cancellationToken)
     {
         var candidates = new List<string>();
-        var npmCli = FindNpmCliPath();
+        var nodePath = NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+        if (nodePath is null) return null;
+
+        var npmCli = NodeRuntimeLocator.FindNpmCliPath(nodePath);
         if (npmCli is not null)
         {
-            var globalRoot = await RunCommandAsync("node", [npmCli, "root", "-g"], cancellationToken);
+            var globalRoot = await RunCommandAsync(nodePath, [npmCli, "root", "-g"], cancellationToken);
             if (globalRoot.ExitCode == 0)
             {
                 var root = FirstUsefulLine(globalRoot.StandardOutput);
-                if (!string.IsNullOrWhiteSpace(root))
+                if (!string.IsNullOrWhiteSpace(root) && Path.IsPathRooted(root))
                 {
                     candidates.Add(Path.Combine(root, "tencent-channel-cli", "bin", "tencent-channel-cli"));
                 }
             }
         }
 
-        candidates.Add(Path.Combine(Environment.CurrentDirectory, "node_modules", "tencent-channel-cli", "bin", "tencent-channel-cli"));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "node_modules", "tencent-channel-cli", "bin", "tencent-channel-cli"));
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates
+            .Where(File.Exists)
+            .Select(Path.GetFullPath)
+            .FirstOrDefault();
     }
 
     private async Task<ProcessResult> RunNodeScriptAsync(string scriptPath, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
+        var nodePath = NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+        if (nodePath is null)
+            return new ProcessResult(false, null, "", "", "未找到 Node.js，请安装后重新检查。");
+
         var args = new List<string> { scriptPath };
         args.AddRange(arguments);
         var path = await _ffmpegManager.BuildCliPathAsync(
             Environment.GetEnvironmentVariable("PATH"), cancellationToken).ConfigureAwait(false);
         return await RunCommandAsync(
-            "node", args, cancellationToken, Path.GetDirectoryName(scriptPath), pathOverride: path);
+            nodePath, args, cancellationToken, Path.GetDirectoryName(scriptPath), pathOverride: path);
     }
 
     private async Task<ProcessResult> RunCommandAsync(
@@ -558,16 +587,20 @@ public sealed class CliDiagnostics
         timeout.CancelAfter(timeoutDuration ?? CommandTimeout);
         try
         {
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-            return new ProcessResult(true, process.ExitCode, Sanitize(stdout), Sanitize(stderr), "");
+            var output = await LimitedProcessOutputReader.ReadAsync(process, timeout.Token);
+            return new ProcessResult(
+                true,
+                process.ExitCode,
+                Sanitize(output.StandardOutput),
+                Sanitize(output.StandardError),
+                "");
+        }
+        catch (ProcessOutputLimitExceededException ex)
+        {
+            return new ProcessResult(true, null, "", "", Sanitize(ex.Message));
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             if (cancellationToken.IsCancellationRequested) throw;
             var timeoutMessage = timeoutDuration is null
                 ? "命令超时"
@@ -580,57 +613,23 @@ public sealed class CliDiagnostics
 
     private async Task<ProcessResult> RunInstallCommandAsync(CancellationToken cancellationToken)
     {
-        var npmCli = FindNpmCliPath();
+        var nodePath = NodeRuntimeLocator.FindNodeExecutablePath(currentDirectory: Environment.CurrentDirectory);
+        if (nodePath is null)
+        {
+            return new ProcessResult(false, null, "", "", "未找到 Node.js，请安装后重试");
+        }
+
+        var npmCli = NodeRuntimeLocator.FindNpmCliPath(nodePath);
         if (npmCli is null)
         {
             return new ProcessResult(false, null, "", "", "未找到 Node.js 附带的 npm-cli.js，请检查 Node.js/npm 安装");
         }
 
         return await RunCommandAsync(
-            "node",
+            nodePath,
             [npmCli, "install", "-g", "tencent-channel-cli"],
             cancellationToken,
             timeoutDuration: InstallTimeout);
-    }
-
-    private static string? FindNpmCliPath()
-    {
-        RefreshNodePath();
-        var pathEntries = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        foreach (var entry in pathEntries)
-        {
-            var nodePath = Path.Combine(entry.Trim('"'), OperatingSystem.IsWindows() ? "node.exe" : "node");
-            if (!File.Exists(nodePath))
-            {
-                continue;
-            }
-
-            var npmCliPath = Path.Combine(Path.GetDirectoryName(nodePath)!, "node_modules", "npm", "bin", "npm-cli.js");
-            if (File.Exists(npmCliPath))
-            {
-                return npmCliPath;
-            }
-        }
-
-        return null;
-    }
-
-    private static void RefreshNodePath()
-    {
-        if (!OperatingSystem.IsWindows()) return;
-        var candidates = new[]
-        {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "nodejs")
-        };
-        var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var entries = currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var missing = candidates.Where(path => File.Exists(Path.Combine(path, "node.exe")) &&
-            !entries.Any(entry => string.Equals(entry.Trim('"'), path, StringComparison.OrdinalIgnoreCase))).ToArray();
-        if (missing.Length > 0)
-            Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator, missing.Append(currentPath)), EnvironmentVariableTarget.Process);
     }
 
     private static void ReportNodeProgress(
@@ -657,7 +656,41 @@ public sealed class CliDiagnostics
         CancellationToken cancellationToken)
     {
         return await RunHttpOperationWithHardTimeoutAsync(
-            token => http.GetStringAsync(url, token), url, timeout, cancellationToken);
+            async token =>
+            {
+                using var response = await http
+                    .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token)
+                    .ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                return await ReadLimitedStringAsync(response.Content, MaxNodeIndexBytes, token)
+                    .ConfigureAwait(false);
+            },
+            url,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<string> ReadLimitedStringAsync(
+        HttpContent content,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is long contentLength && contentLength > maxBytes)
+            throw new InvalidOperationException($"响应超过 {FormatBytes(maxBytes)} 限制。");
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            if (buffer.Length + read > maxBytes)
+                throw new InvalidOperationException($"响应超过 {FormatBytes(maxBytes)} 限制。");
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private static Task<HttpResponseMessage> GetResponseWithTimeoutAsync(

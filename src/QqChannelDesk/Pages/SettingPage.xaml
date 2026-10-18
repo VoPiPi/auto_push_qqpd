@@ -96,7 +96,7 @@
                             <ColumnDefinition Width="112" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="储存路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                        <TextBlock Text="存储路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
                         <Grid Grid.Column="1">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -127,7 +127,7 @@
                         </Grid>
                         <TextBlock x:Name="FfmpegPathStatus" Grid.Row="4" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </Grid>
-                    <TextBlock Grid.Row="3" Text="素材仓库原件不会因任务清理被删除；失败或超时任务副本会保留，便于排查。更换目录不会自动迁移已有文件。FFmpeg 优先使用此处指定路径，其次使用系统 FFmpeg，最后使用项目 tools 目录版本。"
+                    <TextBlock Grid.Row="3" Text="原件保留；失败任务副本便于排查。更换目录不会迁移已有文件。优先使用指定 FFmpeg。"
                                Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,12,0,0" />
                 </Grid>
             </Border>
@@ -158,14 +158,15 @@
                                 <ColumnDefinition Width="112" />
                                 <ColumnDefinition Width="160" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                            <TextBlock Text="发帖最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
                             <ComboBox x:Name="ScheduleConcurrencyCombo" Grid.Column="1" SelectionChanged="ScheduleConcurrencyCombo_SelectionChanged">
                                 <ComboBoxItem Content="1 个任务" Tag="1" />
                                 <ComboBoxItem Content="2 个任务" Tag="2" />
                                 <ComboBoxItem Content="3 个任务" Tag="3" />
                             </ComboBox>
                         </Grid>
-                        <TextBlock Grid.Row="2" Text="建议保持默认值 1，避免同时发帖请求过多。" Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" />
+                        <TextBlock Grid.Row="2" Text="仅作用于发布计划，TG 定时采集固定串行执行；建议保持默认值 1，避免同时发帖请求过多。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
 
                         <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Grid.Row="3" Content="自动执行发布计划" Margin="0,-10,0,0"
                                   Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />

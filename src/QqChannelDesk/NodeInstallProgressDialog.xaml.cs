@@ -10,6 +10,8 @@ public partial class NodeInstallProgressDialog : Window
     private readonly CancellationTokenSource _cancellation = new();
     private readonly DispatcherTimer _timer;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.Now;
+    private int _closed;
+    private int _resourcesDisposed;
     private bool _running = true;
     private bool _canCancel = true;
 
@@ -17,7 +19,7 @@ public partial class NodeInstallProgressDialog : Window
     {
         InitializeComponent();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _timer.Tick += (_, _) => ElapsedText.Text = $"已用时 {DateTimeOffset.Now - _startedAt:mm\\:ss}";
+        _timer.Tick += Timer_Tick;
         _timer.Start();
         Closing += NodeInstallProgressDialog_Closing;
     }
@@ -26,11 +28,13 @@ public partial class NodeInstallProgressDialog : Window
 
     public void Update(NodeInstallProgress progress)
     {
+        if (Volatile.Read(ref _closed) != 0) return;
         if (!Dispatcher.CheckAccess())
         {
-            _ = Dispatcher.BeginInvoke(() => Update(progress));
+            UiAsync.Post(Dispatcher, () => Update(progress));
             return;
         }
+        if (Volatile.Read(ref _closed) != 0) return;
 
         InstallProgress.Value = Math.Clamp(progress.Percent, 0, 100);
         PercentText.Text = $"{InstallProgress.Value:0}%";
@@ -46,7 +50,7 @@ public partial class NodeInstallProgressDialog : Window
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(Complete);
+            UiAsync.Post(Dispatcher, Complete);
             return;
         }
 
@@ -54,15 +58,23 @@ public partial class NodeInstallProgressDialog : Window
         _timer.Stop();
         if (IsVisible)
             Close();
+        DisposeResources();
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canCancel || _cancellation.IsCancellationRequested) return;
+        if (Volatile.Read(ref _closed) != 0 ||
+            Volatile.Read(ref _resourcesDisposed) != 0 ||
+            !_canCancel ||
+            _cancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
         CancelButton.IsEnabled = false;
         StatusText.Text = "正在取消安装，请稍候…";
         DetailText.Text = "如果 Windows 安装器已经启动，安装过程可能会继续完成。";
-        _cancellation.Cancel();
+        CancelOperation();
     }
 
     private void NodeInstallProgressDialog_Closing(object? sender, CancelEventArgs e)
@@ -86,5 +98,38 @@ public partial class NodeInstallProgressDialog : Window
             _running = false;
             CancelButton_Click(this, new RoutedEventArgs());
         }
+    }
+
+    private void Timer_Tick(object? sender, EventArgs e) =>
+        ElapsedText.Text = $"已用时 {DateTimeOffset.Now - _startedAt:mm\\:ss}";
+
+    private void CancelOperation()
+    {
+        if (Volatile.Read(ref _resourcesDisposed) != 0) return;
+        try
+        {
+            _cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void DisposeResources()
+    {
+        if (Interlocked.Exchange(ref _resourcesDisposed, 1) != 0) return;
+        _timer.Stop();
+        _timer.Tick -= Timer_Tick;
+        _cancellation.Dispose();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        Volatile.Write(ref _closed, 1);
+        _timer.Stop();
+        Closing -= NodeInstallProgressDialog_Closing;
+        CancelOperation();
+        DisposeResources();
+        base.OnClosed(e);
     }
 }

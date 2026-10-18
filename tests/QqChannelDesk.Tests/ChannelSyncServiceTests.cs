@@ -56,6 +56,33 @@ public sealed class ChannelSyncServiceTests : IDisposable
         Assert.False((await _store.GetSyncStateAsync()).Succeeded);
     }
 
+    [Fact]
+    public async Task EnsureFreshAsync_UsesRecentCacheWithoutCallingCli()
+    {
+        await _store.ReplaceSnapshotAsync([
+            new CachedGuild("1", "频道", "成员", [new ChannelChoice("11", "版块", "")])
+        ]);
+        var script = await CreateCliAsync("process.exit(9);");
+        var service = CreateService(script);
+
+        var result = await service.EnsureFreshAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Skipped);
+        Assert.Equal("频道", Assert.Single(await _store.GetGuildsAsync()).Name);
+    }
+
+    [Fact]
+    public void IsRefreshDue_OnlyReturnsTrueAfterSixHoursOrWithoutTimestamp()
+    {
+        var now = DateTimeOffset.Parse("2026-10-13T12:00:00+08:00");
+
+        Assert.True(ChannelSyncService.IsRefreshDue(null, now));
+        Assert.False(ChannelSyncService.IsRefreshDue(now.AddHours(-6), now));
+        Assert.True(ChannelSyncService.IsRefreshDue(now.AddHours(-6).AddTicks(-1), now));
+        Assert.True(ChannelSyncService.IsRefreshDue(now.AddHours(-7), now));
+    }
+
     private ChannelSyncService CreateService(string script) =>
         new(new CliWorkflow(script), _store, new AppLogger(_directory));
 

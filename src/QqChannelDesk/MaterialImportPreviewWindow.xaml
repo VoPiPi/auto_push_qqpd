@@ -17,13 +17,13 @@
     </StackPanel>
     <DataGrid x:Name="PreviewGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="False"
               CanUserAddRows="False" CanUserResizeColumns="True" HeadersVisibility="Column"
-              RowHeight="42" ColumnHeaderHeight="38" VerticalScrollBarVisibility="Auto"
-              HorizontalScrollBarVisibility="Auto" BeginningEdit="PreviewGrid_BeginningEdit">
+              VerticalScrollBarVisibility="Auto"
+              HorizontalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}" BeginningEdit="PreviewGrid_BeginningEdit">
       <DataGrid.Columns>
-        <DataGridTextColumn Header="行" Binding="{Binding RowNumber}" IsReadOnly="True" Width="48"/>
-        <DataGridTextColumn Header="标题（选填）" Binding="{Binding Title}" IsReadOnly="True" Width="170"/>
-        <DataGridTextColumn Header="正文" Binding="{Binding Content}" IsReadOnly="True" Width="230"/>
-        <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="82"/>
+        <DataGridTextColumn Header="行" Binding="{Binding RowNumber}" IsReadOnly="True" Width="48" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTextColumn Header="标题（选填）" Binding="{Binding Title}" IsReadOnly="True" Width="170" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTextColumn Header="正文" Binding="{Binding Content}" IsReadOnly="True" Width="230" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="82" ElementStyle="{StaticResource DataGridCellText}"/>
         <DataGridTemplateColumn Header="频道" Width="170">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
@@ -32,24 +32,24 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="板块" Width="170">
+        <DataGridTemplateColumn Header="版块" Width="170">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <ComboBox ItemsSource="{Binding ChannelOptions}" SelectedItem="{Binding ChannelName, UpdateSourceTrigger=PropertyChanged}"
-                        SelectionChanged="ChannelComboBox_SelectionChanged" ToolTip="板块选项随频道变化"/>
+                        SelectionChanged="ChannelComboBox_SelectionChanged" ToolTip="版块选项随频道变化"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" IsReadOnly="True" Width="136"/>
-        <DataGridTextColumn Header="媒体" Binding="{Binding MediaDisplay}" IsReadOnly="True" Width="220"/>
-        <DataGridTextColumn Header="校验结果" Binding="{Binding Error}" IsReadOnly="True" Width="300"/>
+        <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" IsReadOnly="True" Width="136" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTextColumn Header="媒体" Binding="{Binding MediaDisplay}" IsReadOnly="True" Width="220" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTextColumn Header="校验结果" Binding="{Binding Error}" IsReadOnly="True" Width="300" ElementStyle="{StaticResource DataGridCellText}"/>
       </DataGrid.Columns>
     </DataGrid>
     <DockPanel Grid.Row="3" Margin="0,14,0,0">
       <TextBlock x:Name="HintText" VerticalAlignment="Center" Foreground="{StaticResource Warn}" TextWrapping="Wrap"/>
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-        <Button x:Name="ExportErrorsButton" Content="导出错误行" Style="{StaticResource QuietButton}" Click="ExportErrorsButton_Click" Width="104"/>
-        <Button Content="取消" IsCancel="True" Margin="8,0,0,0" Width="86"/>
+        <Button x:Name="ExportErrorsButton" Content="导出失败项" Style="{StaticResource QuietButton}" Click="ExportErrorsButton_Click" Width="104"/>
+        <Button Content="取消" Style="{StaticResource QuietButton}" IsCancel="True" Margin="8,0,0,0" Width="86"/>
         <Button x:Name="ConfirmButton" Content="确认导入" Style="{StaticResource PrimaryButton}" Click="ConfirmButton_Click" Margin="8,0,0,0" Width="100"/>
       </StackPanel>
     </DockPanel>

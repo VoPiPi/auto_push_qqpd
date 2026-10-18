@@ -3,13 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-    <DockPanel Grid.Row="0" Margin="0,0,0,14">
-      <TextBlock Text="公开网页内容先进入本地收件箱；保存或发布前请确认内容使用权限。" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
-      <TextBlock DockPanel.Dock="Right" Text="不下载媒体 · 不自动发布" Foreground="{StaticResource Info}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+    <DockPanel Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="内容采集" Style="{StaticResource PageTitle}"/>
+                <TextBlock Text="采集公开内容；保存或发布前请确认使用权限。" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/>
+            </StackPanel>
     </DockPanel>
     <TabControl Grid.Row="1" x:Name="WorkspaceTabs">
       <TabItem Header="内容收件箱">
-        <Grid Margin="12,4,12,12">
+        <Grid Margin="0,4,0,0">
           <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <Border Grid.ColumnSpan="2" Style="{StaticResource Card}" Margin="0,0,0,12">
@@ -17,22 +19,30 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="UrlBox" VerticalContentAlignment="Center" ToolTip="输入公开网页 HTTP/HTTPS 地址"/>
               <Button x:Name="FetchButton" Grid.Column="1" Content="提取网页" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="FetchButton_Click"/>
-              <Button Grid.Column="2" Content="新建手动素材" Margin="8,0,0,0" Click="NewItemButton_Click"/>
+              <Button Grid.Column="2" Content="新增素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="NewItemButton_Click"/>
             </Grid>
           </Border>
           <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <WrapPanel Margin="0,0,0,8">
               <TextBox x:Name="ItemSearchBox" Width="190" Margin="0,0,8,0" ToolTip="搜索标题、正文、来源或标签" KeyDown="SearchBox_KeyDown"/>
-              <ComboBox x:Name="ItemStatusFilter" Width="112" SelectedIndex="0" SelectionChanged="ItemStatusFilter_SelectionChanged"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待处理"/><ComboBoxItem Content="保留"/><ComboBoxItem Content="忽略"/><ComboBoxItem Content="已转草稿"/></ComboBox>
+              <ComboBox x:Name="ItemStatusFilter" Width="112" SelectedIndex="0" SelectionChanged="ItemStatusFilter_SelectionChanged"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待处理"/><ComboBoxItem Content="保留"/><ComboBoxItem Content="忽略"/><ComboBoxItem Content="已入素材库"/></ComboBox>
               <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchItemsButton_Click"/>
             </WrapPanel>
-            <DataGrid x:Name="ItemsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="ItemsGrid_SelectionChanged" HeadersVisibility="Column" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid x:Name="ItemsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="ItemsGrid_SelectionChanged" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="150" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="1.4*" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="来源" Binding="{Binding SourceHost}" Width="85" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="状态" Width="96">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding Status, Converter={StaticResource StatusSoftBrushConverter}}">
+                        <TextBlock Text="{Binding Status}" Style="{StaticResource StatusPillText}" Foreground="{Binding Status, Converter={StaticResource StatusStrongBrushConverter}}" />
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="采集时间" Binding="{Binding CollectedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
               </DataGrid.Columns>
             </DataGrid>
@@ -40,9 +50,9 @@
               <StackPanel Orientation="Horizontal">
                 <TextBlock x:Name="ItemsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
                 <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-                  <Button x:Name="ItemsPreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="ItemsPreviousPageButton_Click" />
+                  <Button x:Name="ItemsPreviousPageButton" Content="‹" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="ItemsPreviousPageButton_Click" />
                   <TextBlock x:Name="ItemsPageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
-                  <Button x:Name="ItemsNextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="ItemsNextPageButton_Click" />
+                  <Button x:Name="ItemsNextPageButton" Content="›" Style="{StaticResource QuietButton}" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="ItemsNextPageButton_Click" />
                 </StackPanel>
               </StackPanel>
             </Grid>
@@ -60,65 +70,264 @@
               <TextBox x:Name="ItemNotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" VerticalContentAlignment="Top"/>
               <TextBlock Text="标签（用逗号分隔）" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
               <TextBox x:Name="ItemTagsBox"/>
+              <TextBlock x:Name="ItemMediaInfo" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
               <TextBlock x:Name="ItemMessage" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,9,0,0"/>
               <WrapPanel Margin="0,12,0,0">
                 <Button Content="保存修改" Style="{StaticResource QuietButton}" Click="SaveItemButton_Click"/>
-                <Button Content="保留" Margin="8,0,0,0" Click="KeepItemButton_Click"/>
-                <Button Content="忽略" Margin="8,0,0,0" Click="IgnoreItemButton_Click"/>
-                <Button Content="转为发布草稿" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="CreateDraftButton_Click"/>
-                <Button Content="删除" Margin="8,0,0,0" Click="DeleteItemButton_Click"/>
+                <Button Content="保留" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="KeepItemButton_Click"/>
+                <Button Content="忽略" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="IgnoreItemButton_Click"/>
+                <Button Content="加入素材库" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddItemToMaterialsButton_Click"/>
+                <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="8,0,0,0" Click="DeleteItemButton_Click"/>
               </WrapPanel>
             </StackPanel>
           </ScrollViewer>
         </Grid>
       </TabItem>
-      <TabItem Header="发布草稿箱">
-        <Grid Margin="12,4,12,12">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
-            <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource QuietButton}" Click="SearchDraftsButton_Click" VerticalAlignment="Center"/>
-            <TextBox x:Name="DraftSearchBox" Width="260" ToolTip="搜索草稿标题、正文或来源" KeyDown="SearchBox_KeyDown"/>
-            <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchDraftsButton_Click"/>
-          </DockPanel>
-          <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
-            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <DataGrid x:Name="DraftsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="DraftsGrid_SelectionChanged" RowHeight="26" ColumnHeaderHeight="42" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+      <TabItem Header="TG采集">
+        <Grid Margin="0,4,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="TgChannelBox" IsEditable="True" VerticalContentAlignment="Center" ToolTip="输入 TG 频道地址或 @频道名，如 t.me/频道名"/>
+                <TextBox x:Name="TgLimitBox" Grid.Column="1" Width="64" VerticalContentAlignment="Center" ToolTip="每次采集数量：默认 20 条；填写 0 或留空表示不限制" Margin="8,0,0,0"/>
+                <ComboBox x:Name="TgProxyBox" Grid.Column="2" Width="180" IsEditable="True" IsTextSearchEnabled="False" VerticalContentAlignment="Center" DisplayMemberPath="DisplayName" SelectedValuePath="Value" ToolTip="选择系统网页代理，或输入自定义代理地址" Margin="8,0,0,0"/>
+                <TextBox x:Name="TgKeywordBox" Grid.Column="3" Width="150" VerticalContentAlignment="Center" ToolTip="关键词过滤：标题或正文包含才入列，留空为不过滤" Margin="8,0,0,0"/>
+                <Button x:Name="TgCollectButton" Grid.Column="4" Content="开始采集" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="TgCollectButton_Click"/>
+                <Button x:Name="TgCancelButton" Grid.Column="5" Content="取消" Style="{StaticResource QuietButton}" Margin="8,0,0,0" IsEnabled="False" Click="TgCancelButton_Click"/>
+              </Grid>
+              <TextBlock Grid.Row="1" Text="采集结果先暂存；确认后下载媒体并加入素材库。" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="TgSelectionText" Text="共 0 条消息" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+              <Button x:Name="TgSelectAllButton" Content="全选" Style="{StaticResource QuietButton}" Margin="14,0,0,0" Click="TgSelectAllButton_Click"/>
+              <Button x:Name="TgInvertButton" Content="反选" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgInvertButton_Click"/>
+              <Button x:Name="TgBatchDraftButton" Content="批量加入素材库" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="TgBatchDraftButton_Click"/>
+              <Button x:Name="TgBatchDeleteButton" Content="批量删除" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgBatchDeleteButton_Click"/>
+              <Button x:Name="TgClearButton" Content="清空列表" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgClearButton_Click"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="打开临时目录" Style="{StaticResource QuietButton}" Click="TgOpenTempButton_Click" VerticalAlignment="Center"/>
+          </Grid>
+          <Grid Grid.Row="2">
+            <DataGrid x:Name="TgGrid" AutoGenerateColumns="False" IsReadOnly="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TgGrid_SelectionChanged" PreviewMouseLeftButtonDown="TgGrid_PreviewMouseLeftButtonDown" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
-                <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="65" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="155" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="发布状态" Binding="{Binding PublishStatus}" Width="90" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource TableCheckBox}" PreviewMouseLeftButtonDown="TgItemSelectionCheckBox_PreviewMouseLeftButtonDown" Click="TgItemSelectionCheckBox_Click" ToolTip="选择此消息"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="序号" Binding="{Binding DisplayIndex}" IsReadOnly="True" Width="52" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="标题/正文" Binding="{Binding Summary}" IsReadOnly="True" Width="3*" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="发布时间" Binding="{Binding PublishedAtDisplay}" IsReadOnly="True" Width="96" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="媒体" Binding="{Binding MediaSummary}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="来源" Binding="{Binding Channel}" IsReadOnly="True" Width="84" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="状态" IsReadOnly="True" Width="86">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
+                        <TextBlock Text="{Binding StatusLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding StatusLabel, Converter={StaticResource StatusStrongBrushConverter}}" />
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="操作" Width="190" IsReadOnly="True">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Style="{StaticResource TableActionPanel}">
+                        <Button Content="查看" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Click="TgViewButton_Click"/>
+                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDeleteRowButton_Click"/>
+                        <Button Content="入库" Style="{StaticResource TableLinkButton}" Width="52" Padding="0" Margin="6,0,0,0" Click="TgDraftRowButton_Click" IsEnabled="{Binding CanMaterialize}" ToolTip="确认后加入素材库"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
               </DataGrid.Columns>
             </DataGrid>
-            <Grid Grid.Row="1" Margin="0,8,0,0">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock x:Name="DraftsStatus" Text="正在加载…" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-                  <Button x:Name="DraftsPreviousPageButton" Content="‹" Width="30" Height="28" Padding="0" ToolTip="上一页" Click="DraftsPreviousPageButton_Click" />
-                  <TextBlock x:Name="DraftsPageText" Text="1 / 1" MinWidth="54" TextAlignment="Center" VerticalAlignment="Center" />
-                  <Button x:Name="DraftsNextPageButton" Content="›" Width="30" Height="28" Padding="0" ToolTip="下一页" Click="DraftsNextPageButton_Click" />
-                </StackPanel>
-              </StackPanel>
-            </Grid>
+            <TextBlock x:Name="TgEmptyHint" Text="输入频道地址并开始采集；确认后媒体会下载到素材库。" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Width="380" TextAlignment="Center" Visibility="Collapsed"/>
           </Grid>
-          <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+          <TextBlock x:Name="TgStatusText" Grid.Row="3" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+        </Grid>
+      </TabItem>
+      <TabItem Header="TG定时采集">
+        <Grid Margin="0,4,0,0">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
             <StackPanel>
-              <TextBlock Text="草稿编辑" Style="{StaticResource SectionTitle}"/>
-              <TextBlock Text="来源链接" Foreground="{StaticResource Muted}" Margin="0,4,0,4"/>
-              <TextBox x:Name="DraftSourceBox" IsReadOnly="True"/>
-              <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="DraftTitleBox"/>
-              <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="DraftContentBox" MinHeight="220" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
-              <TextBlock x:Name="DraftMessage" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
-              <WrapPanel Margin="0,12,0,0">
-                <Button Content="保存草稿" Style="{StaticResource QuietButton}" Click="SaveDraftButton_Click"/>
-                <Button Content="预览并发布" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="PublishDraftButton_Click"/>
-                <Button Content="删除" Margin="8,0,0,0" Click="DeleteDraftButton_Click"/>
-              </WrapPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" MinWidth="260"/>
+                  <ColumnDefinition Width="92"/>
+                  <ColumnDefinition Width="160"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="TgScheduleChannelBox" IsEditable="True" IsTextSearchEnabled="False" VerticalContentAlignment="Center" ToolTip="TG 频道地址：输入公开频道，例如 @频道名、t.me/频道名或 t.me/s/频道名"/>
+                <TextBox x:Name="TgScheduleLimitBox" Grid.Column="1" Margin="10,0,0,0" VerticalContentAlignment="Center" ToolTip="每次采集数量：默认 20 条；填写 0 或留空表示不限制"/>
+                <ComboBox x:Name="TgScheduleProxyBox" Grid.Column="2" Margin="10,0,0,0" IsEditable="True" IsTextSearchEnabled="False" DisplayMemberPath="DisplayName" SelectedValuePath="Value" VerticalContentAlignment="Center" ToolTip="网页代理：选择系统代理或输入自定义代理地址"/>
+                <Button x:Name="TgScheduleSaveButton" Grid.Column="3" Content="保存" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="TgScheduleSaveButton_Click"/>
+                <Button x:Name="TgScheduleAdvancedButton" Grid.Column="4" Content="高级设置" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgScheduleAdvancedButton_Click"/>
+                <Button x:Name="TgScheduleClearButton" Grid.Column="5" Content="清空" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgScheduleClearButton_Click"/>
+                <Button x:Name="TgScheduleCheckButton" Grid.Column="6" Content="立即检查" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="TgScheduleCheckButton_Click" ToolTip="立即检查所有已启用且到期的采集配置"/>
+              </Grid>
+              <TextBlock Grid.Row="1" Text="每 2 分钟检查一次；新消息会下载媒体并加入素材库，已入库内容自动跳过。" Foreground="{StaticResource Muted}" Margin="0,8,0,0"/>
             </StackPanel>
-          </ScrollViewer>
+          </Border>
+          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="采集地址" Binding="{Binding ChannelUrl}" Width="1.7*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="执行计划" Binding="{Binding CronDisplay}" Width="82" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="采集数量" Binding="{Binding MessageLimitDisplay}" Width="88" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="分发目标" Binding="{Binding DistributionDisplay}" Width="1.3*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTemplateColumn Header="状态" Width="86"><DataGridTemplateColumn.CellTemplate><DataTemplate><Border Style="{StaticResource StatusPill}" Background="{Binding EnabledLabel, Converter={StaticResource StatusSoftBrushConverter}}"><TextBlock Text="{Binding EnabledLabel}" Style="{StaticResource StatusPillText}" Foreground="{Binding EnabledLabel, Converter={StaticResource StatusStrongBrushConverter}}"/></Border></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+              <DataGridTextColumn Header="下次执行" Binding="{Binding NextRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="最近采集" Binding="{Binding LastRunDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTextColumn Header="结果" Binding="{Binding ResultDisplay}" Width="1.5*" ElementStyle="{StaticResource DataGridCellText}"/>
+              <DataGridTemplateColumn Header="操作" Width="200">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <StackPanel Style="{StaticResource TableActionPanel}">
+                      <Button Content="{Binding RunLabel}" IsEnabled="{Binding CanRun}" Style="{StaticResource TableLinkButton}" Click="TgScheduleRunButton_Click" ToolTip="开始对该频道执行一次采集；进行中再次点击可取消"/>
+                      <Button Content="编辑" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleEditButton_Click"/>
+                      <Button Content="{Binding ToggleLabel}" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleToggleButton_Click" ToolTip="暂停或恢复该频道的定时采集"/>
+                      <Button Content="删除" IsEnabled="{Binding CanEditActions}" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="TgScheduleDeleteButton_Click"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+          <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <ProgressBar x:Name="TgScheduleProgressBar" Height="6" Minimum="0" Maximum="1" Visibility="Collapsed" Margin="0,0,0,6"/>
+              <TextBlock x:Name="TgScheduleStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+            </StackPanel>
+            <Button x:Name="TgScheduleCancelButton" Grid.Column="1" Content="取消当前采集" Style="{StaticResource QuietButton}" Visibility="Collapsed" Margin="12,0,0,0" Click="TgScheduleCancelButton_Click"/>
+          </Grid>
+        </Grid>
+      </TabItem>
+      <TabItem Header="代理池">
+        <Grid Margin="0,4,0,0">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBlock Text="代理源" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <ComboBox x:Name="ProxySourceBox" Grid.Column="1" DisplayMemberPath="DisplayName" SelectedValuePath="Id" VerticalContentAlignment="Center" SelectionChanged="ProxySourceBox_SelectionChanged" ToolTip="选择代理源；仅保留 HTTP/HTTPS 节点"/>
+              <Button x:Name="ProxyFetchButton" Grid.Column="2" Content="同步最新代理" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="ProxyFetchButton_Click" ToolTip="从当前代理源读取最新节点"/>
+              <Button x:Name="ProxyAddSourceButton" Grid.Column="3" Content="新增源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyAddSourceButton_Click"/>
+              <Button x:Name="ProxyEditSourceButton" Grid.Column="4" Content="编辑源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ProxyEditSourceButton_Click"/>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="节点总数" Foreground="{StaticResource Muted}"/><TextBlock x:Name="ProxyTotalCountText" Text="-" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="1" Background="{StaticResource AccentSoft}" BorderBrush="{StaticResource AccentSoft}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="可用节点" Foreground="{StaticResource Accent}"/><TextBlock x:Name="ProxyAliveCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="2" Background="{StaticResource WarnSoft}" BorderBrush="{StaticResource WarnSoft}" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,8,0">
+              <StackPanel><TextBlock Text="待测节点" Foreground="{StaticResource Warn}"/><TextBlock x:Name="ProxyUncheckedCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Warn}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+            <Border Grid.Column="3" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoSoft}" BorderThickness="1" CornerRadius="5" Padding="12">
+              <StackPanel><TextBlock Text="TG 可访问" Foreground="{StaticResource Info}"/><TextBlock x:Name="ProxyTgCountText" Text="-" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Info}" Margin="0,3,0,0"/></StackPanel>
+            </Border>
+          </Grid>
+          <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Background="{StaticResource AccentSoft}" CornerRadius="9" Padding="9,2" VerticalAlignment="Center">
+              <TextBlock x:Name="ProxySelectionText" Text="已选 0 个" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+            </Border>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="并发" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBox x:Name="ProxyConcurrencyBox" Width="54" VerticalContentAlignment="Center" ToolTip="测试并发数，1-50"/>
+              <ComboBox x:Name="ProxyBatchActionBox" Width="180" Margin="8,0,0,0" VerticalContentAlignment="Center" SelectedIndex="0" SelectionChanged="ProxyBatchActionBox_SelectionChanged" ToolTip="选择批量操作；删除失效仅处理测试不可用且 TG 不可访问的节点">
+                <ComboBoxItem Content="批量操作" IsEnabled="False"/>
+                <ComboBoxItem Content="全选" Tag="select-all"/>
+                <ComboBoxItem Content="反选" Tag="invert"/>
+                <ComboBoxItem Content="测试节点" Tag="health"/>
+                <ComboBoxItem Content="验证 TG" Tag="telegram"/>
+                <ComboBoxItem Content="批量删除选中" Tag="delete-selected"/>
+                <ComboBoxItem Content="批量删除失效" Tag="delete-invalid"/>
+              </ComboBox>
+            </StackPanel>
+          </Grid>
+          <Grid Grid.Row="3">
+            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="ProxyNodesGrid_SelectionChanged" PreviewMouseLeftButtonDown="ProxyNodesGrid_PreviewMouseLeftButtonDown" IsReadOnly="False" HeadersVisibility="Column" HorizontalAlignment="Stretch" Width="Auto" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource TableCheckBox}" PreviewMouseLeftButtonDown="ProxyNodeSelectionCheckBox_PreviewMouseLeftButtonDown" Click="ProxyNodeSelectionCheckBox_Click" ToolTip="选择此节点"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="代理地址" Binding="{Binding Address}" Width="2.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="协议" Binding="{Binding Scheme}" Width="0.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="端口" Binding="{Binding Port}" Width="0.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="国家" Binding="{Binding Country}" Width="1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="出口 IP" Binding="{Binding ExitIp}" Width="1.25*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="连通性" Width="1*">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding StatusBackground}">
+                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusForeground}" FontWeight="SemiBold"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="TG" Width="1.35*">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource StatusPill}" Background="{Binding TgStatusBackground}">
+                        <TextBlock Text="{Binding TgStatus}" Foreground="{Binding TgStatusForeground}" FontWeight="SemiBold"/>
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="测试时间" Binding="{Binding LastChecked}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="最近结果" Binding="{Binding Error}" Width="2.4*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="142">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Style="{StaticResource TableActionPanel}">
+                        <Button Content="测试" Style="{StaticResource TableLinkButton}" Click="ProxyRowHealthButton_Click" ToolTip="测试节点是否可用"/>
+                        <Button Content="TG" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowTgButton_Click" ToolTip="使用此代理节点验证 TG 频道"/>
+                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowDeleteButton_Click" ToolTip="从当前代理源删除此节点"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+            <StackPanel x:Name="ProxyEmptyHint" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+              <TextBlock Text="当前代理源还没有节点" Foreground="{StaticResource Ink}" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Text="点击“同步最新代理”读取节点，仅保留 HTTP/HTTPS 节点。" Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock x:Name="ProxyPoolStatusText" Grid.Row="4" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
         </Grid>
       </TabItem>
     </TabControl>

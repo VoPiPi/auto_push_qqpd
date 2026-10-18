@@ -15,9 +15,9 @@ public sealed record CurrentAccountIdentity(string Nickname, string GlobalNickna
         var normalizedGlobal = Normalize(globalNickname);
         var normalizedNickname = Normalize(nickname);
         if (normalizedGlobal.Length == 0)
-            throw new ArgumentException("CLI 未返回 global_nickname，无法确认当前账号。", nameof(globalNickname));
+            throw new ArgumentException("频道工具未返回账号标识，请重新登录。", nameof(globalNickname));
         if (normalizedNickname.Length == 0)
-            throw new ArgumentException("CLI 未返回 nickname，无法确认当前账号。", nameof(nickname));
+            throw new ArgumentException("频道工具未返回账号名称，请重新登录。", nameof(nickname));
 
         var input = Encoding.UTF8.GetBytes(normalizedGlobal + "\n" + normalizedNickname);
         var key = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
@@ -47,7 +47,7 @@ public sealed class AccountContext
 
     public string RequireAccountKey()
     {
-        return CurrentAccountKey ?? throw new InvalidOperationException("当前未确认登录账号，不能访问账号数据。");
+        return CurrentAccountKey ?? throw new InvalidOperationException("尚未确认登录账号，请登录后重试。");
     }
 
     public void Set(CurrentAccountIdentity identity)

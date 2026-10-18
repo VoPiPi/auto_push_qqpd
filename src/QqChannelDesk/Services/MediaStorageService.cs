@@ -26,12 +26,12 @@ public sealed class MediaStorageService
 
     public static async Task<StorageDirectoryResult> ValidateDirectoryAsync(string path, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(path)) return new(false, "素材文件储存路径不能为空。", "");
+        if (string.IsNullOrWhiteSpace(path)) return new(false, "请选择素材文件存储路径。", "");
         string fullPath;
         try { fullPath = Path.GetFullPath(path.Trim()); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return new(false, $"素材文件储存路径无效：{ex.Message}", "");
+            return new(false, $"素材存储路径无效，请重新选择：{ex.Message}", "");
         }
 
         try
@@ -45,7 +45,7 @@ public sealed class MediaStorageService
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            return new(false, $"素材目录不可写：{ex.Message}", fullPath);
+            return new(false, $"素材目录不可写，请检查权限或更换目录：{ex.Message}", fullPath);
         }
     }
 
@@ -122,6 +122,73 @@ public sealed class MediaStorageService
     }
 
 
+    /// <summary>
+    /// 判断是否为 TG 采集草稿的临时媒体（temp/telegram/日期/频道）。这类文件属于发布成功即清理的
+    /// 暂存数据，与素材库原件（library/）和任务副本（jobs/）分开；预览缓存 preview/ 不在清理范围。
+    /// </summary>
+    public static bool IsTelegramStagingPath(string path, string? root = null)
+    {
+        try
+        {
+            var baseDir = root ?? AppContext.BaseDirectory;
+            var staging = Path.GetFullPath(Path.Combine(baseDir, "temp", "telegram")) + Path.DirectorySeparatorChar;
+            var preview = Path.GetFullPath(Path.Combine(baseDir, "temp", "telegram", "preview")) + Path.DirectorySeparatorChar;
+            var full = Path.GetFullPath(path);
+            return full.StartsWith(staging, StringComparison.OrdinalIgnoreCase)
+                && !full.StartsWith(preview, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 发布成功后清理 TG 采集暂存媒体。仅“完成任务删除文件”策略下删除，保留策略下不动，
+    /// 与任务副本保持同一口径。发布失败时不要调用，暂存文件需保留以便重试。
+    /// </summary>
+    public async Task DeleteTelegramStagingAsync(IReadOnlyList<string> paths, string? root = null, CancellationToken cancellationToken = default)
+    {
+        if (paths.Count == 0) return;
+        var settings = await _settingsStore.GetAsync(cancellationToken);
+        if (settings.MaterialRetentionPolicy != MaterialRetentionPolicy.DeleteAfterSuccessfulPublish) return;
+        await Task.Run(() =>
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    if (IsTelegramStagingPath(path, root) && File.Exists(path)) File.Delete(path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+                {
+                    AppLogger.Instance.Warning($"TG 暂存媒体清理失败：{Path.GetFileName(path)}，{CliDiagnostics.Sanitize(ex.Message)}");
+                }
+            }
+        }, cancellationToken);
+    }
+    /// <summary>
+    /// 清理没有对应素材的 TG 暂存媒体，用于媒体部分下载失败、类型无法识别等未入库场景。
+    /// 与“发布成功后清理”共用同一路径判断，只清理 temp/telegram 下的暂存文件，不碰素材库原件。
+    /// </summary>
+    public async Task DeleteOrphanStagingAsync(IReadOnlyList<string> paths, string? root = null, CancellationToken cancellationToken = default)
+    {
+        if (paths.Count == 0) return;
+        await Task.Run(() =>
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    if (IsTelegramStagingPath(path, root) && File.Exists(path)) File.Delete(path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+                {
+                    AppLogger.Instance.Warning($"TG 暂存媒体清理失败：{Path.GetFileName(path)}，{CliDiagnostics.Sanitize(ex.Message)}");
+                }
+            }
+        }, cancellationToken);
+    }
     public async Task<bool> IsManagedLibraryPathAsync(string path, CancellationToken cancellationToken = default)
     {
         var root = await GetStorageRootAsync(cancellationToken);
