@@ -73,9 +73,22 @@
                     BorderThickness="{TemplateBinding BorderThickness}"
                     CornerRadius="4"
                     SnapsToDevicePixels="True">
-              <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" Focusable="False" />
+              <Grid>
+                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" Focusable="False" />
+                <TextBlock x:Name="Placeholder"
+                           Text="{TemplateBinding Tag}"
+                           Foreground="{StaticResource Muted}"
+                           Margin="{TemplateBinding Padding}"
+                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed"
+                           IsHitTestVisible="False" />
+              </Grid>
             </Border>
             <ControlTemplate.Triggers>
+              <Trigger Property="Tag" Value=""><Setter TargetName="Placeholder" Property="Visibility" Value="Collapsed" /></Trigger>
+              <Trigger Property="Text" Value=""><Setter TargetName="Placeholder" Property="Visibility" Value="Visible" /></Trigger>
               <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="border" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -127,6 +140,15 @@
                        Background="Transparent" BorderThickness="0"
                        IsReadOnly="{TemplateBinding IsReadOnly}"
                        Visibility="Collapsed" Focusable="True" />
+              <TextBlock x:Name="Placeholder"
+                         Text="{TemplateBinding Tag}"
+                         Foreground="{StaticResource Muted}"
+                         Margin="12,3,30,3"
+                         VerticalAlignment="Center"
+                         TextWrapping="NoWrap"
+                         TextTrimming="CharacterEllipsis"
+                         Visibility="Collapsed"
+                         IsHitTestVisible="False" />
               <Popup x:Name="PART_Popup"
                      AllowsTransparency="True" Focusable="False"
                      IsOpen="{TemplateBinding IsDropDownOpen}"
@@ -148,6 +170,13 @@
                 <Setter TargetName="ContentSite" Property="Visibility" Value="Collapsed" />
                 <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
               </Trigger>
+              <MultiTrigger>
+                <MultiTrigger.Conditions>
+                  <Condition Property="IsEditable" Value="True" />
+                  <Condition Property="Text" Value="" />
+                </MultiTrigger.Conditions>
+                <Setter TargetName="Placeholder" Property="Visibility" Value="Visible" />
+              </MultiTrigger>
               <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="ToggleButton" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
               <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="ToggleButton" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
             </ControlTemplate.Triggers>
@@ -591,6 +620,7 @@
     <Style x:Key="StatusPillText" TargetType="TextBlock">
       <Setter Property="Foreground" Value="{StaticResource Neutral}" />
       <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="TextWrapping" Value="NoWrap" />
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />

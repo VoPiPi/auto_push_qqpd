@@ -7,7 +7,7 @@
     <TextBlock Grid.Row="1" Text="管理素材，可批量设置频道和发布时间。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
     <DockPanel Grid.Row="2" LastChildFill="True">
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-        <TextBox x:Name="MaterialSearchBox" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
+        <TextBox x:Name="MaterialSearchBox" Tag="搜索标题、正文、频道或链接" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
         <ComboBox x:Name="MaterialStatusFilter" Width="150" SelectedIndex="0" Margin="8,0,0,0">
           <ComboBoxItem Content="待发布及排队中" Tag="active"/><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待发布" Tag="waitsend"/><ComboBoxItem Content="排队发布中" Tag="queue"/><ComboBoxItem Content="已发布" Tag="published"/>
         </ComboBox>

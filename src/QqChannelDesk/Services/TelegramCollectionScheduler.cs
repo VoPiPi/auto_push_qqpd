@@ -16,6 +16,7 @@ public sealed class TelegramCollectionScheduler
     private readonly TelegramMaterializer _materializer;
     private readonly PublishAutoScheduleService? _autoSchedule;
     private readonly WebProxyProviderRegistry _proxyRegistry;
+    private readonly ITelegramTransport? _transport;
     private readonly AppLogger _logger;
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private readonly object _stateLock = new();
@@ -27,6 +28,7 @@ public sealed class TelegramCollectionScheduler
     private long _generation;
     private bool _enabled = true;
     private int _runningScheduleCount;
+    private readonly HashSet<long> _activeScheduleIds = [];
     private DateTimeOffset? _lastHeartbeatAt;
     private DateTimeOffset? _nextCheckAt;
     private TelegramCollectionSchedulerStatus _status = TelegramCollectionSchedulerStatus.Stopped;
@@ -37,12 +39,14 @@ public sealed class TelegramCollectionScheduler
         TelegramCollectorService? collector = null,
         WebProxyProviderRegistry? proxyRegistry = null,
         AppLogger? logger = null,
-        PublishAutoScheduleService? autoSchedule = null)
+        PublishAutoScheduleService? autoSchedule = null,
+        ITelegramTransport? transport = null)
     {
         _store = store;
         _library = library;
         _collector = collector ?? new TelegramCollectorService(proxyRegistry);
-        _materializer = new TelegramMaterializer(_collector, _library);
+        _transport = transport;
+        _materializer = new TelegramMaterializer(_collector, _library, transport: transport);
         _autoSchedule = autoSchedule;
         _proxyRegistry = proxyRegistry ?? new WebProxyProviderRegistry();
         _logger = logger ?? AppLogger.Instance;
@@ -61,6 +65,15 @@ public sealed class TelegramCollectionScheduler
     public TelegramCollectionSchedulerStatus Status
     {
         get { lock (_statusLock) return _status; }
+    }
+
+    /// <summary>
+    /// 当前正在执行的采集配置 ID 快照。界面用它校正行的运行状态：
+    /// 页面切换期间会退订事件，可能错过终态通知，只有对比执行器的真实运行集合才能把“取消采集”复位。
+    /// </summary>
+    public IReadOnlyCollection<long> ActiveScheduleIds
+    {
+        get { lock (_statusLock) return _activeScheduleIds.ToArray(); }
     }
 
     public event Action<string>? StatusChanged;
@@ -185,9 +198,6 @@ public sealed class TelegramCollectionScheduler
             }
         }
     }
-
-    public async Task CheckNowAsync(CancellationToken cancellationToken = default)
-        => await CheckDueAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// 中断当前正在执行的采集（无论是页面手动触发还是后台调度触发）。
@@ -392,7 +402,11 @@ public sealed class TelegramCollectionScheduler
         // 用链接令牌包一层，让页面上的“取消采集”可以中断后台调度触发的采集。
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lock (_runCancelLock) { _activeRunSource = linked; }
-        lock (_statusLock) _runningScheduleCount++;
+        lock (_statusLock)
+        {
+            _runningScheduleCount++;
+            _activeScheduleIds.Add(schedule.Id);
+        }
         try
         {
             return await ExecuteScheduleAsync(schedule, linked.Token);
@@ -403,7 +417,11 @@ public sealed class TelegramCollectionScheduler
             {
                 if (ReferenceEquals(_activeRunSource, linked)) _activeRunSource = null;
             }
-            lock (_statusLock) _runningScheduleCount = Math.Max(0, _runningScheduleCount - 1);
+            lock (_statusLock)
+            {
+                _runningScheduleCount = Math.Max(0, _runningScheduleCount - 1);
+                _activeScheduleIds.Remove(schedule.Id);
+            }
         }
     }
 
@@ -420,27 +438,60 @@ public sealed class TelegramCollectionScheduler
         try
         {
             Report(schedule, "准备", 0, 0, "正在准备采集…");
-            var selection = new WebProxySelection(schedule.ProxySelection);
-            Report(schedule, "请求代理", 0, 0, "正在请求网页代理并打开频道…");
-            var preview = await _collector.PreviewChannelAsync(
-                schedule.ChannelUrl,
-                schedule.MessageLimit,
-                schedule.Keyword,
-                message => RaiseStatus($"{schedule.ChannelName}：{message}"),
-                cancellationToken,
-                selection);
-            if (!preview.Succeeded)
-                throw new InvalidOperationException(preview.Error);
+            // 生产链路统一走 TelegramTransportService；没有注入时才退回旧的网页代理采集（测试替身路径）。
+            TelegramTransportContext? transportContext = null;
+            string cookieHeader;
+            IReadOnlyList<TelegramChannelMessage> messages;
+            string providerName;
+            if (_transport is null)
+            {
+                var selection = new WebProxySelection(schedule.ProxySelection);
+                Report(schedule, "请求代理", 0, 0, "正在请求网页代理并打开频道…");
+                var legacyPreview = await _collector.PreviewChannelAsync(
+                    schedule.ChannelUrl,
+                    schedule.MessageLimit,
+                    "",
+                    message => RaiseStatus($"{schedule.ChannelName}：{message}"),
+                    cancellationToken,
+                    selection);
+                if (!legacyPreview.Succeeded)
+                    throw new InvalidOperationException(legacyPreview.Error);
+                cookieHeader = legacyPreview.CookieHeader;
+                // 定时采集的关键词是排除词：命中后丢弃，未命中的才进入素材库。
+                messages = TelegramCollectorService.ApplyPreviewFilters(legacyPreview.Messages, schedule.MessageLimit, schedule.Keyword, excludeMatches: true);
+                providerName = legacyPreview.ProviderName;
+            }
+            else
+            {
+                var selectionValue = TelegramTransportSelector.Parse(schedule.ProxySelection)
+                    ?? throw new InvalidOperationException($"定时采集通道“{schedule.ProxySelection}”无法识别，请在内容采集页重新保存该配置。");
+                Report(schedule, "请求频道", 0, 0, "正在打开频道…");
+                var preview = await _transport.FetchChannelAsync(
+                    schedule.ChannelUrl,
+                    new TelegramTransportSelection(selectionValue),
+                    message => RaiseStatus($"{schedule.ChannelName}：{message}"),
+                    cancellationToken);
+                if (!preview.Succeeded)
+                    throw new InvalidOperationException(preview.Error);
+                transportContext = preview.Context
+                    ?? throw new InvalidOperationException("采集通道上下文缺失，请重试。");
+                cookieHeader = "";
+                // 传输层不做数量与关键词过滤；定时采集的关键词按排除词处理。
+                messages = TelegramCollectorService.ApplyPreviewFilters(preview.Messages, schedule.MessageLimit, schedule.Keyword, excludeMatches: true);
+                providerName = preview.ProviderName;
+                if (messages.Count > 0)
+                    AppLogger.Instance.Info($"TG 定时采集 {schedule.ChannelUrl}：本次通过 {providerName} 采集到 {messages.Count} 条。");
+            }
 
             var rules = await _store.GetRulesAsync(schedule.Id, cancellationToken);
 
-            Report(schedule, "解析完成", preview.Messages.Count, preview.Messages.Count, $"频道页面解析完成，共 {preview.Messages.Count} 条消息，使用 {preview.ProviderName}。");
+            Report(schedule, "解析完成", messages.Count, messages.Count, $"频道页面解析完成，共 {messages.Count} 条消息，使用 {providerName}。");
 
-            for (var index = 0; index < preview.Messages.Count; index++)
+            for (var index = 0; index < messages.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var message = preview.Messages[index];
-                Report(schedule, "写入素材", index, preview.Messages.Count, $"正在处理第 {index + 1}/{preview.Messages.Count} 条，下载媒体并写入素材库…");
+                var message = messages[index];
+                Report(schedule, "写入素材", index, messages.Count, $"正在处理第 {index + 1}/{messages.Count} 条，下载媒体并写入素材库…");
                 if (await _library.HasMaterialSourceAsync("TG采集", message.Url, cancellationToken))
                 {
                     skipped++;
@@ -448,7 +499,9 @@ public sealed class TelegramCollectionScheduler
                 }
                 var target = TelegramDistributionRuleMatcher.Match(message, rules);
                 if (target is null) unmatched++; else matched++;
-                var materialized = await _materializer.MaterializeAsync(message, preview.CookieHeader, target, cancellationToken);
+                var materialized = transportContext is null
+                    ? await _materializer.MaterializeAsync(message, cookieHeader, target, cancellationToken)
+                    : await _materializer.MaterializeAsync(message, transportContext, target, cancellationToken);
                 failedMedia += materialized.FailedMediaCount;
                 if (materialized.SkippedDuplicate || materialized.SkippedEmpty)
                     skipped++;
@@ -492,9 +545,9 @@ public sealed class TelegramCollectionScheduler
                     skipped++;
 
                 var itemResult = materialized.Succeeded && materialized.FailedMediaCount == 0
-                    ? $"第 {index + 1}/{preview.Messages.Count} 条已入库。"
-                    : $"第 {index + 1}/{preview.Messages.Count} 条已跳过：{materialized.Error}";
-                Report(schedule, "写入素材", index + 1, preview.Messages.Count, itemResult);
+                    ? $"第 {index + 1}/{messages.Count} 条已入库。"
+                    : $"第 {index + 1}/{messages.Count} 条已跳过：{materialized.Error}";
+                Report(schedule, "写入素材", index + 1, messages.Count, itemResult);
             }
 
             var autoScheduleDetail = schedule.AutoScheduleEnabled
@@ -503,7 +556,7 @@ public sealed class TelegramCollectionScheduler
             var detail = $"新增 {added} 条，跳过 {skipped} 条，命中规则 {matched} 条，未命中 {unmatched} 条，媒体失败 {failedMedia} 个{autoScheduleDetail}";
             await _store.UpdateResultAsync(schedule.Id, started, true, added, detail, cancellationToken: cancellationToken);
             _logger.Info($"TG 定时采集 {schedule.ChannelUrl}：{detail}");
-            Report(schedule, "完成", preview.Messages.Count, preview.Messages.Count, $"采集完成，{detail}。");
+            Report(schedule, "完成", messages.Count, messages.Count, $"采集完成，{detail}。");
             return new(schedule.Id, true, added, skipped, matched, unmatched, failedMedia, detail, autoScheduled, autoScheduleSkipped);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

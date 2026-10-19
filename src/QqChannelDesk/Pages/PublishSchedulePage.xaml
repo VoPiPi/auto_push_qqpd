@@ -92,7 +92,8 @@
           </DataGridTemplateColumn>
           <DataGridTemplateColumn Header="结果" Width="1.6*" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
-              <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" Style="{StaticResource DataGridCellText}" />
+              <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" Style="{StaticResource DataGridCellText}"
+                         Foreground="{Binding ErrorDisplay, Converter={StaticResource StatusStrongBrushConverter}}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
           <DataGridTextColumn Header="记录" Binding="{Binding PublishRecordDisplay}" Width="75" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />

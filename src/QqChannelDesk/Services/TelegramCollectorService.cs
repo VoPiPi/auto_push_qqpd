@@ -5,7 +5,7 @@ using System.Text;
 namespace QqChannelDesk.Services;
 
 /// <summary>
-/// 采集 tg 频道：经网页代理打开 t.me/s/ 预览页解析消息。解析结果先以临时列表展示，不落库、
+/// 兼容旧采集入口：经网页代理打开 t.me/s/ 预览页解析消息。新传输调度由 TelegramTransportService 负责。解析结果先以临时列表展示，不落库、
 /// 不下载媒体；仅在选择「加入素材库」时才把图片和视频下载到 temp/telegram/日期/频道目录。
 /// </summary>
 public sealed class TelegramCollectorService
@@ -128,16 +128,20 @@ public sealed class TelegramCollectorService
     /// 且整体不超过 <see cref="TempListLimit"/>。
     /// </summary>
     internal static IReadOnlyList<TelegramChannelMessage> ApplyPreviewFilters(
-        IReadOnlyList<TelegramChannelMessage> messages, int limit, string keyword)
+        IReadOnlyList<TelegramChannelMessage> messages, int limit, string keyword,
+        bool excludeMatches = false)
     {
         IEnumerable<TelegramChannelMessage> result = messages;
         var keywords = SplitKeywords(keyword);
         if (keywords.Count > 0)
         {
             result = result.Where(message =>
-                keywords.Any(item =>
+            {
+                var matched = keywords.Any(item =>
                     message.Title.Contains(item, StringComparison.OrdinalIgnoreCase) ||
-                    message.Text.Contains(item, StringComparison.OrdinalIgnoreCase)));
+                    message.Text.Contains(item, StringComparison.OrdinalIgnoreCase));
+                return excludeMatches ? !matched : matched;
+            });
         }
         var take = limit > 0 ? Math.Min(limit, TempListLimit) : TempListLimit;
         return result.Take(take).ToArray();

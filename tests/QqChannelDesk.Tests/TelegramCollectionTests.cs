@@ -366,6 +366,47 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Equal([stagedVideo], cleaned);
         Assert.Empty(await library.GetMaterialsAsync());
     }
+
+    [Theory]
+    [InlineData("image", ".jpg")]
+    [InlineData("video", ".mp4")]
+    public async Task Materializer_PromotesDownloadedMediaToLibraryAndRemovesStaging(string type, string extension)
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var mediaRoot = Path.Combine(_directory, "media");
+        var settings = new SystemSettingsStore(_databasePath);
+        await settings.SaveAsync(new AppSettings(MaterialStoragePath: mediaRoot));
+        var mediaStorage = new MediaStorageService(settings);
+        var channelDirectory = Path.Combine(_directory, "temp", "telegram", "20261013", "channel");
+        Directory.CreateDirectory(channelDirectory);
+        var stagedMedia = Path.Combine(channelDirectory, $"media{extension}");
+        File.WriteAllBytes(stagedMedia, [5, 5, 5]);
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            (_, _, _) => Task.FromResult(new TelegramDraftResult(channelDirectory, [stagedMedia], 0)),
+            mediaStorage,
+            (paths, _) =>
+            {
+                foreach (var path in paths)
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+                return Task.CompletedTask;
+            });
+        var message = Message($"https://t.me/channel/4{extension.Length}", "", "");
+
+        var result = await materializer.MaterializeAsync(message, "");
+
+        Assert.True(result.Succeeded);
+        Assert.False(File.Exists(stagedMedia));
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        var storedMedia = Assert.Single(material.MediaLinks);
+        Assert.Equal(type, material.Type);
+        Assert.Equal(Path.Combine(mediaRoot, "library"), Path.GetDirectoryName(storedMedia));
+        Assert.True(File.Exists(storedMedia));
+        Assert.Equal(storedMedia, Assert.Single(result.MediaPaths));
+    }
     private static TelegramChannelMessage Message(string url, string title, string text) =>
         new(url, "t.me", DateTimeOffset.Now, title, text, [], "");
 

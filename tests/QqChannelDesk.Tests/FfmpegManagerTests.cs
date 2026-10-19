@@ -2,7 +2,10 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text;
 using QqChannelDesk.Services;
+using SharpCompress.Common;
+using SharpCompress.Writers.SevenZip;
 using Xunit;
 
 namespace QqChannelDesk.Tests;
@@ -215,6 +218,24 @@ public sealed class FfmpegManagerTests : IDisposable
         Assert.DoesNotContain(Directory.EnumerateFiles(ProjectBinDirectory), path =>
             Path.GetFileName(path).StartsWith("ffmpeg.download-", StringComparison.OrdinalIgnoreCase) ||
             Path.GetFileName(path).StartsWith("ffmpeg.backup-", StringComparison.OrdinalIgnoreCase));
+        AssertNoTemporaryArchives();
+    }
+
+    [Fact]
+    public async Task InstallOnlineAsync_ExtractsRealSevenZipArchive()
+    {
+        var archive = CreateRealSevenZipArchive("ffmpeg-test/bin/ffmpeg.exe", "real-7z-ffmpeg");
+        var hash = Convert.ToHexString(SHA256.HashData(archive));
+        var handler = new RouteHandler(request =>
+            request.RequestUri!.AbsoluteUri == "https://test.local/pinned.7z"
+                ? BytesResponse(archive)
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        var manager = CreateOnlineManager(handler, hash);
+
+        var result = await manager.InstallOnlineAsync(progress: null);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal("real-7z-ffmpeg", await File.ReadAllTextAsync(Path.Combine(ProjectBinDirectory, "ffmpeg.exe")));
         AssertNoTemporaryArchives();
     }
 
@@ -534,6 +555,21 @@ public sealed class FfmpegManagerTests : IDisposable
 
     private static byte[] CreateFfmpegArchive(string content) =>
         CreateArchive("ffmpeg-test/bin/ffmpeg.exe", content);
+
+    /// <summary>
+    /// 生产下载的是真实 .7z；这里用同一个 SharpCompress 包的写入器生成真实 7z，
+    /// 确保升级后的读取路径覆盖线上格式，而不是只覆盖 zip 容器。
+    /// </summary>
+    private static byte[] CreateRealSevenZipArchive(string entryName, string content)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = SevenZipWriter.OpenWriter(stream, new SevenZipWriterOptions(CompressionType.LZMA)))
+        {
+            writer.Write(entryName, new MemoryStream(Encoding.UTF8.GetBytes(content)), null);
+        }
+
+        return stream.ToArray();
+    }
 
     private static byte[] CreateArchive(string entryName, string content)
     {

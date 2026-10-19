@@ -42,7 +42,40 @@
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" IsReadOnly="True" Width="136" ElementStyle="{StaticResource DataGridCellText}"/>
         <DataGridTextColumn Header="媒体" Binding="{Binding MediaDisplay}" IsReadOnly="True" Width="220" ElementStyle="{StaticResource DataGridCellText}"/>
-        <DataGridTextColumn Header="校验结果" Binding="{Binding Error}" IsReadOnly="True" Width="300" ElementStyle="{StaticResource DataGridCellText}"/>
+        <DataGridTemplateColumn Header="校验结果" Width="300" IsReadOnly="True">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <Grid VerticalAlignment="Center">
+                <TextBlock Text="通过" ToolTip="校验通过，可导入">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource DataGridCellText}">
+                      <Setter Property="Foreground" Value="{StaticResource Success}"/>
+                      <Setter Property="Visibility" Value="Collapsed"/>
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsValid}" Value="True">
+                          <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding Error}">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource DataGridCellText}">
+                      <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                      <Setter Property="Visibility" Value="Visible"/>
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsValid}" Value="True">
+                          <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
       </DataGrid.Columns>
     </DataGrid>
     <DockPanel Grid.Row="3" Margin="0,14,0,0">

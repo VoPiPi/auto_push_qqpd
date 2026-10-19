@@ -97,6 +97,21 @@ public sealed class TelegramCollectorServiceTests
     }
 
     [Fact]
+    public void ApplyPreviewFilters_ExcludeModeSkipsMatchesAndCollectsOtherMessages()
+    {
+        var messages = new[]
+        {
+            Message("https://t.me/c/1", title: "公告：今天暂停更新"),
+            Message("https://t.me/c/2", text: "新闻摘要"),
+            Message("https://t.me/c/3", title: "其他消息", text: "没有过滤词")
+        };
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, "公告 | 新闻", excludeMatches: true);
+
+        Assert.Equal(new[] { "https://t.me/c/3" }, filtered.Select(item => item.Url));
+    }
+
+    [Fact]
     public void ApplyPreviewFilters_CapsLimitAtTemporaryListLimit()
     {
         var messages = Enumerable.Range(1, 10).Select(index => Message($"https://t.me/c/{index}")).ToArray();
@@ -180,34 +195,14 @@ public sealed class TelegramCollectorServiceTests
     }
 
     [Fact]
-    public void CustomProxyTextOverridesStaleAutomaticSelection()
+    public void CustomProxyAddressesAreRejectedAfterFeatureRemoval()
     {
         var registry = new WebProxyProviderRegistry(Array.Empty<IWebProxyProvider>());
 
-        var selection = registry.ParseSelection("https://custom.example/proxy", WebProxySelection.Automatic);
+        var error = Assert.Throws<InvalidOperationException>(
+            () => registry.Resolve(new WebProxySelection("https://custom.example/proxy")));
 
-        Assert.Equal("https://custom.example/proxy", selection.Value);
-        Assert.False(selection.IsAutomatic);
-    }
-
-    [Theory]
-    [InlineData("http://127.0.0.1:8080")]
-    [InlineData("https://localhost/proxy")]
-    [InlineData("ftp://proxy.example")]
-    [InlineData("https://user:password@proxy.example")]
-    public void CustomProxyRejectsUnsafeOrUnsupportedAddresses(string input)
-    {
-        Assert.False(DirectUrlWebProxyProvider.TryNormalizeBaseUrl(input, out _, out _));
-    }
-
-    [Fact]
-    public void CustomProxyNormalizesTrailingSlashAndAppendsTarget()
-    {
-        Assert.True(DirectUrlWebProxyProvider.TryNormalizeBaseUrl("https://custom.example/proxy///", out var baseUrl, out var error), error);
-        var provider = new DirectUrlWebProxyProvider(baseUrl);
-
-        Assert.Equal("https://custom.example/proxy/https://t.me/s/channel", provider.BuildTargetUrl("https://t.me/s/channel"));
-        Assert.False(provider.SupportsSimulation);
+        Assert.Contains("自定义网页代理已下线", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -302,23 +297,6 @@ public sealed class TelegramCollectorServiceTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => service.PreviewChannelAsync(
             "https://t.me/s/channel", cancellationToken: cancellation.Token));
         Assert.Equal(new[] { "first" }, attempts);
-    }
-
-    [Fact]
-    public async Task PreviewChannel_CustomProxyFailureDoesNotFallbackToSystemProviders()
-    {
-        var attempts = new List<string>();
-        var registry = new WebProxyProviderRegistry(new IWebProxyProvider[]
-        {
-            new FakeProxyProvider("first", "First", _ => new ProxyPageResult(ChannelHtml("first"), "https://first.example", "", "first", "First"), attempts)
-        });
-        var service = new TelegramCollectorService(registry);
-
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.PreviewChannelAsync(
-            "https://t.me/s/channel", proxySelection: new WebProxySelection("https://127.0.0.1:8080")));
-
-        Assert.Empty(attempts);
-        Assert.Contains("有效的自定义网页代理地址", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

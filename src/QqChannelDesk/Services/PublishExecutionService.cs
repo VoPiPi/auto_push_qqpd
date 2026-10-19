@@ -15,15 +15,20 @@ public interface IPublishExecutor
         CancellationToken cancellationToken = default);
 }
 
+public interface IPublishWorkflow
+{
+    Task<PublishResult> PublishAsync(PublishRequest request, CancellationToken cancellationToken = default);
+}
+
 public sealed class PublishExecutionService : IPublishExecutor
 {
-    private readonly CliWorkflow _workflow;
+    private readonly IPublishWorkflow _workflow;
     private readonly PublishHistoryStore _historyStore;
     private readonly MediaStorageService _mediaStorage;
     private readonly AppLogger _logger;
 
     public PublishExecutionService(
-        CliWorkflow workflow,
+        IPublishWorkflow workflow,
         PublishHistoryStore historyStore,
         MediaStorageService mediaStorage,
         AppLogger? logger = null)
@@ -59,7 +64,6 @@ public sealed class PublishExecutionService : IPublishExecutor
         }
 
         var jobPaths = new List<string>();
-        var stagingPaths = new List<string>();
         try
         {
             var publishPaths = new List<string>(sourceRequest.MediaPaths.Count);
@@ -71,13 +75,6 @@ public sealed class PublishExecutionService : IPublishExecutor
                     if (!File.Exists(source))
                         throw new FileNotFoundException($"素材库文件已不存在：{Path.GetFileName(source)}。请重新选择媒体。", source);
                     publishPaths.Add(source);
-                }
-                else if (MaterialMediaValidator.IsLocalPath(source) && MediaStorageService.IsTelegramStagingPath(source))
-                {
-                    if (!File.Exists(source))
-                        throw new FileNotFoundException($"TG 暂存媒体已不存在：{Path.GetFileName(source)}。", source);
-                    publishPaths.Add(source);
-                    stagingPaths.Add(source);
                 }
                 else if (MaterialMediaValidator.IsLocalPath(source))
                 {
@@ -111,7 +108,6 @@ public sealed class PublishExecutionService : IPublishExecutor
             if (result.Succeeded)
             {
                 await _mediaStorage.CompleteSuccessfulJobAsync(jobPaths, cancellationToken);
-                await _mediaStorage.DeleteTelegramStagingAsync(stagingPaths, cancellationToken: cancellationToken);
             }
 
             return new PublishExecutionOutcome(result, recordId);

@@ -110,31 +110,19 @@ public sealed class MediaStorageTests : IDisposable
         Assert.False(MediaStorageService.IsTelegramStagingPath("", root));
     }
 
-    [Fact]
-    public async Task SuccessfulPublishRemovesTelegramStagingMediaButKeepsLibraryOriginal()
+    [Theory]
+    [InlineData("image", ".jpg")]
+    [InlineData("video", ".mp4")]
+    public async Task SuccessfulCompletionDeletesJobCopyButKeepsTelegramStagingOriginal(string type, string extension)
     {
         var service = await CreateServiceAsync();
         var root = Path.Combine(_directory, "app");
-        var staging = CreateStagingFile(root, "channel-a");
-        var libraryPath = await service.ImportToLibraryAsync(_sourcePath, "image");
+        var staging = CreateStagingFile(root, "channel-a", extension);
+        var jobPath = await service.CreateJobCopyAsync(staging, type);
 
-        await service.DeleteTelegramStagingAsync([staging], root);
+        await service.CompleteSuccessfulJobAsync([jobPath, staging]);
 
-        Assert.False(File.Exists(staging));
-        Assert.True(File.Exists(libraryPath));
-    }
-
-    [Theory]
-    [InlineData(MaterialRetentionPolicy.KeepSevenDays)]
-    [InlineData(MaterialRetentionPolicy.KeepForever)]
-    public async Task RetentionPoliciesKeepTelegramStagingMedia(MaterialRetentionPolicy policy)
-    {
-        var service = await CreateServiceAsync(policy);
-        var root = Path.Combine(_directory, "app");
-        var staging = CreateStagingFile(root, "channel-b");
-
-        await service.DeleteTelegramStagingAsync([staging], root);
-
+        Assert.False(File.Exists(jobPath));
         Assert.True(File.Exists(staging));
     }
 
@@ -160,16 +148,16 @@ public sealed class MediaStorageTests : IDisposable
         var missing = Path.Combine(root, "temp", "telegram", "20261013", "channel-d", "missing.mp4");
         var libraryPath = await service.ImportToLibraryAsync(_sourcePath, "image");
 
-        await service.DeleteTelegramStagingAsync([missing, libraryPath], root);
+        await service.DeleteOrphanStagingAsync([missing, libraryPath], root);
 
         Assert.True(File.Exists(libraryPath));
     }
 
-    private static string CreateStagingFile(string root, string channel)
+    private static string CreateStagingFile(string root, string channel, string extension = ".mp4")
     {
         var directory = Path.Combine(root, "temp", "telegram", "20261013", channel);
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "video.mp4");
+        var path = Path.Combine(directory, $"media{extension}");
         File.WriteAllBytes(path, [9, 9, 9]);
         return path;
     }

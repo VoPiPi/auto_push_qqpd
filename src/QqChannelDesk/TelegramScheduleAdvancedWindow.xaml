@@ -69,16 +69,16 @@
               <TextBlock Text="采集筛选" FontSize="16" FontWeight="SemiBold"/>
               <TextBlock Text="在消息解析后按标题和正文进行本地过滤" Foreground="{StaticResource Muted}"
                          FontSize="12" Margin="0,3,0,14"/>
-              <TextBlock Text="关键词过滤" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <TextBlock Text="过滤关键词" FontWeight="SemiBold" Margin="0,0,0,6"/>
               <TextBox x:Name="KeywordBox" Height="38" VerticalContentAlignment="Center"
-                       ToolTip="多个关键词使用 | 分隔，标题或正文命中任意一个即可采集；留空为不过滤"/>
+                       ToolTip="多个关键词使用 | 分隔，标题或正文命中任意一个就过滤掉；留空为不过滤"/>
               <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}"
                       BorderThickness="1" CornerRadius="5" Padding="12,10" Margin="0,12,0,0">
                 <StackPanel>
                   <TextBlock Text="多个关键词使用 | 分隔" Foreground="{StaticResource Muted}" FontSize="12"/>
                   <TextBlock Text="例如：公告|头像|更新" Foreground="{StaticResource Muted}" FontSize="12"
                              Margin="0,4,0,0"/>
-                  <TextBlock Text="命中任意一个即可采集；留空表示采集全部消息。"
+                  <TextBlock Text="命中任意一个就过滤；未命中的消息才采集，留空采集全部。"
                              Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0"/>
                 </StackPanel>
               </Border>

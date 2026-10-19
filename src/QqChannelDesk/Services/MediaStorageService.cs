@@ -116,8 +116,8 @@ public sealed class MediaStorageService
 
 
     /// <summary>
-    /// 判断是否为 TG 采集的临时媒体（temp/telegram/日期/频道）。这类文件属于发布成功即清理的
-    /// 暂存数据，与素材库原件（library/）和任务副本（jobs/）分开；预览缓存 preview/ 不在清理范围。
+    /// 判断是否为 TG 采集的临时媒体（temp/telegram/日期/频道）。这类文件只在入库成功后清理，
+    /// 与素材库原件（library/）和发布任务副本（jobs/）分开；预览缓存 preview/ 不在清理范围。
     /// </summary>
     public static bool IsTelegramStagingPath(string path, string? root = null)
     {
@@ -137,32 +137,8 @@ public sealed class MediaStorageService
     }
 
     /// <summary>
-    /// 发布成功后清理 TG 采集暂存媒体。仅“完成任务删除文件”策略下删除，保留策略下不动，
-    /// 与任务副本保持同一口径。发布失败时不要调用，暂存文件需保留以便重试。
-    /// </summary>
-    public async Task DeleteTelegramStagingAsync(IReadOnlyList<string> paths, string? root = null, CancellationToken cancellationToken = default)
-    {
-        if (paths.Count == 0) return;
-        var settings = await _settingsStore.GetAsync(cancellationToken);
-        if (settings.MaterialRetentionPolicy != MaterialRetentionPolicy.DeleteAfterSuccessfulPublish) return;
-        await Task.Run(() =>
-        {
-            foreach (var path in paths)
-            {
-                try
-                {
-                    if (IsTelegramStagingPath(path, root) && File.Exists(path)) File.Delete(path);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-                {
-                    AppLogger.Instance.Warning($"TG 暂存媒体清理失败：{Path.GetFileName(path)}，{CliDiagnostics.Sanitize(ex.Message)}");
-                }
-            }
-        }, cancellationToken);
-    }
-    /// <summary>
     /// 清理没有对应素材的 TG 暂存媒体，用于媒体部分下载失败、类型无法识别等未入库场景。
-    /// 与“发布成功后清理”共用同一路径判断，只清理 temp/telegram 下的暂存文件，不碰素材库原件。
+    /// 只清理 temp/telegram 下未入库的暂存文件，不碰素材库原件和发布任务副本。
     /// </summary>
     public async Task DeleteOrphanStagingAsync(IReadOnlyList<string> paths, string? root = null, CancellationToken cancellationToken = default)
     {

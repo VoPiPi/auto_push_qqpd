@@ -2,6 +2,7 @@ using HtmlAgilityPack;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 
@@ -11,9 +12,17 @@ public sealed class PublicArticleFetcher
 {
     private const int MaximumBytes = 2 * 1024 * 1024;
     private const int MaximumRedirects = 5;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan DefaultMediaTimeout = TimeSpan.FromSeconds(45);
 
     public async Task<ArticleFetchResult> FetchAsync(string input, CancellationToken cancellationToken = default)
+        => await FetchAsync(input, PublicArticleRequestContext.SystemProxyOrDefault, cancellationToken);
+
+    /// <summary>直连/显式代理模式使用的入口；<paramref name="requestContext"/> 为 null 表示保留系统代理行为。</summary>
+    internal async Task<ArticleFetchResult> FetchAsync(
+        string input,
+        PublicArticleRequestContext? requestContext,
+        CancellationToken cancellationToken = default)
     {
         if (!TryNormalizePublicUrl(input, out var current, out var error)) return new(false, "", "", "", "", error);
         try
@@ -21,43 +30,18 @@ public sealed class PublicArticleFetcher
             for (var redirect = 0; redirect <= MaximumRedirects; redirect++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                EnsurePublicAddress(await Dns.GetHostAddressesAsync(current.DnsSafeHost, cancellationToken));
-                using var handler = CreateHandler(current);
-                using var client = new HttpClient(handler) { Timeout = RequestTimeout };
-                using var request = new HttpRequestMessage(HttpMethod.Get, current);
-                request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-page-reader)");
-                request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml;q=0.9");
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (IsRedirect(response.StatusCode))
+                var raw = await FetchRawHtmlAsync(current, requestContext, cancellationToken);
+                if (raw.RedirectUri is not null)
                 {
                     if (redirect == MaximumRedirects) return Failed("网页跳转次数过多，请换一个链接。");
-                    var location = response.Headers.Location;
-                    if (location is null) return Failed("网页跳转地址无效，请换一个链接。");
-                    var next = location.IsAbsoluteUri ? location : new Uri(current, location);
-                    if (!TryNormalizePublicUrl(next.AbsoluteUri, out current, out error)) return Failed(error);
+                    if (!TryNormalizePublicUrl(raw.RedirectUri.AbsoluteUri, out current, out error)) return Failed(error);
                     continue;
                 }
-                if (!response.IsSuccessStatusCode) return Failed($"网页无法打开（HTTP {(int)response.StatusCode}），请检查链接后重试。");
-                if (response.Content.Headers.ContentType?.MediaType is not { } mediaType ||
-                    !(mediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase) || mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase)))
-                    return Failed("该链接不是网页，请使用公开网页链接。");
-                if (response.Content.Headers.ContentLength > MaximumBytes) return Failed("网页内容过大，已停止读取，请换一个页面。");
-                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                using var buffer = new MemoryStream();
-                var chunk = new byte[16 * 1024];
-                while (true)
-                {
-                    var read = await stream.ReadAsync(chunk, cancellationToken);
-                    if (read == 0) break;
-                    if (buffer.Length + read > MaximumBytes) return Failed("网页内容过大，已停止读取，请换一个页面。");
-                    buffer.Write(chunk, 0, read);
-                }
-                var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"', '\'');
-                var encoding = TryEncoding(charset);
-                var html = encoding.GetString(buffer.ToArray());
-                var parsed = await Task.Run(() => ParseHtml(html), cancellationToken);
+                if (raw.Error.Length > 0) return Failed(raw.Error);
+
+                var parsed = await Task.Run(() => ParseHtml(raw.Html), cancellationToken);
                 if (parsed.Title.Length == 0 && parsed.Content.Length == 0) return Failed("网页没有可用标题或正文，请换一个链接。");
-                return new(true, current.AbsoluteUri, current.DnsSafeHost, parsed.Title, parsed.Content, "");
+                return new(true, raw.FinalUrl.Length == 0 ? current.AbsoluteUri : raw.FinalUrl, current.DnsSafeHost, parsed.Title, parsed.Content, "");
             }
             return Failed("无法读取网页，请检查链接或网络后重试。");
         }
@@ -69,12 +53,85 @@ public sealed class PublicArticleFetcher
         }
     }
 
+    /// <summary>
+    /// 抓取单个公开 HTTP(S) 地址的原始 HTML。不跟随自动重定向，逐跳公网校验由 ConnectCallback 完成；
+    /// 直连模式不允许域名解析到本机/私有地址，显式代理/系统代理只放宽代理端点自身。
+    /// </summary>
+    internal async Task<RawPublicFetchResult> FetchRawHtmlAsync(
+        Uri url,
+        PublicArticleRequestContext? requestContext,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var timeoutSource = new CancellationTokenSource(
+                requestContext?.Timeout ?? DefaultRequestTimeout);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+            using var handler = CreateHandler(url, requestContext);
+            using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-page-reader)");
+            request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml;q=0.9");
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
+            if (IsRedirect(response.StatusCode))
+            {
+                var location = response.Headers.Location;
+                if (location is null) return RawPublicFetchResult.Failure("网页跳转地址无效，请换一个链接。");
+                return new("", "", location.IsAbsoluteUri ? location : new Uri(url, location), "");
+            }
+            if (!response.IsSuccessStatusCode)
+                return RawPublicFetchResult.Failure($"网页无法打开（HTTP {(int)response.StatusCode}），请检查链接后重试。");
+            if (response.Content.Headers.ContentType?.MediaType is not { } mediaType ||
+                !(mediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase) || mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase)))
+                return RawPublicFetchResult.Failure("该链接不是网页，请使用公开网页链接。");
+            if (response.Content.Headers.ContentLength > MaximumBytes)
+                return RawPublicFetchResult.Failure("网页内容过大，已停止读取，请换一个页面。");
+            await using var stream = await response.Content.ReadAsStreamAsync(linked.Token);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[16 * 1024];
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk, linked.Token);
+                if (read == 0) break;
+                if (buffer.Length + read > MaximumBytes)
+                    return RawPublicFetchResult.Failure("网页内容过大，已停止读取，请换一个页面。");
+                buffer.Write(chunk, 0, read);
+            }
+            var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"', '\'');
+            var encoding = TryEncoding(charset);
+            var html = encoding.GetString(buffer.ToArray());
+            return new(html, response.RequestMessage?.RequestUri?.AbsoluteUri ?? url.AbsoluteUri, null, "");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return RawPublicFetchResult.Failure("读取网页超时，请重试。");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or InvalidOperationException)
+        {
+            return RawPublicFetchResult.Failure($"读取网页失败，请检查网络后重试：{CliDiagnostics.Sanitize(ex.Message)}");
+        }
+    }
+
     public Task<string> DownloadMediaAsync(string input, string expectedType, CancellationToken cancellationToken = default) =>
         DownloadMediaAsync(input, expectedType, Path.Combine(AppContext.BaseDirectory, "tools", "media-cache"), cancellationToken);
 
-    public async Task<string> DownloadMediaAsync(
+    public Task<string> DownloadMediaAsync(
         string input,
         string expectedType,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default,
+        string? cookieHeader = null) =>
+        DownloadMediaAsync(input, expectedType, null, targetDirectory, cancellationToken, cookieHeader);
+
+    /// <summary>
+    /// 下载图片/视频。非在线通道只请求原始 t.me 媒体地址；在线解析通道才带代理地址与 Cookie。
+    /// 每一跳重定向都重新校验公网地址，实际连接在 ConnectCallback 内解析，避免 DNS 重绑定窗口。
+    /// </summary>
+    internal async Task<string> DownloadMediaAsync(
+        string input,
+        string expectedType,
+        PublicArticleRequestContext? requestContext,
         string? targetDirectory = null,
         CancellationToken cancellationToken = default,
         string? cookieHeader = null)
@@ -85,17 +142,20 @@ public sealed class PublicArticleFetcher
             ? Path.Combine(AppContext.BaseDirectory, "tools", "media-cache")
             : targetDirectory);
         var cookie = string.IsNullOrWhiteSpace(cookieHeader) ? "" : cookieHeader.Trim();
-        const long maximumMediaBytes = 100L * 1024 * 1024;
+        var maximumMediaBytes = requestContext?.MaximumMediaBytes ?? 100L * 1024 * 1024;
+        var timeout = requestContext?.Timeout ?? DefaultMediaTimeout;
+        using var timeoutSource = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+        var token = linked.Token;
         for (var redirect = 0; redirect <= MaximumRedirects; redirect++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            EnsurePublicAddress(await Dns.GetHostAddressesAsync(current.DnsSafeHost, cancellationToken));
-            using var handler = CreateHandler(current);
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
+            token.ThrowIfCancellationRequested();
+            using var handler = CreateHandler(current, requestContext);
+            using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+public-media-reader)");
             if (cookie.Length > 0) request.Headers.Add("Cookie", cookie);
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if (IsRedirect(response.StatusCode))
             {
                 if (redirect == MaximumRedirects || response.Headers.Location is null) throw new InvalidOperationException("媒体链接跳转无效或次数过多，请更换链接。");
@@ -107,20 +167,20 @@ public sealed class PublicArticleFetcher
             var mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
             if (expectedType == "image" && !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("该链接不是图片，请更换链接。");
             if (expectedType == "video" && !mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("该链接不是视频，请更换链接。");
-            if (response.Content.Headers.ContentLength is > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB，请压缩或更换文件。");
+            if (response.Content.Headers.ContentLength > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB，请压缩或更换文件。");
             var extension = Path.GetExtension(current.AbsolutePath);
             if (extension.Length is < 2 or > 8 || extension.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch != '.')) extension = expectedType == "image" ? ".img" : ".video";
             Directory.CreateDirectory(saveDirectory);
             var path = Path.Combine(saveDirectory, $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{extension}");
             try
             {
-                await using var inputStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var inputStream = await response.Content.ReadAsStreamAsync(token);
                 await using var outputStream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
                 var buffer = new byte[81920];
                 long total = 0;
                 while (true)
                 {
-                    var read = await inputStream.ReadAsync(buffer, cancellationToken);
+                    var read = await inputStream.ReadAsync(buffer, token);
                     if (read == 0) break;
                     total += read;
                     if (total > maximumMediaBytes) throw new InvalidOperationException("媒体文件超过 100 MB，请压缩或更换文件。");
@@ -201,38 +261,71 @@ public sealed class PublicArticleFetcher
                string.Equals(endpointHost, proxy.DnsSafeHost, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SocketsHttpHandler CreateHandler(Uri target)
+    private static SocketsHttpHandler CreateHandler(Uri target, PublicArticleRequestContext? requestContext)
     {
-        var systemProxy = HttpClient.DefaultProxy;
-        var proxyUri = GetConfiguredProxyUri(target, systemProxy);
+        var proxy = requestContext is null ? HttpClient.DefaultProxy : requestContext.ResolveProxy(target);
+        var proxyUri = proxy is null ? null : GetConfiguredProxyUri(target, proxy);
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             ConnectTimeout = TimeSpan.FromSeconds(8),
-            UseProxy = proxyUri is not null
+            UseProxy = proxyUri is not null,
+            Proxy = proxy
         };
-        if (proxyUri is null)
+
+        // 每跳重新解析代理配置：请求上下文为 null 时沿用系统代理，否则按通道显式决定直连或代理。
+        handler.ConnectCallback = (context, cancellationToken) =>
         {
-            handler.ConnectCallback = ConnectPublicAsync;
-        }
-        else
-        {
-            handler.Proxy = systemProxy;
-            handler.ConnectCallback = (context, cancellationToken) =>
-                ConnectPublicOrConfiguredProxyAsync(context, proxyUri, cancellationToken);
-        }
+            // 使用代理时，SocketsHttpHandler 会在连接层先连接代理；只对已配置的代理端点
+            // 放宽本机/私有地址限制，真正直连目标时仍强制公网地址。
+            if (proxyUri is not null && IsConfiguredProxyEndpoint(context.DnsEndPoint, proxyUri))
+                return ConnectEndpointAsync(context.DnsEndPoint, requirePublicAddress: false, cancellationToken);
+            return ConnectPublicAsync(context, cancellationToken);
+        };
+
+        if (proxyUri is not null)
+            handler.SslOptions = BuildProxyCertificateOptions(proxyUri);
+
         return handler;
     }
 
-    private static ValueTask<Stream> ConnectPublicOrConfiguredProxyAsync(
-        SocketsHttpConnectionContext context,
-        Uri proxyUri,
-        CancellationToken cancellationToken)
+    private static Uri? ResolveEffectiveProxyUri(Uri target, PublicArticleRequestContext? requestContext)
     {
-        return IsConfiguredProxyEndpoint(context.DnsEndPoint, proxyUri)
-            ? ConnectEndpointAsync(context.DnsEndPoint, requirePublicAddress: false, cancellationToken)
-            : ConnectPublicAsync(context, cancellationToken);
+        var proxy = requestContext is null ? HttpClient.DefaultProxy : requestContext.ResolveProxy(target);
+        return proxy is null ? null : GetConfiguredProxyUri(target, proxy);
     }
+
+    /// <summary>
+    /// HTTPS 代理端点自身允许证书链/域名错误（公共代理常见），目标站点的 TLS 校验保持默认严格模式：
+    /// 只有握手目标就是代理端点时才放宽，t.me 等目标始终验证链和主机名。
+    /// </summary>
+    private static SslClientAuthenticationOptions BuildProxyCertificateOptions(Uri proxyUri)
+    {
+        return new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (sender, _, _, errors) =>
+                errors == SslPolicyErrors.None ||
+                (sender is SslStream sslStream && IsProxyCertificateEndpoint(sslStream.TargetHostName, proxyUri, errors))
+        };
+    }
+
+    internal static bool IsProxyCertificateEndpoint(string? targetHostName, Uri proxyUri, SslPolicyErrors errors)
+    {
+        if (errors == SslPolicyErrors.None) return true;
+        if ((errors & ~RelaxableProxyCertificateErrors) != SslPolicyErrors.None) return false;
+        var expected = NormalizeHost(proxyUri.DnsSafeHost);
+        var actual = NormalizeHost(targetHostName);
+        return expected.Length > 0 &&
+               actual.Length > 0 &&
+               string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private const SslPolicyErrors RelaxableProxyCertificateErrors =
+        SslPolicyErrors.RemoteCertificateChainErrors |
+        SslPolicyErrors.RemoteCertificateNameMismatch;
+
+    private static string NormalizeHost(string? host) =>
+        host?.Trim().Trim('[', ']').TrimEnd('.') ?? "";
 
     private static ValueTask<Stream> ConnectPublicAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {

@@ -8,6 +8,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using SharpCompress.Archives;
+using SharpCompress.Common;
+using SharpCompress.Readers;
 
 namespace QqChannelDesk.Services;
 
@@ -363,6 +365,13 @@ public sealed class FfmpegManager
         return match.Success ? $"ffmpeg version {match.Groups[1].Value}" : "ffmpeg version unknown";
     }
 
+    /// <summary>
+    /// SharpCompress 0.50 起 <c>ArchiveFactory.Open</c> 已被移除，改为 OpenArchive + ReaderOptions.ForFilePath。
+    /// 条目元信息（Key/IsDirectory/Size）从 <see cref="IEntry"/> 读取，流仍由 <see cref="IArchiveEntry"/> 提供。
+    /// </summary>
+    private static IArchive OpenArchive(string archivePath) =>
+        ArchiveFactory.OpenArchive(archivePath, ReaderOptions.ForFilePath);
+
     public async Task<CliInstallResult> InstallAsync(CancellationToken cancellationToken = default)
     {
         var archivePath = FindLatestArchive();
@@ -373,12 +382,13 @@ public sealed class FfmpegManager
         {
             Directory.CreateDirectory(InstallDirectory);
             var extracted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var archive = ArchiveFactory.Open(archivePath))
+            using (var archive = OpenArchive(archivePath))
             {
-                foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
+                foreach (var entry in archive.Entries)
                 {
-                    if (string.IsNullOrWhiteSpace(entry.Key)) continue;
-                    var normalized = entry.Key.Replace('\\', '/');
+                    if (entry is not IEntry item || item.IsDirectory) continue;
+                    if (string.IsNullOrWhiteSpace(item.Key)) continue;
+                    var normalized = item.Key.Replace('\\', '/');
                     var name = Path.GetFileName(normalized);
                     if (!normalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase)) continue;
                     if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
@@ -784,16 +794,22 @@ public sealed class FfmpegManager
     {
         await Task.Run(async () =>
         {
-            using var archive = ArchiveFactory.Open(archivePath);
-            var entry = archive.Entries.FirstOrDefault(item =>
+            using var archive = OpenArchive(archivePath);
+            IArchiveEntry? entry = null;
+            IEntry? entryInfo = null;
+            foreach (var candidate in archive.Entries)
             {
-                if (item.IsDirectory || string.IsNullOrWhiteSpace(item.Key)) return false;
-                var normalized = item.Key.Replace('\\', '/');
-                return normalized.EndsWith("/bin/ffmpeg.exe", StringComparison.OrdinalIgnoreCase);
-            });
-            if (entry is null)
+                if (candidate is not IEntry candidateInfo) continue;
+                if (candidateInfo.IsDirectory || string.IsNullOrWhiteSpace(candidateInfo.Key)) continue;
+                var normalized = candidateInfo.Key.Replace('\\', '/');
+                if (!normalized.EndsWith("/bin/ffmpeg.exe", StringComparison.OrdinalIgnoreCase)) continue;
+                entry = candidate;
+                entryInfo = candidateInfo;
+                break;
+            }
+            if (entry is null || entryInfo is null)
                 throw new InvalidDataException("FFmpeg 压缩包的 bin 目录中没有找到 ffmpeg.exe。");
-            if (entry.Size > MaximumExecutableBytes)
+            if (entryInfo.Size > MaximumExecutableBytes)
                 throw new InvalidDataException("压缩包中的 ffmpeg.exe 超过 300 MB 安全限制。");
 
             await using var input = entry.OpenEntryStream();

@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly MediaStorageService _mediaStorage;
     private readonly ContentLibraryStore _contentLibrary;
     private readonly ProxyPoolStore _proxyPoolStore;
+    private readonly TelegramTransportService _telegramTransport;
     private readonly TelegramCollectionStore _telegramCollectionStore;
     private readonly PublishPolicyStore _publishPolicyStore;
     private readonly PublishAutoScheduleService _publishAutoScheduleService;
@@ -85,6 +86,8 @@ public partial class MainWindow : Window
         _historyStore = new PublishHistoryStore(accountContext: _accountContext);
         _contentLibrary = new ContentLibraryStore(accountContext: _accountContext);
         _proxyPoolStore = new ProxyPoolStore();
+        // 页面手采、定时采集和媒体下载必须共用同一个传输实例，避免每个入口各自持有代理池快照。
+        _telegramTransport = new TelegramTransportService(_proxyPoolStore);
         _telegramCollectionStore = new TelegramCollectionStore(accountContext: _accountContext);
         _publishPolicyStore = new PublishPolicyStore(accountContext: _accountContext);
         _publishAutoScheduleService = new PublishAutoScheduleService(_contentLibrary, _publishPolicyStore);
@@ -109,9 +112,10 @@ public partial class MainWindow : Window
             _telegramCollectionStore,
             _contentLibrary,
             autoSchedule: _publishAutoScheduleService,
-            logger: _logger);
+            logger: _logger,
+            transport: _telegramTransport);
         _historyPage = new HistoryPage(_historyStore);
-        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore, _telegramCollectionStore, _telegramCollectionScheduler, _channelSync);
+        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore, _telegramCollectionStore, _telegramCollectionScheduler, _channelSync, _telegramTransport);
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage, _scheduler);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _publishPolicyPage = new PublishPolicyPage(_publishPolicyStore, _channelSync);
