@@ -26,6 +26,57 @@ public sealed class ProxyPoolStoreTests
     }
 
     [Fact]
+    public async Task Initialize_SeedsBuiltInSourcesWithGhproxyMirrors()
+    {
+        var databasePath = CreateDatabasePath("proxy-builtin-mirror");
+        var store = new ProxyPoolStore(databasePath);
+
+        var sources = await store.GetSourcesAsync();
+
+        var cb = Assert.Single(sources, source => source.SourceKey == ProxyPoolStore.CbSourceKey);
+        var xiao = Assert.Single(sources, source => source.SourceKey == ProxyPoolStore.XiaoSourceKey);
+        Assert.Equal(ProxyPoolStore.CbSourceUrl, cb.SourceUrl);
+        Assert.Equal(ProxyPoolStore.XiaoSourceUrl, xiao.SourceUrl);
+        Assert.StartsWith("https://ghproxy.net/", cb.SourceUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://ghproxy.net/", xiao.SourceUrl, StringComparison.OrdinalIgnoreCase);
+
+        DisposeDatabase(databasePath);
+    }
+
+    [Fact]
+    public async Task Initialize_MigratesOnlyLegacyBuiltInSourceUrls()
+    {
+        var databasePath = CreateDatabasePath("proxy-legacy-migration");
+        var store = new ProxyPoolStore(databasePath);
+        var sources = await store.GetSourcesAsync();
+        var cb = Assert.Single(sources, source => source.SourceKey == ProxyPoolStore.CbSourceKey);
+        var xiao = Assert.Single(sources, source => source.SourceKey == ProxyPoolStore.XiaoSourceKey);
+
+        await store.UpdateSourceAsync(
+            cb,
+            cb.DisplayName,
+            "https://raw.githubusercontent.com/CB-X2-Jun/proxy-lists/main/proxy.txt",
+            cb.IsEnabled);
+        await store.UpdateSourceAsync(
+            xiao,
+            xiao.DisplayName,
+            "https://example.com/custom-nodes.txt",
+            xiao.IsEnabled);
+
+        var reloaded = new ProxyPoolStore(databasePath);
+        var migrated = await reloaded.GetSourcesAsync();
+
+        Assert.Equal(
+            ProxyPoolStore.CbSourceUrl,
+            Assert.Single(migrated, source => source.SourceKey == ProxyPoolStore.CbSourceKey).SourceUrl);
+        Assert.Equal(
+            "https://example.com/custom-nodes.txt",
+            Assert.Single(migrated, source => source.SourceKey == ProxyPoolStore.XiaoSourceKey).SourceUrl);
+
+        DisposeDatabase(databasePath);
+    }
+
+    [Fact]
     public async Task ApplyFetchedNodes_PreservesOnlyCandidatesPassedByTheHttpParser()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), "QqChannelDeskTests", $"proxy-nodes-{Guid.NewGuid():N}.db");

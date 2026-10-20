@@ -15,14 +15,17 @@ public sealed record ProxyFetchResult(int ReadCount, int AcceptedCount, int Filt
 }
 
 public sealed record ProxyHealthResult(int SuccessCount, int FailedCount, int SkippedCount);
+public sealed record ProxyTelegramBatchResult(int SuccessCount, int FailedCount, int SkippedCount);
 public sealed record ProxyTelegramCheckResult(bool Succeeded, int MessageCount, string Error);
+internal sealed record ProxyHealthProbeResult(bool Success, string Ip, string Code, string Country, string Error);
 
 public sealed class ProxyPoolService
 {
     public const int DefaultConcurrency = 10;
     public const int MaxConcurrency = 50;
-    public const string TelegramProbeUrl = "https://t.me/s/TGWenAnGuan";
+    public const string TelegramProbeUrl = "https://t.me/s/telegram";
     private const int MaxSourceBytes = 5_000_000;
+    private const int MaxTelegramProbeBytes = 2_000_000;
     private const string CountryProbeUrl = "https://ipwho.is/";
     private const string IpProbeFallbackUrl = "https://api.ipify.org?format=json";
     private const SslPolicyErrors RelaxableProxyCertificateErrors =
@@ -31,11 +34,24 @@ public sealed class ProxyPoolService
     private static readonly Regex NodePattern = new(@"^(?:(?<scheme>https?)://)?(?<host>\[[^\]]+\]|[^:/\s]+):(?<port>\d{1,5})(?::(?<country>[A-Za-z]{2,3}))?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly ProxyPoolStore _store;
     private readonly HttpClient _sourceClient;
+    private readonly Func<ProxyNode, CancellationToken, Task<ProxyHealthProbeResult>> _healthProbe;
+    private readonly Func<ProxyNode, CancellationToken, Task<ProxyTelegramCheckResult>> _telegramProbe;
 
     public ProxyPoolService(ProxyPoolStore store, HttpClient? sourceClient = null)
+        : this(store, sourceClient, healthProbe: null, telegramProbe: null)
+    {
+    }
+
+    internal ProxyPoolService(
+        ProxyPoolStore store,
+        HttpClient? sourceClient,
+        Func<ProxyNode, CancellationToken, Task<ProxyHealthProbeResult>>? healthProbe,
+        Func<ProxyNode, CancellationToken, Task<ProxyTelegramCheckResult>>? telegramProbe)
     {
         _store = store;
         _sourceClient = sourceClient ?? CreateSourceClient();
+        _healthProbe = healthProbe ?? ProbeAsync;
+        _telegramProbe = telegramProbe ?? ProbeTelegramAsync;
     }
 
     public static string NormalizeSourceUrl(string input)
@@ -55,7 +71,7 @@ public sealed class ProxyPoolService
             using var response = await _sourceClient.GetAsync(source.SourceUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is > MaxSourceBytes) throw new InvalidOperationException("代理源文件超过 5 MB。");
-            var text = await ReadLimitedTextAsync(response.Content, MaxSourceBytes, cancellationToken);
+            var text = await ReadLimitedTextAsync(response.Content, MaxSourceBytes, "代理源文件超过 5 MB。", cancellationToken);
             var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var candidates = lines.Select(ParseHttpCandidate).Where(item => item is not null).Cast<ProxyNodeCandidate>().DistinctBy(item => $"{item.Scheme}|{item.Host}|{item.Port}", StringComparer.OrdinalIgnoreCase).ToArray();
             await _store.ApplyFetchedNodesAsync(source, candidates, cancellationToken);
@@ -85,7 +101,20 @@ public sealed class ProxyPoolService
             await gate.WaitAsync(cancellationToken);
             try
             {
-                var result = await ProbeAsync(node, cancellationToken);
+                ProxyHealthProbeResult result;
+                try
+                {
+                    result = await _healthProbe(node, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // One unexpected probe failure must not stop the remaining public proxies from being tested.
+                    result = new(false, "", "", "", CliDiagnostics.Sanitize(ex.Message));
+                }
                 try
                 {
                     await _store.UpdateHealthAsync(node.Id, result.Success, result.Ip, result.Code, result.Country, result.Error, cancellationToken);
@@ -119,27 +148,82 @@ public sealed class ProxyPoolService
     public async Task<ProxyTelegramCheckResult> CheckTelegramAsync(ProxyNode node, CancellationToken cancellationToken = default)
     {
         if (!node.IsSupported) return new(false, 0, "仅支持 HTTP/HTTPS 代理。");
+        ProxyTelegramCheckResult result;
         try
         {
-            using var client = CreateProxyClient(node, 20);
-            using var response = await client.GetAsync(TelegramProbeUrl, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            var html = await response.Content.ReadAsStringAsync(cancellationToken);
-            var messages = TelegramChannelParser.ParseChannelPage(html, "TGWenAnGuan");
-            var result = messages.Count > 0
-                ? new ProxyTelegramCheckResult(true, messages.Count, "")
-                : new ProxyTelegramCheckResult(false, 0, "页面打开成功，但没有解析到频道消息。");
-            await TryUpdateTelegramResultAsync(node, result, cancellationToken);
-            return result;
+            result = await _telegramProbe(node, cancellationToken);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException ex) when (IsCallerCancellation(ex, cancellationToken)) { throw; }
         catch (Exception ex)
         {
-            var result = new ProxyTelegramCheckResult(false, 0, CliDiagnostics.Sanitize(ex.Message));
+            result = new ProxyTelegramCheckResult(false, 0, CliDiagnostics.Sanitize(ex.Message));
             AppLogger.Instance.Warning($"代理节点 TG 验证失败 {node.Address}：{result.Error}");
-            await TryUpdateTelegramResultAsync(node, result, cancellationToken);
-            return result;
         }
+        await TryUpdateTelegramResultAsync(node, result, cancellationToken);
+        return result;
+    }
+
+    public async Task<ProxyTelegramBatchResult> CheckTelegramBatchAsync(
+        IReadOnlyList<ProxyNode> nodes,
+        int concurrency,
+        Action<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        concurrency = Math.Clamp(concurrency, 1, MaxConcurrency);
+        var success = 0;
+        var failed = 0;
+        var skipped = 0;
+        using var gate = new SemaphoreSlim(concurrency, concurrency);
+        var tasks = nodes.Select(async node =>
+        {
+            if (!node.IsSupported) { Interlocked.Increment(ref skipped); return; }
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                ProxyTelegramCheckResult result;
+                try
+                {
+                    result = await CheckTelegramAsync(node, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // Keep one unexpected node failure from aborting the whole batch.
+                    result = new(false, 0, CliDiagnostics.Sanitize(ex.Message));
+                    AppLogger.Instance.Warning($"代理节点 TG 验证失败 {node.Address}：{result.Error}");
+                    await TryUpdateTelegramResultAsync(node, result, cancellationToken);
+                }
+
+                if (result.Succeeded) Interlocked.Increment(ref success); else Interlocked.Increment(ref failed);
+                try
+                {
+                    progress?.Invoke($"{node.Address}：{(result.Succeeded ? "可访问" : result.Error)}");
+                }
+                catch (Exception ex)
+                {
+                    // Progress is UI feedback and must not abort the worker batch.
+                    AppLogger.Instance.WriteException($"更新代理 TG 验证进度失败：{node.Address}", ex);
+                }
+            }
+            finally { gate.Release(); }
+        }).ToArray();
+        await Task.WhenAll(tasks);
+        return new(success, failed, skipped);
+    }
+
+    private async Task<ProxyTelegramCheckResult> ProbeTelegramAsync(ProxyNode node, CancellationToken cancellationToken)
+    {
+        using var client = CreateProxyClient(node, 20);
+        using var response = await client.GetAsync(TelegramProbeUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var html = await ReadLimitedTextAsync(response.Content, MaxTelegramProbeBytes, "TG 验证页面内容过大。", cancellationToken);
+        return string.IsNullOrWhiteSpace(html) ||
+               !html.Contains("Telegram", StringComparison.OrdinalIgnoreCase)
+            ? new(false, 0, "页面已打开，但未检测到 Telegram 页面内容。")
+            : new(true, 0, "");
     }
 
     private async Task TryUpdateTelegramResultAsync(ProxyNode node, ProxyTelegramCheckResult result, CancellationToken cancellationToken)
@@ -190,7 +274,7 @@ public sealed class ProxyPoolService
     internal static bool IsCallerCancellation(OperationCanceledException exception, CancellationToken cancellationToken) =>
         cancellationToken.IsCancellationRequested;
 
-    private async Task<ProxyProbeResult> ProbeAsync(ProxyNode node, CancellationToken cancellationToken)
+    private async Task<ProxyHealthProbeResult> ProbeAsync(ProxyNode node, CancellationToken cancellationToken)
     {
         string primaryError;
         try
@@ -274,7 +358,7 @@ public sealed class ProxyPoolService
         return client;
     }
 
-    private static async Task<string> ReadLimitedTextAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)
+    private static async Task<string> ReadLimitedTextAsync(HttpContent content, int maxBytes, string tooLargeError, CancellationToken cancellationToken)
     {
         await using var stream = await content.ReadAsStreamAsync(cancellationToken);
         using var buffer = new MemoryStream();
@@ -284,7 +368,7 @@ public sealed class ProxyPoolService
             var read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken);
             if (read == 0) break;
             if (buffer.Length + read > maxBytes)
-                throw new InvalidOperationException("代理源文件超过 5 MB。");
+                throw new InvalidOperationException(tooLargeError);
             await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
@@ -292,5 +376,4 @@ public sealed class ProxyPoolService
 
     private sealed record IpWhoResponse(bool Success, string? Ip, string? Country, string? CountryCode);
     private sealed record IpifyResponse(string? Ip);
-    private sealed record ProxyProbeResult(bool Success, string Ip, string Code, string Country, string Error);
 }

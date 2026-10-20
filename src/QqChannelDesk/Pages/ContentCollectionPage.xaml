@@ -271,7 +271,7 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock Text="并发" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
               <TextBox x:Name="ProxyConcurrencyBox" Tag="1-50" Width="54" VerticalContentAlignment="Center" ToolTip="批量操作并发数，1-50"/>
-              <ComboBox x:Name="ProxyBatchActionBox" Width="180" Margin="8,0,0,0" VerticalContentAlignment="Center" SelectedIndex="0" SelectionChanged="ProxyBatchActionBox_SelectionChanged" ToolTip="选择批量操作；删除失效仅处理测试不可用且 TG 不可访问的节点">
+              <ComboBox x:Name="ProxyBatchActionBox" Width="180" Margin="8,0,0,0" VerticalContentAlignment="Center" SelectedIndex="0" IsEnabled="False" SelectionChanged="ProxyBatchActionBox_SelectionChanged" ToolTip="选择批量操作；删除失效仅处理测试不可用或 TG 不可访问的节点">
                 <ComboBoxItem Content="批量操作" IsEnabled="False"/>
                 <ComboBoxItem Content="批量测试节点" Tag="health"/>
                 <ComboBoxItem Content="批量验证 TG" Tag="telegram"/>
@@ -314,14 +314,14 @@
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="测试时间" Binding="{Binding LastChecked}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="最近结果" Binding="{Binding Error}" Width="2.4*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="最近结果" Binding="{Binding LastResult}" Width="2.4*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTemplateColumn Header="操作" Width="142">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <StackPanel Style="{StaticResource TableActionPanel}">
-                        <Button Content="测试" Style="{StaticResource TableLinkButton}" Click="ProxyRowHealthButton_Click" ToolTip="测试节点是否可用"/>
-                        <Button Content="TG" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowTgButton_Click" ToolTip="使用此代理节点验证 TG 频道"/>
-                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" Click="ProxyRowDeleteButton_Click" ToolTip="从当前代理源删除此节点"/>
+                        <Button Content="测试" Style="{StaticResource TableLinkButton}" IsEnabled="{Binding CanOperate}" Click="ProxyRowHealthButton_Click" ToolTip="测试节点是否可用"/>
+                        <Button Content="TG" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" IsEnabled="{Binding CanOperate}" Click="ProxyRowTgButton_Click" ToolTip="使用此代理节点验证 TG 服务是否可访问"/>
+                        <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0" IsEnabled="{Binding CanOperate}" Click="ProxyRowDeleteButton_Click" ToolTip="从当前代理源删除此节点"/>
                       </StackPanel>
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>

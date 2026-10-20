@@ -40,6 +40,8 @@ public partial class ContentCollectionPage : UserControl
 
     private readonly ObservableCollection<ProxySource> _proxySources = [];
     private readonly ObservableCollection<ProxyNodeRow> _proxyNodes = [];
+    private bool _proxyGlobalBusy;
+    private bool _proxyBatchActionBusy;
     private bool _syncingProxySelection;
     private CheckBox? _proxySelectionClickCheckBox;
     private bool _proxySelectionClickWasChecked;
@@ -122,6 +124,7 @@ public partial class ContentCollectionPage : UserControl
 
         SubscribeSchedulerEvents();
         SetTgBusy(false);
+        _proxyBatchActionBusy = false;
         SetProxyBusy(false);
         var token = lifetime.Token;
         UiAsync.Run("内容采集初始化收件箱", () => LoadItemsAsync(token));
@@ -1487,6 +1490,7 @@ public partial class ContentCollectionPage : UserControl
             ProxyEmptyHint.Visibility = Visibility.Visible;
             UpdateProxySummary();
             UpdateProxySelectionSummary();
+            UpdateProxyBatchActionAvailability();
             return;
         }
         var nodes = await _proxyPoolStore.GetNodesAsync(source.Id, cancellationToken);
@@ -1507,6 +1511,7 @@ public partial class ContentCollectionPage : UserControl
         ProxyEmptyHint.Visibility = _proxyNodes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateProxySummary();
         UpdateProxySelectionSummary();
+        UpdateProxyBatchActionAvailability();
     }
 
     private void UpdateProxySummary()
@@ -1539,14 +1544,15 @@ public partial class ContentCollectionPage : UserControl
 
     private void SetProxyBusy(bool busy)
     {
+        _proxyGlobalBusy = busy;
         if (!IsPageActiveForUpdates) return;
         ProxySourceBox.IsEnabled = !busy;
         ProxyAddSourceButton.IsEnabled = !busy;
         ProxyEditSourceButton.IsEnabled = !busy;
         ProxyConcurrencyBox.IsEnabled = !busy;
         ProxyFetchButton.IsEnabled = !busy;
-        ProxyBatchActionBox.IsEnabled = !busy && _proxyNodes.Count > 0;
         ProxyNodesGrid.IsEnabled = !busy;
+        UpdateProxyBatchActionAvailability();
     }
 
     private void ProxyNodesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1641,24 +1647,81 @@ public partial class ContentCollectionPage : UserControl
         switch (action)
         {
             case "health":
-                ProxyHealthButton_Click(sender, e);
+                await RunSelectedProxyHealthAsync(pageToken);
                 break;
             case "telegram":
-                ProxyCheckTgButton_Click(sender, e);
+                await RunSelectedProxyTelegramAsync(pageToken);
                 break;
             case "delete-selected":
                 await DeleteProxyNodesAsync(_proxyNodes.Where(row => row.IsSelected).Select(row => row.Node).ToArray(), "已选节点", pageToken);
                 break;
             case "delete-invalid":
                 var invalidNodes = _proxyNodes
-                    .Where(row => row.Node.LastCheckedAt is not null && !row.Node.IsAlive &&
-                                  row.Node.LastTgCheckedAt is not null && row.Node.TgAccessible is false)
+                    .Where(row => row.IsInvalidForBatchDelete)
                     .Select(row => row.Node)
                     .ToArray();
-                await DeleteProxyNodesAsync(invalidNodes, "测试不可用且 TG 不可访问的失效节点", pageToken);
+                await DeleteProxyNodesAsync(invalidNodes, "测试不可用或 TG 不可访问的失效节点", pageToken);
                 break;
         }
         });
+
+    private async Task RunSelectedProxyHealthAsync(CancellationToken cancellationToken)
+    {
+        var pageToken = cancellationToken.CanBeCanceled ? cancellationToken : CurrentPageToken;
+        if (!IsPageActive(pageToken)) return;
+        var targets = _proxyNodes.Where(item => item.IsSelected).Select(item => item.Node).ToArray();
+        if (targets.Length == 0) targets = _proxyNodes.Select(item => item.Node).ToArray();
+        if (targets.Length == 0)
+        {
+            SetProxyStatus("当前代理源没有 HTTP/HTTPS 节点。", false);
+            return;
+        }
+        if (!TryReadProxyConcurrency(out var concurrency)) return;
+        await RunProxyHealthAsync(targets, concurrency, isBatch: true, cancellationToken: pageToken);
+    }
+
+    private async Task RunSelectedProxyTelegramAsync(CancellationToken cancellationToken)
+    {
+        var pageToken = cancellationToken.CanBeCanceled ? cancellationToken : CurrentPageToken;
+        if (!IsPageActive(pageToken)) return;
+        var targets = _proxyNodes.Where(item => item.IsSelected).Select(item => item.Node).ToArray();
+        if (targets.Length == 0)
+        {
+            SetProxyStatus("请先勾选要验证 TG 的 HTTP/HTTPS 节点。", false);
+            return;
+        }
+        if (!TryReadProxyConcurrency(out var concurrency)) return;
+        await RunProxyTelegramChecksAsync(targets, concurrency, isBatch: true, cancellationToken: pageToken);
+    }
+
+    private bool TryReadProxyConcurrency(out int concurrency)
+    {
+        if (int.TryParse(ProxyConcurrencyBox.Text.Trim(), out concurrency) &&
+            concurrency is >= 1 and <= ProxyPoolService.MaxConcurrency)
+            return true;
+        concurrency = ProxyPoolService.DefaultConcurrency;
+        SetProxyStatus($"测试并发数请输入 1-{ProxyPoolService.MaxConcurrency} 的整数。", false);
+        ProxyConcurrencyBox.Focus();
+        return false;
+    }
+
+    private ProxyNodeRow[] FindProxyRows(IReadOnlyList<ProxyNode> nodes)
+    {
+        var ids = nodes.Select(node => node.Id).ToHashSet();
+        return _proxyNodes.Where(row => ids.Contains(row.Id)).ToArray();
+    }
+
+    private void SetProxyBatchActionEnabled(bool enabled)
+    {
+        _proxyBatchActionBusy = !enabled;
+        UpdateProxyBatchActionAvailability();
+    }
+
+    private void UpdateProxyBatchActionAvailability()
+    {
+        if (!IsPageActiveForUpdates) return;
+        ProxyBatchActionBox.IsEnabled = !_proxyGlobalBusy && !_proxyBatchActionBusy && _proxyNodes.Count > 0;
+    }
 
     private void ProxySelectAllButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1699,13 +1762,15 @@ public partial class ContentCollectionPage : UserControl
         if (!IsPageActive(pageToken)) return;
         if (nodes.Count == 0)
         {
-            SetProxyStatus(description == "已选节点" ? "请先勾选要删除的节点。" : "没有同时满足测试不可用且 TG 不可访问的节点。", false);
+            SetProxyStatus(description == "已选节点" ? "请先勾选要删除的节点。" : "没有测试不可用或 TG 不可访问的节点。", false);
             return;
         }
         if (MessageBox.Show(Window.GetWindow(this), $"确定删除 {nodes.Count} 个{description}？删除后，下次同步代理源时这些节点可能重新出现。", "批量删除代理节点", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         if (!IsPageActive(pageToken)) return;
 
-        SetProxyBusy(true);
+        var rows = FindProxyRows(nodes);
+        foreach (var row in rows) row.IsBusy = true;
+        SetProxyBatchActionEnabled(false);
         var deleted = 0;
         var source = SelectedProxySource;
         try
@@ -1727,7 +1792,11 @@ public partial class ContentCollectionPage : UserControl
             if (!IsPageActive(pageToken)) return;
             SetProxyStatus($"批量删除部分完成：已删除 {deleted} 个，请重试剩余项。\n{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
-        finally { if (IsPageActive(pageToken)) SetProxyBusy(false); }
+        finally
+        {
+            foreach (var row in rows) row.IsBusy = false;
+            if (IsPageActive(pageToken)) SetProxyBatchActionEnabled(true);
+        }
     }
 
     private void ProxySourceBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1780,23 +1849,22 @@ public partial class ContentCollectionPage : UserControl
         var targets = _proxyNodes.Where(item => item.IsSelected).Select(item => item.Node).ToArray();
         if (targets.Length == 0) targets = _proxyNodes.Select(item => item.Node).ToArray();
         if (targets.Length == 0) { SetProxyStatus("当前代理源没有 HTTP/HTTPS 节点。", false); return; }
-        if (!int.TryParse(ProxyConcurrencyBox.Text.Trim(), out var concurrency) || concurrency is < 1 or > ProxyPoolService.MaxConcurrency)
-        {
-            SetProxyStatus($"测试并发数请输入 1-{ProxyPoolService.MaxConcurrency} 的整数。", false);
-            ProxyConcurrencyBox.Focus();
-            return;
-        }
-        await RunProxyHealthAsync(targets, concurrency, pageToken);
+        if (!TryReadProxyConcurrency(out var concurrency)) return;
+        await RunProxyHealthAsync(targets, concurrency, isBatch: true, cancellationToken: pageToken);
         });
 
     private async Task RunProxyHealthAsync(
         IReadOnlyList<ProxyNode> targets,
         int concurrency,
+        bool isBatch,
         CancellationToken cancellationToken = default)
     {
         var pageToken = cancellationToken.CanBeCanceled ? cancellationToken : CurrentPageToken;
         if (!IsPageActive(pageToken)) return;
-        SetProxyBusy(true);
+        var source = SelectedProxySource;
+        var rows = FindProxyRows(targets);
+        foreach (var row in rows) row.IsBusy = true;
+        if (isBatch) SetProxyBatchActionEnabled(false);
         try
         {
             var result = await _proxyPoolService.TestHealthAsync(
@@ -1805,7 +1873,7 @@ public partial class ContentCollectionPage : UserControl
                 message => { if (IsPageActive(pageToken)) SetProxyStatus(message, false); },
                 pageToken);
             if (!IsPageActive(pageToken)) return;
-            await LoadProxyNodesAsync(SelectedProxySource, pageToken);
+            await LoadProxyNodesAsync(source, pageToken);
             if (!IsPageActive(pageToken)) return;
             SetProxyStatus($"测试完成：成功 {result.SuccessCount} 条，失败 {result.FailedCount} 条，过滤/跳过 {result.SkippedCount} 条。", result.FailedCount == 0);
         }
@@ -1817,7 +1885,11 @@ public partial class ContentCollectionPage : UserControl
         {
             if (IsPageActive(pageToken)) SetProxyStatus($"测试未完成，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
-        finally { if (IsPageActive(pageToken)) SetProxyBusy(false); }
+        finally
+        {
+            foreach (var row in rows) row.IsBusy = false;
+            if (isBatch && IsPageActive(pageToken)) SetProxyBatchActionEnabled(true);
+        }
     }
 
     private void ProxyRowHealthButton_Click(object sender, RoutedEventArgs e) =>
@@ -1826,7 +1898,7 @@ public partial class ContentCollectionPage : UserControl
         var pageToken = CurrentPageToken;
         if (!IsPageActive(pageToken)) return;
         if ((sender as Button)?.DataContext is not ProxyNodeRow row) return;
-        await RunProxyHealthAsync(new[] { row.Node }, 1, pageToken);
+        await RunProxyHealthAsync(new[] { row.Node }, 1, isBatch: false, cancellationToken: pageToken);
         });
 
     private void ProxyCheckTgButton_Click(object sender, RoutedEventArgs e) =>
@@ -1840,21 +1912,38 @@ public partial class ContentCollectionPage : UserControl
             SetProxyStatus("请先勾选要验证 TG 的 HTTP/HTTPS 节点。", false);
             return;
         }
-        SetProxyBusy(true);
-        var success = 0;
+        if (!TryReadProxyConcurrency(out var concurrency)) return;
+        await RunProxyTelegramChecksAsync(targets, concurrency, isBatch: true, cancellationToken: pageToken);
+        });
+
+    private async Task RunProxyTelegramChecksAsync(
+        IReadOnlyList<ProxyNode> targets,
+        int concurrency,
+        bool isBatch,
+        CancellationToken cancellationToken = default)
+    {
+        var pageToken = cancellationToken.CanBeCanceled ? cancellationToken : CurrentPageToken;
+        if (!IsPageActive(pageToken)) return;
+        var source = SelectedProxySource;
+        var rows = FindProxyRows(targets);
+        foreach (var row in rows) row.IsBusy = true;
+        if (isBatch) SetProxyBatchActionEnabled(false);
         try
         {
-            for (var index = 0; index < targets.Length; index++)
-            {
-                if (!IsPageActive(pageToken)) return;
-                SetProxyStatus($"正在验证 TG {index + 1}/{targets.Length}：{targets[index].Address}…", false);
-                var result = await _proxyPoolService.CheckTelegramAsync(targets[index], pageToken);
-                if (!IsPageActive(pageToken)) return;
-                if (result.Succeeded) success++;
-            }
-            await LoadProxyNodesAsync(SelectedProxySource, pageToken);
+            var result = await _proxyPoolService.CheckTelegramBatchAsync(
+                targets,
+                concurrency,
+                message => { if (IsPageActive(pageToken)) SetProxyStatus(message, false); },
+                pageToken);
             if (!IsPageActive(pageToken)) return;
-            SetProxyStatus($"TG 验证完成：成功 {success} 条，失败 {targets.Length - success} 条。", success == targets.Length);
+            await LoadProxyNodesAsync(source, pageToken);
+            if (!IsPageActive(pageToken)) return;
+            var message = isBatch
+                ? $"TG 验证完成：成功 {result.SuccessCount} 条，失败 {result.FailedCount} 条，过滤/跳过 {result.SkippedCount} 条。"
+                : result.SuccessCount == 1
+                    ? $"TG 验证成功：{targets[0].Address} 可访问。"
+                    : $"TG 验证失败：{targets[0].Address} 不可访问，详情见“最近结果”。";
+            SetProxyStatus(message, result.FailedCount == 0);
         }
         catch (OperationCanceledException)
         {
@@ -1867,13 +1956,10 @@ public partial class ContentCollectionPage : UserControl
         }
         finally
         {
-            if (IsPageActive(pageToken))
-            {
-                try { SetProxyBusy(false); }
-                catch (Exception ex) { AppLogger.Instance.WriteException("恢复 TG 验证界面状态失败", ex); }
-            }
+            foreach (var row in rows) row.IsBusy = false;
+            if (isBatch && IsPageActive(pageToken)) SetProxyBatchActionEnabled(true);
         }
-        });
+    }
 
     private void ProxyRowTgButton_Click(object sender, RoutedEventArgs e) =>
         UiAsync.Run("验证单行代理节点 TG 可用性", async () =>
@@ -1881,32 +1967,7 @@ public partial class ContentCollectionPage : UserControl
         var pageToken = CurrentPageToken;
         if (!IsPageActive(pageToken)) return;
         if ((sender as Button)?.DataContext is not ProxyNodeRow row) return;
-        SetProxyBusy(true);
-        try
-        {
-            var result = await _proxyPoolService.CheckTelegramAsync(row.Node, pageToken);
-            if (!IsPageActive(pageToken)) return;
-            await LoadProxyNodesAsync(SelectedProxySource, pageToken);
-            if (!IsPageActive(pageToken)) return;
-            SetProxyStatus(result.Succeeded ? $"TG 验证成功：{row.Address} 解析到 {result.MessageCount} 条消息。" : $"TG 验证未完成，请检查节点后重试：{result.Error}", result.Succeeded);
-        }
-        catch (OperationCanceledException)
-        {
-            if (IsPageActive(pageToken)) SetProxyStatus("已取消 TG 验证。", false);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Instance.WriteException($"代理节点 TG 验证异常：{row.Address}", ex);
-            if (IsPageActive(pageToken)) SetProxyStatus($"TG 验证未完成，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
-        }
-        finally
-        {
-            if (IsPageActive(pageToken))
-            {
-                try { SetProxyBusy(false); }
-                catch (Exception ex) { AppLogger.Instance.WriteException("恢复单行 TG 验证界面状态失败", ex); }
-            }
-        }
+        await RunProxyTelegramChecksAsync(new[] { row.Node }, 1, isBatch: false, cancellationToken: pageToken);
         });
 
     private void ProxyAddSourceButton_Click(object sender, RoutedEventArgs e) =>
@@ -1972,7 +2033,7 @@ public partial class ContentCollectionPage : UserControl
         if ((sender as Button)?.DataContext is not ProxyNodeRow row) return;
         if (MessageBox.Show(Window.GetWindow(this), $"确定删除代理节点“{row.Address}”？", "删除代理节点", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         if (!IsPageActive(pageToken)) return;
-        SetProxyBusy(true);
+        row.IsBusy = true;
         try
         {
             await _proxyPoolStore.DeleteNodeAsync(row.Node);
@@ -1985,7 +2046,7 @@ public partial class ContentCollectionPage : UserControl
         {
             if (IsPageActive(pageToken)) SetProxyStatus($"未能删除代理节点，请重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
         }
-        finally { if (IsPageActive(pageToken)) SetProxyBusy(false); }
+        finally { row.IsBusy = false; }
         });
 
     private static bool IsInteractiveRowElement(DependencyObject source)
