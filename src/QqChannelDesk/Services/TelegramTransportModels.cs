@@ -43,6 +43,12 @@ public sealed record TelegramTransportContext
 
     public string CookieHeader { get; init; } = "";
 
+    /// <summary>
+    /// Only automatic collection enables this. Explicit selections keep their
+    /// chosen transport all the way through media download.
+    /// </summary>
+    public bool AllowFallback { get; init; }
+
     public PublicArticleRequestContext ToRequestContext() => Mode switch
     {
         TelegramTransportModes.Direct => new PublicArticleRequestContext { UseSystemProxy = false },
@@ -83,6 +89,31 @@ public sealed record TelegramTransportPreview(
     string Error,
     IReadOnlyList<string> Attempts);
 
+/// <summary>单页采集结果。PagingSupported=false 时调用方必须停止继续翻页。</summary>
+public sealed record TelegramTransportPageResult(
+    bool Succeeded,
+    IReadOnlyList<TelegramChannelMessage> Messages,
+    TelegramTransportContext? Context,
+    string ProviderId,
+    string ProviderName,
+    string Error,
+    IReadOnlyList<string> Attempts,
+    bool HasMore,
+    bool PagingSupported)
+{
+    public static TelegramTransportPageResult FromPreview(TelegramTransportPreview preview) =>
+        new(
+            preview.Succeeded,
+            preview.Messages,
+            preview.Context,
+            preview.ProviderId,
+            preview.ProviderName,
+            preview.Error,
+            preview.Attempts,
+            false,
+            false);
+}
+
 /// <summary>
 /// 传输层契约。实现内部按选择器决定直连/系统代理/代理池/在线解析，
 /// 便于单测注入假实现而不访问真实网络。
@@ -95,7 +126,34 @@ public interface ITelegramTransport
         Action<string>? progress = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 读取频道的一页消息。默认回退到旧单页契约，便于测试替身和第三方实现平滑迁移。
+    /// </summary>
+    async Task<TelegramTransportPageResult> FetchChannelPageAsync(
+        string channelUrl,
+        TelegramTransportSelection selection,
+        long? beforeMessageId,
+        Action<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var preview = await FetchChannelAsync(channelUrl, selection, progress, cancellationToken);
+        return TelegramTransportPageResult.FromPreview(preview);
+    }
+
     Task<string> DownloadMediaAsync(
+        TelegramMediaRef media,
+        TelegramTransportContext context,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional media-only fallback contract. It is separate from
+/// <see cref="ITelegramTransport"/> so existing test doubles remain source-compatible.
+/// </summary>
+public interface ITelegramMediaFallbackTransport
+{
+    Task<string> DownloadMediaWithFallbackAsync(
         TelegramMediaRef media,
         TelegramTransportContext context,
         string? targetDirectory = null,

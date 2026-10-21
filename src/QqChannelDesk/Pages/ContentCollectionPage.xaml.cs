@@ -51,16 +51,18 @@ public partial class ContentCollectionPage : UserControl
     private readonly ObservableCollection<TelegramScheduleRow> _telegramSchedules = [];
     private TelegramCollectionSchedule? _editingTelegramSchedule;
     private string _scheduleCronExpression = "0 0 * * *";
+    private string _scheduleIncludeKeyword = "";
     private string _scheduleKeyword = "";
+    private string _scheduleFirstRunMode = "backfill";
     private IReadOnlyList<TelegramDistributionRuleDraft> _scheduleRules = [];
     private bool _scheduleAutoScheduleEnabled;
     private int _scheduleAutoScheduleDelayMinutes = 30;
     private int _scheduleAutoScheduleMaxPerRun = 20;
-    // 每一行采集各自持有一个令牌：只有正在采集（或排队等待执行）的那一行会被锁定。
-    private readonly Dictionary<long, CancellationTokenSource> _telegramScheduleRuns = [];
-    private readonly HashSet<long> _runningScheduleIds = [];
+    // 调度器队列是唯一运行状态源；页面只缓存最近一次快照用于行状态与全局取消按钮。
+    private IReadOnlyList<TelegramCollectionQueueItem> _telegramQueueSnapshot = [];
     private int _telegramSchedulesLoadVersion;
     private bool _schedulerEventsSubscribed;
+    private CancellationTokenSource? _telegramSchedulesRefreshCts;
     private int _proxySourcesLoadVersion;
     private int _proxyNodesLoadVersion;
     private CancellationTokenSource? _pageLifetimeCts;
@@ -135,6 +137,8 @@ public partial class ContentCollectionPage : UserControl
     private void EndPageLifetime()
     {
         UnsubscribeSchedulerEvents();
+        _telegramSchedulesRefreshCts?.Cancel();
+        _telegramSchedulesRefreshCts = null;
         var lifetime = _pageLifetimeCts;
         _pageLifetimeCts = null;
         lifetime?.Cancel();
@@ -142,9 +146,6 @@ public partial class ContentCollectionPage : UserControl
         var collect = _collectCts;
         _collectCts = null;
         collect?.Cancel();
-
-        foreach (var scheduleId in _telegramScheduleRuns.Keys.ToArray())
-            CancelTelegramScheduleRun(scheduleId);
     }
 
     public Task LoadItemsAsync() => LoadItemsAsync(CurrentPageToken);
@@ -475,7 +476,8 @@ public partial class ContentCollectionPage : UserControl
         TgChannelBox.IsEnabled = !busy;
         TgLimitBox.IsEnabled = !busy;
         TgProxyBox.IsEnabled = !busy;
-        TgKeywordBox.IsEnabled = !busy;
+        TgIncludeKeywordBox.IsEnabled = !busy;
+        TgExcludeKeywordBox.IsEnabled = !busy;
         TgCancelButton.IsEnabled = busy && allowCancel && _collectCts is not null;
     }
 
@@ -501,12 +503,14 @@ public partial class ContentCollectionPage : UserControl
         }
         var limitText = TgLimitBox.Text.Trim();
         var limit = 0;
-        if (limitText.Length > 0 && (!int.TryParse(limitText, out limit) || limit < 0))
+        if (limitText.Length > 0 &&
+            (!int.TryParse(limitText, out limit) || limit < 0))
         {
-            MessageBox.Show(Window.GetWindow(this), "数量上限请填写不小于 0 的整数，留空表示全部。", "数量上限无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(Window.GetWindow(this), "数量上限请填写 1-20 的整数；留空、0 或大于 20 时按 20 条处理。", "数量上限无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             TgLimitBox.Focus();
             return;
         }
+        limit = TelegramCollectorService.NormalizeMessageLimit(limit);
         var previousCollect = _collectCts;
         var collectCts = new CancellationTokenSource();
         _collectCts = collectCts;
@@ -535,9 +539,9 @@ public partial class ContentCollectionPage : UserControl
                     TgProxyBox.Text,
                     (TgProxyBox.SelectedItem as WebProxyOption)?.Value);
                 var legacyPreview = await _telegramCollector.PreviewChannelAsync(
-                    channelUrl, limit, TgKeywordBox.Text,
+                    channelUrl, limit, TgIncludeKeywordBox.Text,
                     status => { if (IsPageActive(pageToken)) SetTgStatus(status, false); },
-                    token, legacySelection);
+                    token, legacySelection, TgExcludeKeywordBox.Text);
                 rawMessages = legacyPreview.Messages;
                 total = legacyPreview.Total;
                 providerName = legacyPreview.ProviderName;
@@ -557,8 +561,12 @@ public partial class ContentCollectionPage : UserControl
                     SetTgStatus(transportPreview.Error, false);
                     return;
                 }
-                // 传输层只负责取回页面，数量上限和关键词过滤仍然由采集服务统一处理。
-                rawMessages = TelegramCollectorService.ApplyPreviewFilters(transportPreview.Messages, limit, TgKeywordBox.Text);
+                // 传输层只负责取回页面，数量上限和包含/排除词过滤仍然由采集服务统一处理。
+                rawMessages = TelegramCollectorService.ApplyPreviewFilters(
+                    transportPreview.Messages,
+                    limit,
+                    TgIncludeKeywordBox.Text,
+                    TgExcludeKeywordBox.Text);
                 total = transportPreview.Messages.Count;
                 providerName = transportPreview.ProviderName;
                 transportContext = transportPreview.Context;
@@ -603,7 +611,10 @@ public partial class ContentCollectionPage : UserControl
         if (_telegramCollectionScheduler is null || _schedulerEventsSubscribed) return;
         _telegramCollectionScheduler.StatusChanged += TelegramCollectionScheduler_StatusChanged;
         _telegramCollectionScheduler.ProgressChanged += TelegramCollectionScheduler_ProgressChanged;
+        _telegramCollectionScheduler.QueueChanged += TelegramCollectionScheduler_QueueChanged;
+        _telegramCollectionScheduler.RunCompleted += TelegramCollectionScheduler_RunCompleted;
         _schedulerEventsSubscribed = true;
+        ApplyTelegramQueueSnapshot(_telegramCollectionScheduler.QueueSnapshot);
     }
 
     private void UnsubscribeSchedulerEvents()
@@ -611,6 +622,8 @@ public partial class ContentCollectionPage : UserControl
         if (_telegramCollectionScheduler is null || !_schedulerEventsSubscribed) return;
         _telegramCollectionScheduler.StatusChanged -= TelegramCollectionScheduler_StatusChanged;
         _telegramCollectionScheduler.ProgressChanged -= TelegramCollectionScheduler_ProgressChanged;
+        _telegramCollectionScheduler.QueueChanged -= TelegramCollectionScheduler_QueueChanged;
+        _telegramCollectionScheduler.RunCompleted -= TelegramCollectionScheduler_RunCompleted;
         _schedulerEventsSubscribed = false;
     }
 
@@ -645,9 +658,9 @@ public partial class ContentCollectionPage : UserControl
         }
         if (added > 0)
         {
-            var ordered = _tempItems
-                .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
-                .ToArray();
+            var ordered = TelegramCollectorService.OrderByLatest(
+                _tempItems,
+                item => item.Message);
             _syncingTgSelection = true;
             try
             {
@@ -863,9 +876,7 @@ public partial class ContentCollectionPage : UserControl
         if (!cancellationToken.CanBeCanceled) cancellationToken = CurrentPageToken;
         if (!IsPageActive(cancellationToken)) return;
         SetTgBusy(true);
-        var drafted = 0;
-        var failed = 0;
-        var mediaFailed = 0;
+        var stats = new TelegramDraftBatchStats();
         try
         {
             for (var index = 0; index < targets.Count; index++)
@@ -888,6 +899,7 @@ public partial class ContentCollectionPage : UserControl
                             _proxyCookie,
                             cancellationToken: cancellationToken);
                     if (!IsPageActive(cancellationToken)) return;
+                    stats.Record(result);
                     if (result.SkippedDuplicate)
                     {
                         item.MarkMaterialized(result.MaterialId ?? 0, result.Directory);
@@ -895,33 +907,28 @@ public partial class ContentCollectionPage : UserControl
                     }
                     if (result.SkippedEmpty)
                     {
-                        failed++;
-                        mediaFailed += result.FailedMediaCount;
                         AppLogger.Instance.Warning($"tg 入库未生成空白素材：{item.Url} 的媒体全部下载失败。");
                         continue;
                     }
                     if (!result.Succeeded || result.MaterialId is null)
                     {
-                        failed++;
-                        mediaFailed += result.FailedMediaCount;
-                        AppLogger.Instance.Warning($"tg 入库失败：{item.Url} {result.Error}");
+                        AppLogger.Instance.Warning(
+                            $"tg 入库失败：{item.Url} {CliDiagnostics.Sanitize(result.Error)}");
                         continue;
                     }
                     item.MarkMaterialized(result.MaterialId.Value, result.Directory);
-                    drafted++;
-                    mediaFailed += result.FailedMediaCount;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
                 catch (Exception ex)
                 {
-                    failed++;
-                    AppLogger.Instance.Warning($"tg 入库失败 {item.Url}：{ex.Message}");
+                    stats.RecordFailure();
+                    AppLogger.Instance.Warning(
+                        $"tg 入库失败 {item.Url}：{CliDiagnostics.Sanitize(ex.Message)}");
                 }
             }
-            var summary = $"加入素材库完成：成功 {drafted} 条，失败 {failed} 条";
-            if (mediaFailed > 0) summary += $"，{mediaFailed} 个媒体下载失败（相关消息未入库）";
-            summary += "。可在“素材库”查看。";
-            SetTgStatus(summary, failed == 0);
+            SetTgStatus(
+                stats.ToSummary(),
+                stats.FailedCount == 0 && stats.PartialSucceededCount == 0);
         }
         finally
         {
@@ -1011,8 +1018,8 @@ public partial class ContentCollectionPage : UserControl
             var rulesBySchedule = await _telegramCollectionStore.GetRulesByScheduleIdsAsync(
                 schedules.Select(schedule => schedule.Id).ToArray(), cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _telegramSchedulesLoadVersion) return;
-            // 页面不可见时事件订阅会被解除，重新进入页面前先按执行器的真实运行集合校正残留状态。
-            ReconcileRunningScheduleIds();
+            // 页面重新进入时按调度器队列快照恢复“执行中 / 排队中”，不依赖页面本地任务表。
+            var queueSnapshot = _telegramCollectionScheduler?.QueueSnapshot ?? [];
             var rows = new List<TelegramScheduleRow>();
             foreach (var schedule in schedules)
             {
@@ -1022,14 +1029,16 @@ public partial class ContentCollectionPage : UserControl
                     ? "未配置规则"
                     : $"{rules[0].TargetDisplay}（{rules.Count}条规则）";
                 var row = new TelegramScheduleRow(schedule with { DistributionDisplay = targetSummary });
-                row.IsRunning = _runningScheduleIds.Contains(schedule.Id);
+                var queueItem = queueSnapshot.FirstOrDefault(item => item.ScheduleId == schedule.Id);
+                row.SetQueueState(
+                    queueItem?.IsExecuting == true,
+                    queueItem is null ? 0 : Math.Max(1, queueItem.Position));
                 rows.Add(row);
             }
             if (!IsPageActive(cancellationToken) || version != _telegramSchedulesLoadVersion) return;
             _telegramSchedules.Clear();
             foreach (var row in rows) _telegramSchedules.Add(row);
-            // 重新进入页面时同步一次顶部取消按钮，避免上一次运行留下的可见状态与新行状态不一致。
-            RefreshTelegramScheduleRowStates();
+            ApplyTelegramQueueSnapshot(queueSnapshot);
             if (updateSummary)
             {
                 TgScheduleStatusText.Text = _telegramSchedules.Count == 0
@@ -1047,11 +1056,7 @@ public partial class ContentCollectionPage : UserControl
 
     private void TgSchedulesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // 正在采集的那一行不允许被选中，避免误操作看起来像在编辑它。
-        if (TgSchedulesGrid.SelectedItem is TelegramScheduleRow { IsRunning: true })
-        {
-            TgSchedulesGrid.SelectedItem = null;
-        }
+        // 运行中的行仍允许选中查看；是否可编辑由行内按钮状态独立控制。
     }
 
     private void ClearTelegramScheduleEditor()
@@ -1061,7 +1066,9 @@ public partial class ContentCollectionPage : UserControl
         TgScheduleLimitBox.Text = "20";
         TgScheduleProxyBox.SelectedIndex = 0;
         _scheduleCronExpression = "0 0 * * *";
+        _scheduleIncludeKeyword = "";
         _scheduleKeyword = "";
+        _scheduleFirstRunMode = "backfill";
         _scheduleRules = [];
         _scheduleAutoScheduleEnabled = false;
         _scheduleAutoScheduleDelayMinutes = 30;
@@ -1090,12 +1097,14 @@ public partial class ContentCollectionPage : UserControl
             return null;
         }
         var limit = 20;
-        if (TgScheduleLimitBox.Text.Trim().Length > 0 &&
-            (!int.TryParse(TgScheduleLimitBox.Text.Trim(), out limit) || limit < 0 || limit > TelegramCollectorService.TempListLimit))
+        var limitText = TgScheduleLimitBox.Text.Trim();
+        if (limitText.Length > 0 &&
+            (!int.TryParse(limitText, out limit) || limit < 0))
         {
-            TgScheduleStatusText.Text = "数量上限请填写 0 到 500 的整数，0 表示不限制。";
+            TgScheduleStatusText.Text = "数量上限请填写 1-20 的整数；留空、0 或大于 20 时按 20 条处理。";
             return null;
         }
+        limit = TelegramCollectorService.NormalizeMessageLimit(limit);
         if (!TelegramCronSchedule.TryParse(_scheduleCronExpression, out var cron, out var cronError))
         {
             TgScheduleStatusText.Text = $"计划表达式无效：{cronError}";
@@ -1114,25 +1123,28 @@ public partial class ContentCollectionPage : UserControl
         var rules = _scheduleRules;
         try
         {
-            var id = await _telegramCollectionStore.SaveAsync(new TelegramCollectionScheduleDraft(
-                editingId,
-                url,
-                TelegramCollectorService.ReadChannelName(url),
-                0,
-                _editingTelegramSchedule?.Enabled ?? true,
-                proxySelection,
-                limit,
-                _scheduleKeyword,
-                "daily",
-                1,
-                1,
-                "00:00",
-                cron.Expression,
-                _scheduleAutoScheduleEnabled,
-                _scheduleAutoScheduleDelayMinutes,
-                _scheduleAutoScheduleMaxPerRun),
-                CancellationToken.None);
-            await _telegramCollectionStore.ReplaceRulesAsync(id, rules, CancellationToken.None);
+            var id = await _telegramCollectionStore.SaveWithRulesAsync(
+                new TelegramCollectionScheduleDraft(
+                    editingId,
+                    url,
+                    TelegramCollectorService.ReadChannelName(url),
+                    0,
+                    _editingTelegramSchedule?.Enabled ?? true,
+                    proxySelection,
+                    limit,
+                    _scheduleKeyword,
+                    "daily",
+                    1,
+                    1,
+                    "00:00",
+                    cron.Expression,
+                    _scheduleAutoScheduleEnabled,
+                    _scheduleAutoScheduleDelayMinutes,
+                    _scheduleAutoScheduleMaxPerRun,
+                    _scheduleFirstRunMode,
+                    _scheduleIncludeKeyword),
+                rules,
+                pageToken);
             if (!IsPageActive(pageToken)) return id;
             await LoadTelegramSchedulesAsync(cancellationToken: pageToken);
             if (!IsPageActive(pageToken)) return id;
@@ -1172,7 +1184,9 @@ public partial class ContentCollectionPage : UserControl
         TgScheduleChannelBox.Text = schedule.ChannelUrl;
         TgScheduleLimitBox.Text = schedule.MessageLimit.ToString();
         _scheduleCronExpression = schedule.EffectiveCronExpression;
+        _scheduleIncludeKeyword = schedule.IncludeKeyword;
         _scheduleKeyword = schedule.Keyword;
+        _scheduleFirstRunMode = schedule.FirstRunMode;
         _scheduleRules = rules;
         _scheduleAutoScheduleEnabled = schedule.AutoScheduleEnabled;
         _scheduleAutoScheduleDelayMinutes = schedule.AutoScheduleDelayMinutes;
@@ -1216,7 +1230,7 @@ public partial class ContentCollectionPage : UserControl
         if (!IsPageActive(pageToken)) return;
         if (_telegramCollectionStore is null || (sender as FrameworkElement)?.DataContext is not TelegramScheduleRow row) return;
         var schedule = row.Schedule;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定删除频道“{schedule.ChannelName}”的定时采集配置？\n\n已入素材库的内容不会删除。", "删除定时采集", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定删除频道“{schedule.ChannelName}”的定时采集配置？\n\n已入素材库的内容不会删除，该计划的采集历史会一并删除。", "删除定时采集", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         if (!IsPageActive(pageToken)) return;
         try
         {
@@ -1240,33 +1254,33 @@ public partial class ContentCollectionPage : UserControl
         if (!IsPageActive(pageToken)) return;
         if (row.IsRunning)
         {
-            if (IsScheduleRunActive(row.Id))
+            if (_telegramCollectionScheduler.CancelRun(row.Id))
             {
-                CancelTelegramScheduleRun(row.Id);
-                return;
+                TgScheduleStatusText.Text = row.IsExecuting
+                    ? $"{row.ChannelName}：正在取消采集…"
+                    : $"{row.ChannelName}：已取消排队。";
             }
-            // 残留的过期标记不能吞掉点击：先复位成可采集，再按“立即采集”继续。
-            _runningScheduleIds.Remove(row.Id);
-            RefreshTelegramScheduleRowStates();
+            else
+            {
+                // 队列事件与界面快照间存在极短窗口，按执行器真实状态校正一次。
+                ApplyTelegramQueueSnapshot(_telegramCollectionScheduler.QueueSnapshot);
+            }
+            return;
         }
         var schedule = row.Schedule;
-        var cts = new CancellationTokenSource();
-        _telegramScheduleRuns[schedule.Id] = cts;
-        _runningScheduleIds.Add(schedule.Id);
-        RefreshTelegramScheduleRowStates();
         TgScheduleProgressBar.Visibility = Visibility.Visible;
         TgScheduleProgressBar.IsIndeterminate = true;
-        TgScheduleStatusText.Text = _runningScheduleIds.Count > 1
-            ? $"{schedule.ChannelName}：已排队，等待当前采集结束…"
-            : $"{schedule.ChannelName}：正在启动采集…";
+        TgScheduleStatusText.Text = $"{schedule.ChannelName}：正在加入采集队列…";
         try
         {
-            var result = await _telegramCollectionScheduler.RunNowAsync(schedule.Id, cts.Token);
+            // pageToken 只结束页面等待；已经进入调度器队列的采集会继续运行。
+            var result = await _telegramCollectionScheduler.RunNowAsync(schedule.Id, pageToken);
             if (!IsPageActive(pageToken)) return;
             TgScheduleStatusText.Text = result.Succeeded
                 ? $"立即采集完成：新增 {result.AddedCount} 条，跳过 {result.SkippedCount} 条。"
                 : $"立即采集未完成，请检查频道或代理后重试：{result.Message}";
         }
+        catch (OperationCanceledException) when (pageToken.IsCancellationRequested) { }
         catch (OperationCanceledException)
         {
             if (IsPageActive(pageToken))
@@ -1277,30 +1291,24 @@ public partial class ContentCollectionPage : UserControl
             if (IsPageActive(pageToken))
                 TgScheduleStatusText.Text = $"立即采集未完成，请检查频道或代理后重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
-        finally
-        {
-            _telegramScheduleRuns.Remove(schedule.Id);
-            _runningScheduleIds.Remove(schedule.Id);
-            cts.Dispose();
-            if (IsPageActive(pageToken))
-            {
-                RefreshTelegramScheduleRowStates();
-                if (_runningScheduleIds.Count == 0) TgScheduleProgressBar.Visibility = Visibility.Collapsed;
-                await LoadTelegramSchedulesAsync(updateSummary: false, cancellationToken: pageToken);
-            }
-        }
         });
 
     private void TgScheduleCancelButton_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var id in _telegramScheduleRuns.Keys.ToArray()) CancelTelegramScheduleRun(id);
-        _telegramCollectionScheduler?.CancelCurrentRun();
+        _telegramCollectionScheduler?.CancelAllRuns();
+        TgScheduleStatusText.Text = "已请求取消当前采集和全部排队任务。";
     }
 
-    private void CancelTelegramScheduleRun(long scheduleId)
+    private void TgScheduleHistoryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_telegramScheduleRuns.TryGetValue(scheduleId, out var cts)) cts.Cancel();
-        else _telegramCollectionScheduler?.CancelCurrentRun();
+        if (_telegramCollectionStore is null ||
+            (sender as FrameworkElement)?.DataContext is not TelegramScheduleRow row)
+            return;
+        var window = new TelegramCollectionHistoryWindow(_telegramCollectionStore, row.Id)
+        {
+            Owner = Window.GetWindow(this)
+        };
+        window.ShowDialog();
     }
 
     private void TgScheduleAdvancedButton_Click(object sender, RoutedEventArgs e)
@@ -1314,17 +1322,21 @@ public partial class ContentCollectionPage : UserControl
                 _scheduleRules,
                 _scheduleAutoScheduleEnabled,
                 _scheduleAutoScheduleDelayMinutes,
-                _scheduleAutoScheduleMaxPerRun),
+                _scheduleAutoScheduleMaxPerRun,
+                _scheduleFirstRunMode,
+                _scheduleIncludeKeyword),
             _channelSync)
         { Owner = Window.GetWindow(this) };
         if (window.ShowDialog() != true) return;
         if (!IsPageActive(pageToken)) return;
         _scheduleCronExpression = window.Settings.CronExpression;
+        _scheduleIncludeKeyword = window.Settings.IncludeKeyword;
         _scheduleKeyword = window.Settings.Keyword;
         _scheduleRules = window.Settings.DistributionRules;
         _scheduleAutoScheduleEnabled = window.Settings.AutoScheduleEnabled;
         _scheduleAutoScheduleDelayMinutes = window.Settings.AutoScheduleDelayMinutes;
         _scheduleAutoScheduleMaxPerRun = window.Settings.AutoScheduleMaxPerRun;
+        _scheduleFirstRunMode = window.Settings.FirstRunMode;
         UiAsync.Observe("保存 TG 采集高级设置", SaveAdvancedSettingsAsync(pageToken));
     }
 
@@ -1340,37 +1352,51 @@ public partial class ContentCollectionPage : UserControl
         await SaveTelegramScheduleAsync(pageToken);
     }
 
-    private void RefreshTelegramScheduleRowStates()
+    private void TelegramCollectionScheduler_QueueChanged(IReadOnlyList<TelegramCollectionQueueItem> snapshot)
     {
-        if (!IsPageActiveForUpdates) return;
-        // 只有正在采集（或排队等待）的行被锁定，其它行保持可编辑、可立即采集。
-        foreach (var row in _telegramSchedules)
+        if (!Dispatcher.CheckAccess())
         {
-            row.IsRunning = _runningScheduleIds.Contains(row.Id);
-        }
-        TgScheduleCancelButton.Visibility = _runningScheduleIds.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    /// <summary>
-    /// 本行是否真的在采集：既包括后台执行器正在跑的任务，也包括页面手动触发、尚未拿到运行锁的排队任务。
-    /// </summary>
-    private bool IsScheduleRunActive(long scheduleId) =>
-        _telegramScheduleRuns.ContainsKey(scheduleId)
-        || (_telegramCollectionScheduler?.ActiveScheduleIds.Contains(scheduleId) ?? false);
-
-    /// <summary>
-    /// 用执行器的真实运行集合校正行的运行标记，清掉因页面切换错过终态通知而残留的“取消采集”状态。
-    /// </summary>
-    private void ReconcileRunningScheduleIds()
-    {
-        var active = _telegramCollectionScheduler?.ActiveScheduleIds;
-        if (active is null)
-        {
-            _runningScheduleIds.Clear();
+            UiAsync.Post(Dispatcher, () => TelegramCollectionScheduler_QueueChanged(snapshot));
             return;
         }
-        // 手动触发但还在等待运行锁的行不在执行器集合里，必须按本地排队状态保留。
-        _runningScheduleIds.RemoveWhere(id => !active.Contains(id) && !_telegramScheduleRuns.ContainsKey(id));
+        if (!IsPageActiveForUpdates || !_schedulerEventsSubscribed) return;
+        ApplyTelegramQueueSnapshot(snapshot);
+    }
+
+    private void ApplyTelegramQueueSnapshot(IReadOnlyList<TelegramCollectionQueueItem> snapshot)
+    {
+        _telegramQueueSnapshot = snapshot.ToArray();
+        var byScheduleId = snapshot.ToDictionary(item => item.ScheduleId);
+        foreach (var row in _telegramSchedules)
+        {
+            if (byScheduleId.TryGetValue(row.Id, out var item))
+            {
+                row.SetQueueState(
+                    item.IsExecuting,
+                    item.IsExecuting ? 0 : Math.Max(1, item.Position));
+            }
+            else
+            {
+                row.SetQueueState(false, 0);
+            }
+        }
+
+        var running = snapshot.Count(item => item.IsExecuting);
+        var queued = snapshot.Count(item => !item.IsExecuting);
+        TgScheduleCancelButton.Visibility = snapshot.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (snapshot.Count == 0)
+        {
+            TgScheduleProgressBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TgScheduleProgressBar.Visibility = Visibility.Visible;
+        if (running > 0 && queued > 0)
+            TgScheduleStatusText.Text = $"正在执行 {running} 项采集，另有 {queued} 项排队。";
+        else if (running > 0)
+            TgScheduleStatusText.Text = "正在执行采集，完成后会继续处理排队任务。";
+        else
+            TgScheduleStatusText.Text = $"{queued} 项采集正在排队。";
     }
 
     private void TelegramCollectionScheduler_StatusChanged(string message)
@@ -1392,20 +1418,7 @@ public partial class ContentCollectionPage : UserControl
             return;
         }
         var terminal = progress.Stage is "完成" or "失败" or "已取消";
-        if (terminal)
-        {
-            // 采集结束后只恢复这一行；其它行不受影响。
-            _runningScheduleIds.Remove(progress.ScheduleId);
-        }
-        else
-        {
-            // 后台执行器触发采集时，同样把对应行切换成“取消采集”。
-            _runningScheduleIds.Add(progress.ScheduleId);
-        }
-        // 运行标记必须始终跟随执行器，否则页面切走导致终态丢失时，该行会一直显示“取消采集”。
-        // 只有界面更新受页面可见性约束。
         if (!IsPageActiveForUpdates || !_schedulerEventsSubscribed) return;
-        RefreshTelegramScheduleRowStates();
         TgScheduleStatusText.Text = $"{progress.ChannelName}：{progress.Message}";
         TgScheduleProgressBar.Visibility = Visibility.Visible;
         if (progress.Total > 0)
@@ -1420,12 +1433,50 @@ public partial class ContentCollectionPage : UserControl
         }
         if (terminal)
         {
-            TgScheduleProgressBar.Visibility = Visibility.Collapsed;
-            // 页面手动触发的采集由调用方负责刷新；后台调度触发的在这里刷新。
-            if (IsPageActiveForUpdates && !_telegramScheduleRuns.ContainsKey(progress.ScheduleId))
-                UiAsync.Observe(
-                    "刷新 TG 定时采集列表",
-                    LoadTelegramSchedulesAsync(updateSummary: false, cancellationToken: CurrentPageToken));
+            var snapshot = _telegramCollectionScheduler?.QueueSnapshot ?? [];
+            TgScheduleProgressBar.Visibility = snapshot.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (snapshot.Count > 0) TgScheduleProgressBar.IsIndeterminate = true;
+        }
+    }
+
+    private void TelegramCollectionScheduler_RunCompleted(TelegramCollectionRunCompleted completed)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            UiAsync.Post(Dispatcher, () => TelegramCollectionScheduler_RunCompleted(completed));
+            return;
+        }
+        if (!IsPageActiveForUpdates || !_schedulerEventsSubscribed) return;
+
+        // 批次内仍有执行项时只更新队列状态，最后一项结束后再统一刷新一次表格。
+        if ((_telegramCollectionScheduler?.QueueSnapshot.Count ?? 0) > 0) return;
+        ScheduleTelegramSchedulesRefresh();
+    }
+
+    private void ScheduleTelegramSchedulesRefresh()
+    {
+        var previous = _telegramSchedulesRefreshCts;
+        var refresh = CancellationTokenSource.CreateLinkedTokenSource(CurrentPageToken);
+        _telegramSchedulesRefreshCts = refresh;
+        previous?.Cancel();
+        UiAsync.Observe("刷新 TG 定时采集列表", RefreshTelegramSchedulesAfterBatchAsync(refresh));
+    }
+
+    private async Task RefreshTelegramSchedulesAfterBatchAsync(CancellationTokenSource refresh)
+    {
+        try
+        {
+            // 并发任务的终态事件可能几乎同时到达，短暂合并后再读取数据库。
+            await Task.Delay(200, refresh.Token);
+            if (!IsPageActive(refresh.Token)) return;
+            await LoadTelegramSchedulesAsync(updateSummary: false, cancellationToken: refresh.Token);
+        }
+        catch (OperationCanceledException) when (refresh.IsCancellationRequested) { }
+        finally
+        {
+            if (ReferenceEquals(_telegramSchedulesRefreshCts, refresh))
+                _telegramSchedulesRefreshCts = null;
+            refresh.Dispose();
         }
     }
 

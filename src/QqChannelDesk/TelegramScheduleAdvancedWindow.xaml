@@ -18,7 +18,7 @@
       </Grid.ColumnDefinitions>
       <StackPanel>
         <TextBlock Text="TG 采集高级设置" Style="{StaticResource PageTitle}"/>
-        <TextBlock Text="配置执行时间、消息筛选和入库后的分发目标；保存后立即应用到当前采集配置。"
+        <TextBlock Text="配置执行时间、首次采集策略、采集包含词与排除词和入库后的分发目标；保存后立即应用到当前采集配置。"
                    Foreground="{StaticResource Muted}" Margin="0,5,0,0"/>
       </StackPanel>
       <Border Grid.Column="1" Background="{StaticResource InfoSoft}" CornerRadius="12" Padding="11,6"
@@ -46,7 +46,32 @@
               <TextBlock Text="执行计划" FontSize="16" FontWeight="SemiBold"/>
               <TextBlock Text="用 5 段计划表达式设置采集时间" Foreground="{StaticResource Muted}"
                          FontSize="12" Margin="0,3,0,14"/>
-              <TextBlock Text="计划表达式" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <TextBlock Text="常用模板" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <ComboBox x:Name="CronPresetBox" Height="38" VerticalContentAlignment="Center"
+                        DisplayMemberPath="Name" SelectionChanged="CronPresetBox_SelectionChanged"/>
+              <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="轮询" Foreground="{StaticResource Muted}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <WrapPanel Grid.Column="1" Margin="10,0,0,0">
+                  <Button x:Name="Cron10MinuteButton" Content="每 10 分钟"
+                          Tag="*/10 * * * *" Style="{StaticResource QuietButton}"
+                          Padding="10,3" MinHeight="28" Margin="0,0,6,0"
+                          Click="CronPresetShortcutButton_Click"/>
+                  <Button x:Name="Cron30MinuteButton" Content="每 30 分钟"
+                          Tag="*/30 * * * *" Style="{StaticResource QuietButton}"
+                          Padding="10,3" MinHeight="28" Margin="0,0,6,0"
+                          Click="CronPresetShortcutButton_Click"/>
+                  <Button x:Name="Cron60MinuteButton" Content="每 60 分钟"
+                          Tag="0 * * * *" Style="{StaticResource QuietButton}"
+                          Padding="10,3" MinHeight="28"
+                          Click="CronPresetShortcutButton_Click"/>
+                </WrapPanel>
+              </Grid>
+              <TextBlock Text="计划表达式" FontWeight="SemiBold" Margin="0,12,0,6"/>
               <TextBox x:Name="CronBox" Height="38" VerticalContentAlignment="Center"
                        TextChanged="CronBox_TextChanged"/>
               <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}"
@@ -61,24 +86,38 @@
               </Border>
               <TextBlock x:Name="CronErrorText" Foreground="{StaticResource Danger}"
                          Margin="0,8,0,0" TextWrapping="Wrap"/>
+              <TextBlock Text="首次运行方式" FontWeight="SemiBold" Margin="0,14,0,6"/>
+              <ComboBox x:Name="FirstRunModeBox" Height="38" VerticalContentAlignment="Center">
+                <ComboBoxItem Content="导入当前首页最新 20 条（默认）" Tag="backfill"/>
+                <ComboBoxItem Content="先导入当前首页，之后仅采新消息" Tag="new-only"/>
+              </ComboBox>
+              <TextBlock Text="首次执行会先按发布时间从新到旧处理当前首页最多 20 条，再记录首页最高消息号作为水位。之后只处理高于水位的新消息，始终不翻页。"
+                         Foreground="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
+                         TextWrapping="Wrap"/>
             </StackPanel>
           </Border>
 
           <Border Grid.Column="1" Style="{StaticResource Card}">
             <StackPanel>
-              <TextBlock Text="采集筛选" FontSize="16" FontWeight="SemiBold"/>
-              <TextBlock Text="在消息解析后按标题和正文进行本地过滤" Foreground="{StaticResource Muted}"
+              <TextBlock Text="采集过滤词" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Text="先按包含词保留，再按排除词丢弃；筛选不会回读更早消息" Foreground="{StaticResource Muted}"
                          FontSize="12" Margin="0,3,0,14"/>
-              <TextBlock Text="过滤关键词" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <TextBlock Text="采集包含词" FontWeight="SemiBold" Margin="0,0,0,6"/>
+              <TextBox x:Name="IncludeKeywordBox" Height="38" VerticalContentAlignment="Center"
+                       ToolTip="多个词使用 | 分隔，标题或正文命中任意一个才保留；留空表示不限制"/>
+              <TextBlock Text="例如：新闻|公告。留空表示所有消息都通过包含词筛选。"
+                         Foreground="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
+                         TextWrapping="Wrap"/>
+              <TextBlock Text="采集排除词" FontWeight="SemiBold" Margin="0,12,0,6"/>
               <TextBox x:Name="KeywordBox" Height="38" VerticalContentAlignment="Center"
-                       ToolTip="多个关键词使用 | 分隔，标题或正文命中任意一个就过滤掉；留空为不过滤"/>
+                       ToolTip="多个词使用 | 分隔，标题或正文命中任意一个就丢弃；留空表示不排除"/>
               <Border Background="{StaticResource PanelSoft}" BorderBrush="{StaticResource Line}"
                       BorderThickness="1" CornerRadius="5" Padding="12,10" Margin="0,12,0,0">
                 <StackPanel>
-                  <TextBlock Text="多个关键词使用 | 分隔" Foreground="{StaticResource Muted}" FontSize="12"/>
+                  <TextBlock Text="多个排除词使用 | 分隔" Foreground="{StaticResource Muted}" FontSize="12"/>
                   <TextBlock Text="例如：公告|头像|更新" Foreground="{StaticResource Muted}" FontSize="12"
                              Margin="0,4,0,0"/>
-                  <TextBlock Text="命中任意一个就过滤；未命中的消息才采集，留空采集全部。"
+                  <TextBlock Text="命中任意一个就丢弃，留空表示不排除任何消息。"
                              Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0"/>
                 </StackPanel>
               </Border>
@@ -146,7 +185,7 @@
                   <TextBlock x:Name="RuleCountText" Foreground="{StaticResource Muted}" FontSize="12"
                              Margin="10,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
-                <TextBlock Text="按列表顺序匹配消息类型和关键词，命中后写入对应频道版块。"
+                <TextBlock Text="按列表顺序匹配消息类型和分发匹配词，命中后写入对应频道版块。"
                            Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
               </StackPanel>
               <Button x:Name="NewRuleButton" Grid.Column="1" Content="新增规则" Width="88"
@@ -155,7 +194,7 @@
 
             <Border Grid.Row="1" Background="{StaticResource InfoSoft}" BorderBrush="{StaticResource InfoLine}"
                     BorderThickness="1" CornerRadius="5" Padding="12,8" Margin="0,12,0,0">
-              <TextBlock Text="规则从上到下依次判断，第一条同时满足消息类型和关键词的规则生效；没有命中时素材仍会入库，但不设置分发目标。"
+              <TextBlock Text="采集排除词决定“是否采集”，分发匹配词决定“发到哪里”。规则从上到下依次判断，第一条同时满足消息类型和分发匹配词的规则生效；没有命中时素材仍会入库，但不设置分发目标。"
                          Foreground="{StaticResource Info}" TextWrapping="Wrap"/>
             </Border>
 
@@ -167,7 +206,7 @@
                 <DataGrid.Columns>
                   <DataGridTextColumn Header="类型" Binding="{Binding MessageTypeLabel}" Width="76"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTextColumn Header="关键词" Binding="{Binding KeywordDisplay}" Width="1.5*"
+                  <DataGridTextColumn Header="分发匹配词" Binding="{Binding KeywordDisplay}" Width="1.5*"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
                   <DataGridTextColumn Header="目标频道" Binding="{Binding GuildName}" Width="1.15*"
                                       ElementStyle="{StaticResource DataGridCellText}"/>

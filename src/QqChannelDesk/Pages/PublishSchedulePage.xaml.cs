@@ -583,12 +583,17 @@ public partial class PublishSchedulePage : UserControl
     private void ApplySchedulerStatus(PublishSchedulerStatus status)
     {
         if (!IsPageActive(CurrentPageToken) || !Equals(_lastSchedulerStatus, status)) return;
-        SchedulerStatusText.Text = status.Paused
+        var statusText = status.Paused
             ? $"计划执行器已暂停：{status.Message}"
             : status.Running ? status.Message : "计划执行器已停止";
-        SchedulerStatusText.Foreground = status.Paused
+        var statusBrush = status.Paused
             ? UiStatusBrushes.Warning
-            : (Brush)FindResource("Ink");
+            : status.Running ? UiStatusBrushes.Success : UiStatusBrushes.Neutral;
+
+        SchedulerStatusText.Text = statusText;
+        SchedulerStatusText.ToolTip = statusText;
+        SchedulerStatusText.Foreground = statusBrush;
+        SchedulerStatusDot.Background = statusBrush;
     }
 
     private static bool IsInteractiveRowElement(DependencyObject source)

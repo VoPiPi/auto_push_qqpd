@@ -67,11 +67,23 @@ public sealed class CliDiagnosticsTests
     [Fact]
     public void RedactsCredentialLikeOutput()
     {
-        var sanitized = CliDiagnostics.Sanitize("QQ_AI_CONNECT_TOKEN=bot:v1_secret123 authorization=Bearer-secret");
+        var sanitized = CliDiagnostics.Sanitize(
+            "QQ_AI_CONNECT_TOKEN=bot:v1_secret123 authorization=Bearer-secret cookie=session-secret");
 
         Assert.DoesNotContain("secret123", sanitized, StringComparison.Ordinal);
         Assert.DoesNotContain("Bearer-secret", sanitized, StringComparison.Ordinal);
+        Assert.DoesNotContain("session-secret", sanitized, StringComparison.Ordinal);
         Assert.Contains("已隐藏", sanitized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RedactsAuthorizationBearerTokenSeparatedByWhitespace()
+    {
+        var sanitized = CliDiagnostics.Sanitize(
+            "请求失败：authorization=Bearer header-secret；请检查网络");
+
+        Assert.DoesNotContain("header-secret", sanitized, StringComparison.Ordinal);
+        Assert.Contains("authorization=[已隐藏]", sanitized, StringComparison.Ordinal);
     }
 
     [Fact]

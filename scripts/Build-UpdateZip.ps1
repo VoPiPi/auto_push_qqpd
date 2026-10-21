@@ -17,11 +17,16 @@ $packageName = "QqChannelDesk-$Version-$Runtime"
 $stageDirectory = Join-Path $artifactRoot "stage-$Version-$Runtime-$buildId"
 $stageAppDirectory = Join-Path $stageDirectory $packageName
 $zipPath = Join-Path $artifactRoot "$packageName.zip"
+$checksumPath = "$zipPath.sha256"
 # Use the stricter decimal upload limit (100,000,000 bytes), not PowerShell's 100 MiB literal.
 $maximumPackageBytes = 100000000
 
-if (Test-Path $zipPath) {
+if (Test-Path -LiteralPath $zipPath) {
     throw "该版本的 ZIP 已存在，为避免覆盖发布物，脚本停止：$zipPath"
+}
+
+if (Test-Path -LiteralPath $checksumPath) {
+    throw "该版本的校验文件已存在，为避免覆盖发布物，脚本停止：$checksumPath"
 }
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
@@ -103,6 +108,10 @@ if ($packageSize -gt $maximumPackageBytes) {
     throw "ZIP 大小为 $([Math]::Round($packageSize / 1000000, 2)) MB，超过 100 MB 限制，已删除不合格发布包。"
 }
 
+$packageHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToUpperInvariant()
+$checksumLine = "$packageHash  $packageName.zip`r`n"
+[System.IO.File]::WriteAllText($checksumPath, $checksumLine, [System.Text.Encoding]::ASCII)
+
 # 项目安全规则禁止脚本递归删除目录。构建中间目录保留并打印明确路径，
 # 确认发布包可用后请手动清理；脚本不会触碰其他构建或用户文件。
 Write-Warning "项目规则禁止自动递归删除目录，请在确认 ZIP 可用后手动删除中间目录："
@@ -111,8 +120,11 @@ Write-Warning "  $stageDirectory"
 
 Write-Host "完整分发包已生成：$zipPath"
 Write-Host "ZIP 大小：$([Math]::Round($packageSize / 1000000, 2)) MB / $([Math]::Round($packageSize / 1MB, 2)) MiB（限制：100 MB）"
+Write-Host "SHA-256：$packageHash"
+Write-Host "校验文件已生成：$checksumPath"
 Write-Host "用户解压后进入 $packageName 目录，双击 QqChannelDesk.exe 即可运行，无需安装 .NET 运行时。"
 Write-Host "FFmpeg 不包含在 ZIP 中，用户可进入程序后按需在线安装。"
-Write-Host "最终发布文件：$zipPath（脚本未生成其他发布文件；上述目录仅为构建中间目录）"
-Write-Host "请手动检查 ZIP 内容后上传到："
+Write-Host "请手动检查 ZIP 内容后，将以下两个文件上传到："
 Write-Host "https://gitee.com/vopipi/auto_push_qqpd/releases"
+Write-Host "  1. $zipPath"
+Write-Host "  2. $checksumPath"

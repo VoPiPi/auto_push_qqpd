@@ -64,7 +64,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <CheckBox x:Name="NotifyUpgradeCheckBox" Content="启动时提示版本升级" VerticalAlignment="Center"
+                        <CheckBox x:Name="NotifyUpgradeCheckBox" Content="启动时自动检查更新" VerticalAlignment="Center"
                                   Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
                         <Button x:Name="CheckUpdateButton" Grid.Column="1" Content="检查更新" Style="{StaticResource TableLinkButton}" Margin="8,0,0,0"
                                 Click="CheckUpdateButton_Click" />
@@ -133,27 +133,11 @@
             </Border>
 
             <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="18,16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="启动与计划" Style="{StaticResource SectionTitle}" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="启动与计划" Style="{StaticResource SectionTitle}" />
 
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid Grid.Row="1" Margin="0,10,0,0">
+                        <Grid Margin="0,12,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="112" />
                                 <ColumnDefinition Width="160" />
@@ -165,35 +149,59 @@
                                 <ComboBoxItem Content="3 个任务" Tag="3" />
                             </ComboBox>
                         </Grid>
-                        <TextBlock Grid.Row="2" Text="仅作用于发布计划，TG 定时采集固定串行执行；建议保持默认值 1，避免同时发帖请求过多。"
+                        <TextBlock Text="仅作用于发布计划；建议保持默认值 1，避免同时发帖请求过多。"
                                    Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
 
-                        <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Grid.Row="3" Content="自动执行发布计划" Margin="0,-10,0,0"
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="112" />
+                                <ColumnDefinition Width="160" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="TG 采集并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="TelegramCollectionConcurrencyCombo" Grid.Column="1"
+                                      SelectionChanged="TelegramCollectionConcurrencyCombo_SelectionChanged">
+                                <ComboBoxItem Content="1 个任务" Tag="1" />
+                                <ComboBoxItem Content="2 个任务" Tag="2" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Text="独立于发帖并发，只影响 TG 定时采集；已有任务不会被中断。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
+
+                        <CheckBox x:Name="NotifyTelegramCollectionFailureCheckBox" Content="TG 定时采集失败时发送通知"
+                                  Margin="0,12,0,0" Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                        <TextBlock Text="仅提醒定时或自动重试的失败，手工采集和部分成功不弹通知。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" TextWrapping="Wrap" />
+
+                        <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Content="自动执行发布计划" Margin="0,12,0,0"
                                   Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                        <TextBlock Grid.Row="4" Text="程序运行期间按计划时间执行到期任务。" Foreground="{StaticResource Muted}" FontSize="11" Margin="24,34,0,0" />
-                    </Grid>
-                    <CheckBox x:Name="RunTasksOnStartupCheckBox" Grid.Row="2" Content="启动程序时自动运行发帖任务" Margin="0,12,0,0"
-                              Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                    <TextBlock Grid.Row="3" Text="只处理已逾期计划；关闭后，逾期任务会保留等待处理。"
-                               Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+                        <TextBlock Text="程序运行期间按计划时间执行到期任务。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
 
-                    <CheckBox x:Name="StartWithWindowsCheckBox" Grid.Row="4" Content="电脑开机后自动启动程序" Margin="0,12,0,0"
-                              Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                    <TextBlock Grid.Row="5" Text="只负责打开本程序，不会自动开启发帖计划。" Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+                        <CheckBox x:Name="RunTasksOnStartupCheckBox" Content="启动程序时自动运行发帖任务" Margin="0,12,0,0"
+                                  Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                        <TextBlock Text="只处理已逾期计划；关闭后，逾期任务会保留等待处理。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
 
-                    <Grid Grid.Row="6" Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="112" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="关闭程序操作" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                        <ComboBox x:Name="CloseWindowBehaviorCombo" Grid.Column="1" SelectionChanged="CloseWindowBehaviorCombo_SelectionChanged">
-                            <ComboBoxItem Content="最小化界面到系统托盘" Tag="MinimizeToTray" />
-                            <ComboBoxItem Content="退出程序" Tag="ExitApplication" />
-                        </ComboBox>
-                    </Grid>
-                    <TextBlock Grid.Row="7" Text="托盘模式下点击关闭只隐藏窗口，可从托盘菜单退出。" Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" />
-                </Grid>
+                        <CheckBox x:Name="StartWithWindowsCheckBox" Content="电脑开机后自动启动程序" Margin="0,12,0,0"
+                                  Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                        <TextBlock Text="只负责打开本程序，不会自动开启发帖计划。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="112" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="关闭程序操作" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="CloseWindowBehaviorCombo" Grid.Column="1" SelectionChanged="CloseWindowBehaviorCombo_SelectionChanged">
+                                <ComboBoxItem Content="最小化界面到系统托盘" Tag="MinimizeToTray" />
+                                <ComboBoxItem Content="退出程序" Tag="ExitApplication" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Text="托盘模式下点击关闭只隐藏窗口，可从托盘菜单退出。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
 

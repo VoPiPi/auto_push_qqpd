@@ -7,7 +7,7 @@ namespace QqChannelDesk.Services;
 /// 不改目标主机、端口、路径或查询串；在线解析保留 WebView2 网页代理。
 /// 自动选择按“直连 → 系统代理 → 代理池 TG 节点 → 在线解析”顺序回退；显式选择失败后不回退。
 /// </summary>
-public sealed class TelegramTransportService : ITelegramTransport
+public sealed class TelegramTransportService : ITelegramTransport, ITelegramMediaFallbackTransport
 {
     private const int MaximumProxyPoolNodes = 5;
     private const int MaximumRedirects = 5;
@@ -35,11 +35,56 @@ public sealed class TelegramTransportService : ITelegramTransport
     /// <summary>自动化测试注入点：替换原始 HTTP 抓取，避免单测访问真实网络。</summary>
     internal Func<Uri, PublicArticleRequestContext, CancellationToken, Task<RawPublicFetchResult>>? RawFetchOverride { get; set; }
 
+    /// <summary>Automation seam for media fallback tests without real network access.</summary>
+    internal Func<TelegramMediaRef, TelegramTransportContext, string?, CancellationToken, Task<string>>? MediaDownloadOverride { get; set; }
+
+    internal Func<CancellationToken, Task<IReadOnlyList<ProxyNode>>>? ProxyPoolNodesOverride { get; set; }
+
     public async Task<TelegramTransportPreview> FetchChannelAsync(
         string channelUrl,
         TelegramTransportSelection selection,
         Action<string>? progress = null,
         CancellationToken cancellationToken = default)
+    {
+        var page = await FetchCoreAsync(
+            channelUrl,
+            selection,
+            beforeMessageId: null,
+            progress,
+            cancellationToken);
+        return new TelegramTransportPreview(
+            page.Succeeded,
+            page.Messages,
+            page.Context,
+            page.ProviderId,
+            page.ProviderName,
+            page.Error,
+            page.Attempts);
+    }
+
+    public async Task<TelegramTransportPageResult> FetchChannelPageAsync(
+        string channelUrl,
+        TelegramTransportSelection selection,
+        long? beforeMessageId,
+        Action<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        var requestUrl = BuildPageUrl(channelUrl, beforeMessageId);
+        return await FetchCoreAsync(
+            requestUrl,
+            selection,
+            beforeMessageId,
+            progress,
+            cancellationToken);
+    }
+
+    private async Task<TelegramTransportPageResult> FetchCoreAsync(
+        string channelUrl,
+        TelegramTransportSelection selection,
+        long? beforeMessageId,
+        Action<string>? progress,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(selection);
         var channelName = TelegramCollectorService.ReadChannelName(channelUrl);
@@ -48,35 +93,50 @@ public sealed class TelegramTransportService : ITelegramTransport
 
         if (automatic || selection.IsDirect)
         {
-            var result = await TryRawAsync(channelUrl, channelName, TelegramTransportContext.Direct(), "直连", progress, attempts, cancellationToken);
-            if (result is not null) return result;
+            var result = await TryRawAsync(
+                channelUrl,
+                channelName,
+                TelegramTransportContext.Direct(),
+                "直连",
+                progress,
+                attempts,
+                cancellationToken);
+            if (result is not null) return ApplyAutomaticMediaFallback(result, automatic);
             if (!automatic) return Failed(attempts, selection, "直连请求失败，请检查网络或改用其他通道");
         }
 
         if (automatic || selection.IsSystem)
         {
-            var result = await TryRawAsync(channelUrl, channelName, TelegramTransportContext.System(), "系统代理", progress, attempts, cancellationToken);
-            if (result is not null) return result;
+            var result = await TryRawAsync(
+                channelUrl,
+                channelName,
+                TelegramTransportContext.System(),
+                "系统代理",
+                progress,
+                attempts,
+                cancellationToken);
+            if (result is not null) return ApplyAutomaticMediaFallback(result, automatic);
             if (!automatic) return Failed(attempts, selection, $"{TelegramTransportSelector.SystemDisplayName}请求失败，请检查系统代理设置");
         }
 
         if (automatic || selection.IsProxyPool)
         {
             var result = await TryProxyPoolAsync(channelUrl, channelName, progress, attempts, cancellationToken);
-            if (result is not null) return result;
+            if (result is not null) return ApplyAutomaticMediaFallback(result, automatic);
             if (!automatic) return Failed(attempts, selection, $"{TelegramTransportSelector.ProxyPoolDisplayName}没有可用节点，请先在代理池测试 TG 可用性");
         }
 
         if (automatic || selection.IsOnline)
         {
-            return await TryOnlineAsync(channelUrl, channelName, selection, progress, attempts, cancellationToken);
+            var result = await TryOnlineAsync(channelUrl, channelName, selection, progress, attempts, cancellationToken);
+            return ApplyAutomaticMediaFallback(result, automatic);
         }
 
-        return new TelegramTransportPreview(
-            false, [], null, "", "", $"无法识别的传输通道：{selection.Value}。请重新选择。", attempts);
+        return new TelegramTransportPageResult(
+            false, [], null, "", "", $"无法识别的传输通道：{selection.Value}。请重新选择。", attempts, false, false);
     }
 
-    public async Task<string> DownloadMediaAsync(
+    public Task<string> DownloadMediaAsync(
         TelegramMediaRef media,
         TelegramTransportContext context,
         string? targetDirectory = null,
@@ -84,6 +144,96 @@ public sealed class TelegramTransportService : ITelegramTransport
     {
         ArgumentNullException.ThrowIfNull(media);
         ArgumentNullException.ThrowIfNull(context);
+        return MediaDownloadOverride is { } downloadOverride
+            ? downloadOverride(media, context, targetDirectory, cancellationToken)
+            : DownloadMediaCoreAsync(media, context, targetDirectory, cancellationToken);
+    }
+
+    public async Task<string> DownloadMediaWithFallbackAsync(
+        TelegramMediaRef media,
+        TelegramTransportContext context,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+        ArgumentNullException.ThrowIfNull(context);
+        if (!context.AllowFallback)
+            return await DownloadMediaAsync(media, context, targetDirectory, cancellationToken);
+
+        var candidates = new List<TelegramTransportContext>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddFallbackCandidate(candidates, seen, context);
+        AddFallbackCandidate(candidates, seen, TelegramTransportContext.Direct());
+        AddFallbackCandidate(candidates, seen, TelegramTransportContext.System());
+
+        Exception? lastError = null;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                return await DownloadMediaAsync(media, candidate, targetDirectory, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                AppLogger.Instance.Warning(
+                    $"TG 媒体下载通道 {FallbackContextLabel(candidate)} 失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+        }
+
+        IReadOnlyList<ProxyNode> nodes;
+        try
+        {
+            nodes = ProxyPoolNodesOverride is { } nodesOverride
+                ? await nodesOverride(cancellationToken)
+                : await _proxyPoolStore.GetTelegramNodesAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            AppLogger.Instance.Warning($"TG 媒体下载读取代理池节点失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            nodes = [];
+        }
+
+        foreach (var node in nodes.Take(MaximumProxyPoolNodes))
+        {
+            var candidate = TelegramTransportContext.ProxyPool() with { ProxyNode = node };
+            if (!TryAddFallbackCandidate(candidates, seen, candidate)) continue;
+            try
+            {
+                return await DownloadMediaAsync(media, candidate, targetDirectory, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                AppLogger.Instance.Warning(
+                    $"TG 媒体下载通道 {FallbackContextLabel(candidate)} 失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+        }
+
+        throw new InvalidOperationException(
+            "所有可用 TG 媒体下载通道均失败，请检查网络或代理后重试。",
+            lastError);
+    }
+
+    private async Task<string> DownloadMediaCoreAsync(
+        TelegramMediaRef media,
+        TelegramTransportContext context,
+        string? targetDirectory,
+        CancellationToken cancellationToken)
+    {
         var (url, cookie) = context.SelectMediaSource(media);
         var requestContext = context.IsOnline
             ? PublicArticleRequestContext.SystemProxyOrDefault with
@@ -105,7 +255,40 @@ public sealed class TelegramTransportService : ITelegramTransport
             context.IsOnline ? cookie : null);
     }
 
-    private async Task<TelegramTransportPreview?> TryRawAsync(
+    private static TelegramTransportPageResult ApplyAutomaticMediaFallback(
+        TelegramTransportPageResult result,
+        bool automatic) =>
+        automatic && result.Succeeded && result.Context is not null
+            ? result with { Context = result.Context with { AllowFallback = true } }
+            : result;
+
+    private static void AddFallbackCandidate(
+        List<TelegramTransportContext> candidates,
+        HashSet<string> seen,
+        TelegramTransportContext context) =>
+        TryAddFallbackCandidate(candidates, seen, context);
+
+    private static bool TryAddFallbackCandidate(
+        List<TelegramTransportContext> candidates,
+        HashSet<string> seen,
+        TelegramTransportContext context)
+    {
+        var key = $"{context.Mode}|{context.SelectionValue}|{context.ProxyNode?.Address}";
+        if (!seen.Add(key)) return false;
+        candidates.Add(context with { AllowFallback = false });
+        return true;
+    }
+
+    private static string FallbackContextLabel(TelegramTransportContext context) => context.Mode switch
+    {
+        TelegramTransportModes.Direct => "直连",
+        TelegramTransportModes.System => "系统代理",
+        TelegramTransportModes.ProxyPool => "代理池",
+        TelegramTransportModes.Online => "在线解析",
+        _ => context.Mode
+    };
+
+    private async Task<TelegramTransportPageResult?> TryRawAsync(
         string channelUrl,
         string channelName,
         TelegramTransportContext context,
@@ -148,7 +331,16 @@ public sealed class TelegramTransportService : ITelegramTransport
                 attempts.Add($"{displayName}：页面没有解析到频道消息");
                 return null;
             }
-            return new TelegramTransportPreview(true, messages, context, context.Mode, displayName, "", attempts);
+            return new TelegramTransportPageResult(
+                true,
+                messages,
+                context,
+                context.Mode,
+                displayName,
+                "",
+                attempts,
+                HasMore: true,
+                PagingSupported: true);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -169,7 +361,7 @@ public sealed class TelegramTransportService : ITelegramTransport
         }
     }
 
-    private async Task<TelegramTransportPreview?> TryProxyPoolAsync(
+    private async Task<TelegramTransportPageResult?> TryProxyPoolAsync(
         string channelUrl,
         string channelName,
         Action<string>? progress,
@@ -218,7 +410,7 @@ public sealed class TelegramTransportService : ITelegramTransport
         return null;
     }
 
-    private async Task<TelegramTransportPreview> TryOnlineAsync(
+    private async Task<TelegramTransportPageResult> TryOnlineAsync(
         string channelUrl,
         string channelName,
         TelegramTransportSelection selection,
@@ -234,7 +426,16 @@ public sealed class TelegramTransportService : ITelegramTransport
         catch (InvalidOperationException ex)
         {
             attempts.Add($"{TelegramTransportSelector.OnlineDisplayName}：{CliDiagnostics.Sanitize(ex.Message)}");
-            return new TelegramTransportPreview(false, [], null, "", "", ex.Message, attempts);
+            return new TelegramTransportPageResult(
+                false,
+                [],
+                null,
+                "",
+                "",
+                CliDiagnostics.Sanitize(ex.Message),
+                attempts,
+                false,
+                false);
         }
 
         for (var index = 0; index < providers.Count; index++)
@@ -253,14 +454,16 @@ public sealed class TelegramTransportService : ITelegramTransport
                 }
                 var context = TelegramTransportContext.Online(
                     page.ProviderId.Length == 0 ? provider.Id : page.ProviderId) with { CookieHeader = page.CookieHeader };
-                return new TelegramTransportPreview(
+                return new TelegramTransportPageResult(
                     true,
                     messages,
                     context,
                     page.ProviderId.Length == 0 ? provider.Id : page.ProviderId,
                     page.ProviderName.Length == 0 ? provider.DisplayName : page.ProviderName,
                     "",
-                    attempts);
+                    attempts,
+                    HasMore: true,
+                    PagingSupported: true);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -275,18 +478,37 @@ public sealed class TelegramTransportService : ITelegramTransport
         }
 
         var detail = attempts.Count == 0 ? "没有可用的在线解析服务" : string.Join("；", attempts);
-        return new TelegramTransportPreview(
+        return new TelegramTransportPageResult(
             false, [], null, "", "",
             $"{TelegramTransportSelector.OnlineDisplayName}失败，请检查网络或更换通道后重试：{detail}",
-            attempts);
+            attempts,
+            false,
+            false);
     }
 
-    private static TelegramTransportPreview Failed(
+    internal static string BuildPageUrl(string channelUrl, long? beforeMessageId)
+    {
+        if (beforeMessageId is null or <= 0) return channelUrl;
+        if (!Uri.TryCreate(channelUrl, UriKind.Absolute, out var uri))
+            return channelUrl;
+
+        var builder = new UriBuilder(uri);
+        var path = builder.Path.TrimEnd('/');
+        if (!path.StartsWith("/s/", StringComparison.OrdinalIgnoreCase))
+            builder.Path = $"/s{path}";
+        var query = builder.Query.TrimStart('?');
+        builder.Query = query.Length == 0
+            ? $"before={beforeMessageId.Value}"
+            : $"{query}&before={beforeMessageId.Value}";
+        return builder.Uri.AbsoluteUri;
+    }
+
+    private static TelegramTransportPageResult Failed(
         IReadOnlyList<string> attempts,
         TelegramTransportSelection selection,
         string prefix)
     {
         var detail = attempts.Count == 0 ? "没有可用的传输通道" : string.Join("；", attempts);
-        return new TelegramTransportPreview(false, [], null, "", "", $"{prefix}：{detail}", attempts);
+        return new TelegramTransportPageResult(false, [], null, "", "", $"{prefix}：{detail}", attempts, false, false);
     }
 }

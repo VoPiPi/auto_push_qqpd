@@ -26,6 +26,7 @@ public sealed class TelegramTransportServiceTests
         Assert.False(observed!.UseSystemProxy);
         Assert.Null(observed.ProxyUri);
         Assert.Equal(TelegramTransportModes.Direct, result.Context?.Mode);
+        Assert.False(result.Context?.AllowFallback);
     }
 
     [Fact]
@@ -166,6 +167,7 @@ public sealed class TelegramTransportServiceTests
         Assert.Equal(2, contexts.Count);
         Assert.False(contexts[0].UseSystemProxy);
         Assert.True(contexts[1].UseSystemProxy);
+        Assert.True(result.Context?.AllowFallback);
     }
 
     [Fact]
@@ -249,6 +251,86 @@ public sealed class TelegramTransportServiceTests
         Assert.Empty(source.CookieHeader);
     }
 
+    [Fact]
+    public async Task MediaFallbackStopsAtFirstSuccessAndOnlyOnlineCandidateGetsCookie()
+    {
+        var service = CreateService();
+        var observed = new List<(string Mode, string Cookie)>();
+        service.MediaDownloadOverride = (media, context, _, _) =>
+        {
+            observed.Add((context.Mode, context.SelectMediaSource(media).CookieHeader));
+            if (context.Mode == TelegramTransportModes.System)
+                return Task.FromResult("system-ok.jpg");
+            return Task.FromException<string>(new IOException($"{context.Mode} failed"));
+        };
+        var context = TelegramTransportContext.Online("provider")
+            with { CookieHeader = "session=abc", AllowFallback = true };
+
+        var result = await service.DownloadMediaWithFallbackAsync(Media(), context);
+
+        Assert.Equal("system-ok.jpg", result);
+        Assert.Equal(
+            [
+                TelegramTransportModes.Online,
+                TelegramTransportModes.Direct,
+                TelegramTransportModes.System
+            ],
+            observed.Select(item => item.Mode));
+        Assert.Equal("session=abc", observed[0].Cookie);
+        Assert.All(observed.Skip(1), item => Assert.Empty(item.Cookie));
+    }
+
+    [Fact]
+    public async Task MediaFallbackUsesProxyPoolAfterDirectAndSystemProxyFail()
+    {
+        var service = CreateService();
+        var modes = new List<string>();
+        service.MediaDownloadOverride = (_, context, _, _) =>
+        {
+            modes.Add(context.Mode);
+            return context.Mode == TelegramTransportModes.ProxyPool
+                ? Task.FromResult("proxy-ok.jpg")
+                : Task.FromException<string>(new IOException("failed"));
+        };
+        service.ProxyPoolNodesOverride = _ =>
+            Task.FromResult<IReadOnlyList<ProxyNode>>([ProxyNode()]);
+        var context = TelegramTransportContext.Direct() with { AllowFallback = true };
+
+        var result = await service.DownloadMediaWithFallbackAsync(Media(), context);
+
+        Assert.Equal("proxy-ok.jpg", result);
+        Assert.Equal(
+            [
+                TelegramTransportModes.Direct,
+                TelegramTransportModes.System,
+                TelegramTransportModes.ProxyPool
+            ],
+            modes);
+    }
+
+    [Fact]
+    public async Task MediaFallbackPropagatesTheCallerCancellationToken()
+    {
+        var service = CreateService();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        CancellationToken observed = default;
+        service.MediaDownloadOverride = (_, _, _, cancellationToken) =>
+        {
+            observed = cancellationToken;
+            return Task.FromCanceled<string>(cancellationToken);
+        };
+        var context = TelegramTransportContext.Direct() with { AllowFallback = true };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.DownloadMediaWithFallbackAsync(
+                Media(),
+                context,
+                cancellationToken: cancellation.Token));
+
+        Assert.Equal(cancellation.Token, observed);
+    }
+
     private static TelegramTransportService CreateService(WebProxyProviderRegistry? registry = null)
     {
         var databasePath = Path.Combine(
@@ -259,6 +341,38 @@ public sealed class TelegramTransportServiceTests
 
     private static RawPublicFetchResult Success(Uri uri, string text) =>
         new(ChannelHtml(text), uri.AbsoluteUri, null, "");
+
+    private static TelegramMediaRef Media() =>
+        new(
+            "https://proxy.example/file/photo.jpg",
+            "https://cdn.example/file/photo.jpg",
+            "image");
+
+    private static ProxyNode ProxyNode()
+    {
+        var now = DateTimeOffset.Now;
+        return new ProxyNode(
+            1,
+            1,
+            "http://192.0.2.10:8080",
+            "http",
+            "192.0.2.10",
+            8080,
+            "US",
+            true,
+            "192.0.2.10",
+            "US",
+            "United States",
+            now,
+            "",
+            now,
+            true,
+            1,
+            "",
+            true,
+            now,
+            now);
+    }
 
     private static string ChannelHtml(string text) => $"""
         <div class="tgme_widget_message" data-post="channel/1">

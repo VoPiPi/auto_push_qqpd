@@ -12,6 +12,9 @@ public partial class SettingPage : UserControl
     private readonly MediaStorageService _mediaStorage;
     private readonly FfmpegManager _ffmpegManager;
     private AppSettings _currentSettings = new();
+    private DateTimeOffset? _lastUpdateCheckAt;
+    private string? _updateStatusMessage;
+    private bool _updateCheckInProgress;
     private int _loadVersion;
     private int _activeLoadVersion;
     private CancellationTokenSource? _pageLifetimeCts;
@@ -105,7 +108,12 @@ public partial class SettingPage : UserControl
         {
             var settings = await _settingsStore.GetAsync(cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
+            var updatePreferences = await _settingsStore.GetUpdatePreferencesAsync(cancellationToken);
+            if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
             _currentSettings = settings;
+            _lastUpdateCheckAt = updatePreferences.LastCheckedAt;
+            _updateStatusMessage = null;
+            RefreshUpdateStatusText();
             NotifyUpgradeCheckBox.IsChecked = _currentSettings.NotifyUpgrade;
             RunTasksOnStartupCheckBox.IsChecked = _currentSettings.RunTasksOnStartup;
             AutoExecuteSchedulesCheckBox.IsChecked = _currentSettings.AutoExecuteSchedules;
@@ -113,6 +121,10 @@ public partial class SettingPage : UserControl
             ScheduleConcurrencyCombo.SelectedItem = ScheduleConcurrencyCombo.Items
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => item.Tag?.ToString() == _currentSettings.MaxScheduleConcurrency.ToString());
+            TelegramCollectionConcurrencyCombo.SelectedItem = TelegramCollectionConcurrencyCombo.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item => item.Tag?.ToString() == _currentSettings.TelegramCollectionConcurrency.ToString());
+            NotifyTelegramCollectionFailureCheckBox.IsChecked = _currentSettings.NotifyTelegramCollectionFailure;
             StoragePathBox.Text = _currentSettings.EffectiveMaterialStoragePath;
             await RefreshFfmpegPathAsync(cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
@@ -153,7 +165,8 @@ public partial class SettingPage : UserControl
                 NotifyUpgrade = NotifyUpgradeCheckBox.IsChecked == true,
                 RunTasksOnStartup = RunTasksOnStartupCheckBox.IsChecked == true,
                 AutoExecuteSchedules = AutoExecuteSchedulesCheckBox.IsChecked == true,
-                StartWithWindows = StartWithWindowsCheckBox.IsChecked == true
+                StartWithWindows = StartWithWindowsCheckBox.IsChecked == true,
+                NotifyTelegramCollectionFailure = NotifyTelegramCollectionFailureCheckBox.IsChecked == true
             });
             if (IsPageActive(pageToken)) SettingsStatus.Text = "设置已保存。";
         }
@@ -199,6 +212,30 @@ public partial class SettingPage : UserControl
         {
             await SaveSettingsAsync(_currentSettings with { MaxScheduleConcurrency = SystemSettingsStore.NormalizeConcurrency(concurrency) });
             if (IsPageActive(pageToken)) SettingsStatus.Text = "发帖最大并发数已保存（仅作用于发布计划）。";
+        }
+        catch (Exception ex)
+        {
+            if (IsPageActive(pageToken))
+                SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
+        }
+        });
+
+    private void TelegramCollectionConcurrencyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("保存 TG 采集并发数", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if (_activeLoadVersion != 0
+            || !IsPageActive(pageToken)
+            || TelegramCollectionConcurrencyCombo.SelectedItem is not ComboBoxItem item ||
+            !int.TryParse(item.Tag?.ToString(), out var concurrency)) return;
+        try
+        {
+            await SaveSettingsAsync(_currentSettings with
+            {
+                TelegramCollectionConcurrency =
+                    SystemSettingsStore.NormalizeTelegramCollectionConcurrency(concurrency)
+            });
+            if (IsPageActive(pageToken)) SettingsStatus.Text = "TG 采集并发数已保存（仅作用于 TG 定时采集）。";
         }
         catch (Exception ex)
         {
@@ -392,15 +429,29 @@ public partial class SettingPage : UserControl
 
     public void SetUpdateCheckInProgress(bool inProgress)
     {
-        if (!IsPageActiveForUpdates) return;
-        if (inProgress) UpdateStatusText.Text = "正在查询 Gitee 最新发布…";
+        _updateCheckInProgress = inProgress;
         CheckUpdateButton.IsEnabled = !inProgress;
+        RefreshUpdateStatusText();
     }
 
-    public void DisplayUpdateCheckResult(UpdateCheckResult result)
+    public void DisplayUpdateCheckResult(UpdateCheckResult result, DateTimeOffset checkedAt)
     {
-        if (!IsPageActiveForUpdates) return;
-        UpdateStatusText.Text = result.Message;
+        _lastUpdateCheckAt = checkedAt;
+        _updateStatusMessage = result.Message;
+        _updateCheckInProgress = false;
+        RefreshUpdateStatusText();
+    }
+
+    private void RefreshUpdateStatusText()
+    {
+        var checkedText = _lastUpdateCheckAt is { } checkedAt
+            ? $"最近检查：{checkedAt.ToLocalTime():yyyy-MM-dd HH:mm}"
+            : "尚未检查版本。";
+        UpdateStatusText.Text = _updateCheckInProgress
+            ? $"正在查询 Gitee 最新发布…\n{checkedText}"
+            : string.IsNullOrWhiteSpace(_updateStatusMessage)
+                ? checkedText
+                : $"{_updateStatusMessage}\n{checkedText}";
     }
 
     private void CheckUpdateButton_Click(object sender, RoutedEventArgs e) => UpdateCheckRequested?.Invoke(this, EventArgs.Empty);

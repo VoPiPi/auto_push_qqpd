@@ -9,6 +9,7 @@ public partial class TelegramScheduleAdvancedWindow : Window
 {
     private readonly ChannelSyncService? _channelSync;
     private readonly ObservableCollection<TelegramDistributionRuleEditorRow> _rules = [];
+    private bool _syncingCronPreset;
 
     public TelegramScheduleAdvancedSettings Settings { get; private set; } = TelegramScheduleAdvancedSettings.Default;
 
@@ -19,8 +20,19 @@ public partial class TelegramScheduleAdvancedWindow : Window
         InitializeComponent();
         _channelSync = channelSync;
         RulesGrid.ItemsSource = _rules;
+        CronPresetBox.ItemsSource = TelegramCronPresetCatalog.Options;
+        _syncingCronPreset = true;
         CronBox.Text = settings?.CronExpression ?? TelegramScheduleAdvancedSettings.Default.CronExpression;
+        _syncingCronPreset = false;
+        IncludeKeywordBox.Text = settings?.IncludeKeyword ?? "";
         KeywordBox.Text = settings?.Keyword ?? "";
+        FirstRunModeBox.SelectedItem = FirstRunModeBox.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(
+                item.Tag?.ToString(),
+                TelegramCollectionStore.NormalizeFirstRunMode(settings?.FirstRunMode),
+                StringComparison.OrdinalIgnoreCase))
+            ?? FirstRunModeBox.Items[0];
         AutoScheduleCheckBox.IsChecked = settings?.AutoScheduleEnabled ?? false;
         AutoScheduleDelayBox.Text = (settings?.AutoScheduleDelayMinutes ?? 30).ToString();
         AutoScheduleMaxPerRunBox.Text = (settings?.AutoScheduleMaxPerRun ?? 20).ToString();
@@ -31,7 +43,11 @@ public partial class TelegramScheduleAdvancedWindow : Window
         }
         UpdateRulesState();
         UpdateAutoScheduleState();
-        Loaded += (_, _) => UiAsync.Run("TG 高级计划初始化", LoadGuildsAsync);
+        Loaded += (_, _) =>
+        {
+            UpdateCronPreview();
+            UiAsync.Run("TG 高级计划初始化", LoadGuildsAsync);
+        };
         UpdateCronPreview();
     }
 
@@ -66,6 +82,26 @@ public partial class TelegramScheduleAdvancedWindow : Window
 
     private void CronBox_TextChanged(object sender, TextChangedEventArgs e) => UpdateCronPreview();
 
+    private void CronPresetBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingCronPreset || CronPresetBox.SelectedItem is not TelegramCronPreset preset) return;
+        if (preset.Expression.Length == 0)
+        {
+            CronBox.Focus();
+            CronBox.CaretIndex = CronBox.Text.Length;
+            return;
+        }
+        CronBox.Text = preset.Expression;
+    }
+
+    private void CronPresetShortcutButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string expression || expression.Length == 0) return;
+        CronBox.Text = expression;
+        CronBox.Focus();
+        CronBox.CaretIndex = CronBox.Text.Length;
+    }
+
     private void AutoScheduleCheckBox_Changed(object sender, RoutedEventArgs e) => UpdateAutoScheduleState();
 
     private void UpdateAutoScheduleState()
@@ -81,16 +117,33 @@ public partial class TelegramScheduleAdvancedWindow : Window
         if (!IsInitialized || CronPreviewText is null) return;
         if (!TelegramCronSchedule.TryParse(CronBox.Text, out var cron, out var error))
         {
+            SyncCronPresetSelection(CronBox.Text);
             CronPreviewText.Text = "";
             CronErrorText.Text = error;
             ConfirmButton.IsEnabled = false;
             return;
         }
+        SyncCronPresetSelection(cron.Expression);
         CronErrorText.Text = "";
         ConfirmButton.IsEnabled = true;
         CronPreviewText.Text = cron.GetNextOccurrence(DateTime.Now) is { } next
             ? $"下次执行：{next:yyyy-MM-dd HH:mm}"
             : "下次执行：未来 366 天内没有匹配时间";
+    }
+
+    private void SyncCronPresetSelection(string expression)
+    {
+        var preset = TelegramCronPresetCatalog.Find(expression);
+        if (Equals(CronPresetBox.SelectedItem, preset)) return;
+        try
+        {
+            _syncingCronPreset = true;
+            CronPresetBox.SelectedItem = preset;
+        }
+        finally
+        {
+            _syncingCronPreset = false;
+        }
     }
 
     private void RuleEditButton_Click(object sender, RoutedEventArgs e)
@@ -162,13 +215,17 @@ public partial class TelegramScheduleAdvancedWindow : Window
             return;
         }
         HideFormMessage();
+        var firstRunMode = TelegramCollectionStore.NormalizeFirstRunMode(
+            (FirstRunModeBox.SelectedItem as ComboBoxItem)?.Tag?.ToString());
         Settings = new TelegramScheduleAdvancedSettings(
             parsed.Expression,
             KeywordBox.Text.Trim(),
             _rules.Select((item, index) => item.ToDraft(index)).ToArray(),
             AutoScheduleCheckBox.IsChecked == true,
             autoScheduleDelay,
-            autoScheduleMaxPerRun);
+            autoScheduleMaxPerRun,
+            firstRunMode,
+            IncludeKeywordBox.Text.Trim());
         DialogResult = true;
     }
 

@@ -72,13 +72,9 @@ public sealed class TelegramMaterializer
 
         var draft = await draftFactory(cancellationToken);
         if (draft.MediaPaths.Count == 0 && string.IsNullOrWhiteSpace(message.Title) && string.IsNullOrWhiteSpace(message.Text))
-            return new(null, draft.Directory, draft.MediaPaths, draft.Failed, true, "媒体全部下载失败，未创建素材。请检查网络或代理后重试。", false, false);
-
-        if (draft.Failed > 0)
         {
-            // 未入库就不留暂存文件，否则 temp/telegram 会堆积没有素材引用的孤儿媒体。
             await DiscardStagingAsync(draft, cancellationToken);
-            return new(null, draft.Directory, draft.MediaPaths, draft.Failed, false, $"有 {draft.Failed} 个媒体下载失败，未创建素材。请检查网络或代理后重试。", false, false);
+            return new(null, draft.Directory, draft.MediaPaths, draft.Failed, true, "媒体全部下载失败，未创建素材。请检查网络或代理后重试。", false, false);
         }
 
         var type = MaterialMediaValidator.InferType(draft.MediaPaths) ?? (draft.MediaPaths.Count == 0 ? "text" : "");
@@ -112,7 +108,10 @@ public sealed class TelegramMaterializer
 
             recordCreated = true;
             await DiscardStagingAsync(draft, cancellationToken);
-            return new(saved.MaterialId, draft.Directory, storedMedia, draft.Failed, false, "", true, false);
+            var warning = draft.Failed > 0
+                ? $"有 {draft.Failed} 个媒体下载失败；已保留成功下载的媒体或正文，本次不自动排期。"
+                : "";
+            return new(saved.MaterialId, draft.Directory, storedMedia, draft.Failed, false, warning, true, false);
         }
         catch
         {
@@ -181,6 +180,10 @@ public sealed class TelegramMaterializer
             TelegramCollectorService.ReadMessageChannel(message.Url));
         var media = TelegramCollectorService.SelectDraftMedia(message.Media);
         if (media.Count > 0) Directory.CreateDirectory(directory);
+        Func<TelegramMediaRef, TelegramTransportContext, string?, CancellationToken, Task<string>> downloadMedia =
+            context.AllowFallback && transport is ITelegramMediaFallbackTransport fallbackTransport
+                ? fallbackTransport.DownloadMediaWithFallbackAsync
+                : transport.DownloadMediaAsync;
 
         var paths = new List<string>();
         var failed = 0;
@@ -191,7 +194,7 @@ public sealed class TelegramMaterializer
             {
                 try
                 {
-                    paths.Add(await transport.DownloadMediaAsync(
+                    paths.Add(await downloadMedia(
                         media[index],
                         context,
                         directory,

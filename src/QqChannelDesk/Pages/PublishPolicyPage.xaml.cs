@@ -221,7 +221,7 @@ public partial class PublishPolicyPage : UserControl
             if ((sender as FrameworkElement)?.DataContext is not PublishPolicyRow row) return;
             var owner = Window.GetWindow(this);
             if (MessageBox.Show(owner,
-                    $"确定删除“{row.TargetDisplay}”的发布策略吗？\n\n删除后该版块的新素材不再自动排队，已排期的任务保留。",
+                    $"确定删除“{row.TargetDisplay}”的发布策略吗？\n\n删除后该版块的新素材不再自动排队；已生成的自动计划会保留，但暂停领取，恢复同名策略后才能继续执行。",
                     "删除发布策略", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
 

@@ -189,10 +189,28 @@ public partial class MaterialsPage : UserControl
             }
 
             var result = await Task.Run(() => MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now));
-            var preview = new MaterialImportPreviewWindow(result, targets) { Owner = Window.GetWindow(this) };
-            if (preview.ShowDialog() != true) return;
-
-            await ImportRowsAsync(preview.RowsToImport, preview.FailureCount, fileHash, Path.GetFileName(dialog.FileName), Window.GetWindow(this));
+            var owner = Window.GetWindow(this);
+            var sourceFileName = Path.GetFileName(dialog.FileName);
+            var preview = new MaterialImportPreviewWindow(
+                result,
+                targets,
+                importAsync: rows => ImportRowsAsync(rows, fileHash, sourceFileName))
+            {
+                Owner = owner
+            };
+            preview.ShowDialog();
+            if (preview.ImportedCount > 0)
+            {
+                var skippedText = preview.RemainingCount > 0
+                    ? $"\n另有 {preview.RemainingCount} 条待修正项未导入。"
+                    : "";
+                MessageBox.Show(
+                    owner,
+                    $"导入完成：成功 {preview.ImportedCount} 条。{skippedText}",
+                    "导入完成",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
         }
         catch (Exception ex)
         {
@@ -216,12 +234,10 @@ public partial class MaterialsPage : UserControl
         return targets.Where(target => target.Channels.Count > 0).ToArray();
     }
 
-    private async Task ImportRowsAsync(
+    private async Task<int> ImportRowsAsync(
         IReadOnlyList<MaterialTemplateImportRow> rows,
-        int failureCount,
         string fileHash,
-        string sourceFileName,
-        Window? owner)
+        string sourceFileName)
     {
         var drafts = new List<MaterialDraft>(rows.Count);
         var importedMedia = new List<string>();
@@ -279,16 +295,8 @@ public partial class MaterialsPage : UserControl
             }
             throw;
         }
-
-        try
-        {
-            await LoadMaterialsAsync();
-            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。\n列表未刷新，请手动刷新。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
+        await LoadMaterialsAsync();
+        return drafts.Count;
     }
 
     private void EditMaterialButton_Click(object sender, RoutedEventArgs e) =>

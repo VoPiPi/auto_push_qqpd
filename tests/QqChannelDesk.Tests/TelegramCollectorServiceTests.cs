@@ -53,7 +53,7 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 2, "");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/4", "https://t.me/c/3" }, filtered.Select(item => item.Url));
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, "city");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/2", "https://t.me/c/1" }, filtered.Select(item => item.Url));
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, " AI | 新闻 || ");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/2", "https://t.me/c/1" }, filtered.Select(item => item.Url));
         Assert.Equal(new[] { "AI", "新闻" }, TelegramCollectorService.SplitKeywords(" AI | 新闻 || "));
     }
 
@@ -112,11 +112,91 @@ public sealed class TelegramCollectorServiceTests
     }
 
     [Fact]
+    public void ApplyPreviewFilters_IncludeAndExcludeApplyInOrderAndExclusionWins()
+    {
+        var messages = new[]
+        {
+            Message("https://t.me/c/1", title: "新闻：普通更新"),
+            Message("https://t.me/c/2", title: "新闻：广告合作"),
+            Message("https://t.me/c/3", title: "其他消息", text: "广告")
+        };
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            0,
+            includeKeywords: "新闻",
+            exclusionKeywords: "广告");
+
+        Assert.Equal(new[] { "https://t.me/c/1" }, filtered.Select(item => item.Url));
+    }
+
+    [Fact]
     public void ApplyPreviewFilters_CapsLimitAtTemporaryListLimit()
     {
-        var messages = Enumerable.Range(1, 10).Select(index => Message($"https://t.me/c/{index}")).ToArray();
+        var messages = Enumerable.Range(1, 25).Select(index => Message($"https://t.me/c/{index}")).ToArray();
 
-        Assert.Equal(10, TelegramCollectorService.ApplyPreviewFilters(messages, TelegramCollectorService.TempListLimit + 5, "").Count);
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            TelegramCollectorService.TempListLimit + 5,
+            "");
+
+        Assert.Equal(20, filtered.Count);
+        Assert.Equal("https://t.me/c/25", filtered[0].Url);
+        Assert.Equal("https://t.me/c/6", filtered[^1].Url);
+    }
+
+    [Fact]
+    public void ApplyPreviewFilters_DoesNotBackfillInclusionMatchOutsideNewestLimit()
+    {
+        var messages = Enumerable.Range(1, 21)
+            .Select(index => Message(
+                $"https://t.me/c/{index}",
+                title: index == 1 ? "命中关键词" : $"消息 {index}"))
+            .ToArray();
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            TelegramCollectorService.TempListLimit,
+            "命中");
+
+        Assert.Empty(filtered);
+    }
+
+    [Theory]
+    [InlineData(-1, 20)]
+    [InlineData(0, 20)]
+    [InlineData(1, 1)]
+    [InlineData(20, 20)]
+    [InlineData(21, 20)]
+    [InlineData(999, 20)]
+    public void NormalizeMessageLimit_UsesAtMostTwentyMessages(int input, int expected)
+    {
+        Assert.Equal(expected, TelegramCollectorService.NormalizeMessageLimit(input));
+    }
+
+    [Fact]
+    public void OrderByLatest_UsesPublishedTimeThenMessageNumberAndPutsMissingTimesLast()
+    {
+        var sameTime = new DateTimeOffset(2026, 10, 11, 7, 30, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/c/2", publishedAt: sameTime),
+            Message("https://t.me/channel/10", publishedAt: sameTime.AddMinutes(1)),
+            new TelegramChannelMessage("https://t.me/c/9", "t.me", null, "标题", "正文", [], ""),
+            Message("https://t.me/c/7", publishedAt: sameTime)
+        };
+
+        var ordered = TelegramCollectorService.OrderByLatest(messages, message => message);
+
+        Assert.Equal(
+            new[]
+            {
+                "https://t.me/channel/10",
+                "https://t.me/c/7",
+                "https://t.me/c/2",
+                "https://t.me/c/9"
+            },
+            ordered.Select(message => message.Url));
     }
 
     [Fact]

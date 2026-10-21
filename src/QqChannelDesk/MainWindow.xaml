@@ -41,6 +41,37 @@
     <Style x:Key="NavigationBadgeText" TargetType="TextBlock">
       <Setter Property="Foreground" Value="#D4E2D9" /><Setter Property="FontSize" Value="10" /><Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <Style x:Key="SidebarUpdateButton" TargetType="Button">
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Background" Value="{StaticResource Accent}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="UpdateSurface"
+                    Background="{TemplateBinding Background}"
+                    Padding="{TemplateBinding Padding}"
+                    CornerRadius="4">
+              <ContentPresenter HorizontalAlignment="Stretch"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="UpdateSurface" Property="Background" Value="#106A59" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="UpdateSurface" Property="Background" Value="#0D5B4C" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -73,22 +104,10 @@
                 <TextBlock Text="素材库" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
               </StackPanel>
             </Button>
-            <Button x:Name="ScheduleNavButton" Style="{StaticResource NavigationButton}" Tag="发布计划" Click="NavigationButton_Click" ToolTip="打开发布计划页面">
+            <Button x:Name="PublishCenterNavButton" Style="{StaticResource NavigationButton}" Tag="发布中心" Click="NavigationButton_Click" ToolTip="统一管理计划队列、自动规则和发布记录">
               <StackPanel Orientation="Horizontal">
                 <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M8,2 v4 M16,2 v4 M5,4 h14 a2,2 0 0 1 2,2 v14 a2,2 0 0 1 -2,2 h-14 a2,2 0 0 1 -2,-2 v-14 a2,2 0 0 1 2,-2 z M3,10 h18 M12,14 v3 l2,1.5" />
-                <TextBlock Text="发布计划" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
-              </StackPanel>
-            </Button>
-            <Button x:Name="PublishPolicyNavButton" Style="{StaticResource NavigationButton}" Tag="发布策略" Click="NavigationButton_Click" ToolTip="配置自动发布的频道版块策略与每日预算">
-              <StackPanel Orientation="Horizontal">
-                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M5,6 h14 M5,12 h14 M5,18 h14 M9,4 v4 M15,10 v4 M7,16 v4" />
-                <TextBlock Text="发布策略" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
-              </StackPanel>
-            </Button>
-            <Button x:Name="HistoryNavButton" Style="{StaticResource NavigationButton}" Tag="发布记录" Click="NavigationButton_Click" ToolTip="查看已保存的发布历史">
-              <StackPanel Orientation="Horizontal">
-                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Fill="Transparent" Data="M3,12 a9,9 0 1 0 9,-9 9.75,9.75 0 0 0 -6.74,2.74 L3,8 M3,3 v5 h5 M12,7 v5 l4,2" />
-                <TextBlock Text="发布记录" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
+                <TextBlock Text="发布中心" Style="{StaticResource NavigationLabel}" Margin="8,0,0,0" />
               </StackPanel>
             </Button>
             <Button x:Name="LogNavButton" Style="{StaticResource NavigationButton}" Tag="运行日志" Click="NavigationButton_Click" ToolTip="查看运行日志">
@@ -112,6 +131,39 @@
             </Button>
           </StackPanel>        </ScrollViewer>
         <StackPanel Grid.Row="2">
+          <Border x:Name="UpdateAvailableBar" Visibility="Collapsed" Margin="8,8,8,6">
+            <Button x:Name="UpdateAvailableButton" Style="{StaticResource SidebarUpdateButton}"
+                    Click="UpdateAvailableButton_Click" ToolTip="查看版本更新详情">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="18" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Path Width="14" Height="14" Stretch="Uniform"
+                      Stroke="White" StrokeThickness="1.8"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Data="M12,19 V5 M6,11 L12,5 L18,11 M5,21 h14"
+                      VerticalAlignment="Center" />
+                <Grid Grid.Column="1" Margin="8,0,4,0" VerticalAlignment="Center">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="新版本" Foreground="White"
+                             FontSize="11" FontWeight="SemiBold"
+                             VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" x:Name="SidebarUpdateVersionText" Text="v1.0.0"
+                             Foreground="#CDEFE3" FontSize="10" FontWeight="SemiBold"
+                             Margin="5,0,0,0" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                </Grid>
+                <TextBlock Grid.Column="2" Text="›" Foreground="#CDEFE3"
+                           FontFamily="Segoe UI Symbol" FontSize="17"
+                           VerticalAlignment="Center" />
+              </Grid>
+            </Button>
+          </Border>
           <Border BorderBrush="{StaticResource SidebarLine}" BorderThickness="0,1,0,0" Padding="8,5">
             <Button x:Name="FeedbackNavButton" Style="{StaticResource NavigationButton}" Tag="交流反馈" Click="FeedbackNavButton_Click" ToolTip="打开交流和问题反馈频道" Height="30" Margin="0" Padding="8,0">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="交流反馈" Style="{StaticResource NavigationLabel}"/><TextBlock Grid.Column="1" Text="外部链接" Foreground="{StaticResource SidebarMuted}" FontSize="9" Margin="5,0,0,0" VerticalAlignment="Center"/></Grid>
