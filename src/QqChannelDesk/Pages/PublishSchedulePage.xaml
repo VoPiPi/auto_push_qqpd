@@ -112,7 +112,7 @@
       <Border x:Name="EmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}" CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <TextBlock x:Name="EmptyTitle" Text="暂无发布计划" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
-          <TextBlock x:Name="EmptyMessage" Text="在素材中设置发布时间后，计划会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" Margin="0,7,0,0" />
+          <TextBlock x:Name="EmptyMessage" Text="在素材中设置定时时间后，计划会显示在这里。" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420" Margin="0,7,0,0" />
         </StackPanel>
       </Border>
     </Grid>

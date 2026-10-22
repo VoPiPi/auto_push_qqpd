@@ -886,10 +886,15 @@ public sealed class TelegramCollectionScheduler
             var isInitialNewOnlyRun =
                 string.Equals(schedule.FirstRunMode, "new-only", StringComparison.OrdinalIgnoreCase) &&
                 schedule.LastMessageId == 0;
+            // backfill 模式不参考历史水位：每次都重新处理首页最新 20 条，由素材库去重跳过已入库的消息。
+            // 这样首页里之前媒体下载失败的消息也会被重新抓取并补齐，不会因水位越过而永久漏采。
+            var effectiveLastMessageId = string.Equals(schedule.FirstRunMode, "backfill", StringComparison.OrdinalIgnoreCase)
+                ? 0
+                : schedule.LastMessageId;
 
             var messages = PrepareScheduledMessages(
                 rawMessages,
-                schedule.LastMessageId,
+                effectiveLastMessageId,
                 schedule.MessageLimit,
                 schedule.IncludeKeyword,
                 schedule.Keyword,
@@ -904,7 +909,7 @@ public sealed class TelegramCollectionScheduler
             {
                 hasProcessingFailure = true;
                 if (TelegramCollectorService.TryReadMessageNumber(messageUrl, out var number) &&
-                    number > schedule.LastMessageId)
+                    number > effectiveLastMessageId)
                 {
                     failedMessageNumbers.Add(number);
                 }
@@ -915,7 +920,8 @@ public sealed class TelegramCollectionScheduler
                 cancellationToken.ThrowIfCancellationRequested();
                 var message = messages[index];
                 Report(schedule, "写入素材", index, messages.Count, $"正在处理第 {index + 1}/{messages.Count} 条，下载媒体并写入素材库…");
-                if (await _library.HasMaterialSourceAsync("TG采集", message.Url, cancellationToken))
+                var existingMaterial = await _library.FindMaterialBySourceAsync("TG采集", message.Url, cancellationToken);
+                if (existingMaterial is not null && existingMaterial.FailedMedia is { Count: 0 })
                 {
                     skipped++;
                     continue;
@@ -1030,7 +1036,7 @@ public sealed class TelegramCollectionScheduler
             storedWatermark = partial
                 ? ResolveSafeWatermark(
                     rawMessages,
-                    schedule.LastMessageId,
+                    effectiveLastMessageId,
                     failedMessageNumbers)
                 : watermarkCandidate;
             // 成功路径也必须把本次新水位带到历史与结果中，而不是继续显示旧水位。

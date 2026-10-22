@@ -108,7 +108,7 @@ public partial class PublishSchedulePage : UserControl
             if (resetPage) _currentPage = 1;
             RenderCurrentPage();
             EmptyTitle.Text = "暂无发布计划";
-            EmptyMessage.Text = "在素材库设置未来发布时间后，计划会显示在这里。";
+            EmptyMessage.Text = "在素材库设置未来定时时间后，计划会显示在这里。";
             LastRefreshText.Text = $"刷新于 {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }

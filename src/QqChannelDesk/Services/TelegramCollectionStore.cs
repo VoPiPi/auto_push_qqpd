@@ -1041,8 +1041,8 @@ public sealed record TelegramCollectionSchedule(
     public string LastAttemptDisplay => (LastAttemptAt ?? LastCollectedAt)?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "从未尝试";
     public string LastSuccessDisplay => LastSuccessAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "从未成功";
     public string FirstRunModeDisplay => FirstRunMode == "new-only"
-        ? "首次导入首页后仅采新消息"
-        : $"导入当前首页最新 {TelegramCollectorService.TempListLimit} 条";
+        ? "先导入首页，之后仅采新消息"
+        : $"导入首页最新 {TelegramCollectorService.TempListLimit} 条";
     public string NextRunDisplay
     {
         get

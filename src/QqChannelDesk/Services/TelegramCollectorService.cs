@@ -213,7 +213,7 @@ public sealed class TelegramCollectorService
         var media = SelectDraftMedia(message.Media);
         if (media.Count > 0) Directory.CreateDirectory(directory);
         var download = await DownloadMediaAsync(media, cookieHeader, progress, cancellationToken, directory);
-        return new TelegramDraftResult(directory, download.Paths, download.Failed);
+        return new TelegramDraftResult(directory, download.Paths, download.Failed, download.FailedMedia);
     }
 
     internal static IReadOnlyList<TelegramMediaRef> SelectDraftMedia(IReadOnlyList<TelegramMediaRef> media) =>
@@ -282,6 +282,7 @@ public sealed class TelegramCollectorService
     {
         var paths = new List<string>();
         var failed = 0;
+        var failedRefs = new List<TelegramMediaRef>();
         for (var index = 0; index < media.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -301,6 +302,7 @@ public sealed class TelegramCollectorService
                     if (attempt == MediaAttempts)
                     {
                         failed++;
+                        failedRefs.Add(media[index]);
                         AppLogger.Instance.Warning($"tg 媒体下载失败：{CliDiagnostics.Sanitize(ex.Message)}");
                     }
                     else
@@ -310,7 +312,7 @@ public sealed class TelegramCollectorService
                 }
             }
         }
-        return new TelegramMediaDownloadResult(paths, failed);
+        return new TelegramMediaDownloadResult(paths, failed, failedRefs);
     }
 }
 
@@ -326,6 +328,6 @@ public sealed record TelegramChannelPreview(
     public bool Succeeded => Error.Length == 0;
 }
 
-public sealed record TelegramDraftResult(string Directory, IReadOnlyList<string> MediaPaths, int Failed);
+public sealed record TelegramDraftResult(string Directory, IReadOnlyList<string> MediaPaths, int Failed, IReadOnlyList<TelegramMediaRef>? FailedMedia = null);
 
-public sealed record TelegramMediaDownloadResult(IReadOnlyList<string> Paths, int Failed);
+public sealed record TelegramMediaDownloadResult(IReadOnlyList<string> Paths, int Failed, IReadOnlyList<TelegramMediaRef>? FailedMedia = null);

@@ -61,6 +61,7 @@ public sealed class ContentLibraryStore
                     Status TEXT NOT NULL DEFAULT 'waitsend' CHECK (Status IN ('waitsend','queue','published','delete')),
                     Link TEXT NOT NULL DEFAULT '',
                     MediaJson TEXT NOT NULL DEFAULT '[]',
+                    FailedMediaJson TEXT NOT NULL DEFAULT '[]',
                     SourceType TEXT NOT NULL DEFAULT '手工添加',
                     SourceUrl TEXT NOT NULL DEFAULT '',
                     CreatedAt TEXT NOT NULL,
@@ -118,6 +119,7 @@ public sealed class ContentLibraryStore
             await EnsureColumnAsync(connection, "CollectedItems", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceType", "TEXT NOT NULL DEFAULT '手工添加'", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceUrl", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await EnsureColumnAsync(connection, "Materials", "FailedMediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
             // Older installations do not have the source columns yet. Create this
             // index only after the compatibility migration has added them.
             await using var sourceIndex = connection.CreateCommand();
@@ -240,7 +242,7 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
+            SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
             FROM Materials
             WHERE ACCOUNT_SCOPE AND Status <> 'delete'
               AND ($status='' OR Status=$status OR ($status='active' AND Status IN ('waitsend','queue')))
@@ -267,7 +269,7 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
+            SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
             FROM Materials
             WHERE ACCOUNT_SCOPE AND Status = 'queue' AND PublishAt IS NOT NULL
             ORDER BY PublishAt ASC, Id ASC;
@@ -295,8 +297,8 @@ public sealed class ContentLibraryStore
         if (material.Id is null)
         {
             command.CommandText = """
-                INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
-                VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$sourceType,$sourceUrl,$now,$now,$accountKey);
+                INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
+                VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$failedMedia,$sourceType,$sourceUrl,$now,$now,$accountKey);
                 SELECT last_insert_rowid();
                 """;
         }
@@ -305,7 +307,7 @@ public sealed class ContentLibraryStore
             command.CommandText = """
                 UPDATE Materials SET Title=$title, Type=$type, Content=$content, GuildId=$guildId, GuildName=$guildName,
                     ChannelId=$channelId, ChannelName=$channelName, PublishAt=$publishAt, Status=$status,
-                    Link=$link, MediaJson=$media, SourceType=$sourceType, SourceUrl=$sourceUrl, UpdatedAt=$now WHERE Id=$id AND ACCOUNT_SCOPE;
+                    Link=$link, MediaJson=$media, FailedMediaJson=$failedMedia, SourceType=$sourceType, SourceUrl=$sourceUrl, UpdatedAt=$now WHERE Id=$id AND ACCOUNT_SCOPE;
                 SELECT $id;
                 """;
             command.Parameters.AddWithValue("$id", material.Id.Value);
@@ -376,8 +378,8 @@ public sealed class ContentLibraryStore
                     {
                         insert.Transaction = transaction;
                         insert.CommandText = """
-                            INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
-                            VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$sourceType,$sourceUrl,$now,$now,$accountKey);
+                            INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
+                            VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$failedMedia,$sourceType,$sourceUrl,$now,$now,$accountKey);
                             SELECT last_insert_rowid();
                             """;
                         AddMaterialParameters(insert, material, now);
@@ -415,7 +417,7 @@ public sealed class ContentLibraryStore
                 existing.Transaction = transaction;
                 existing.CommandText = """
                     SELECT m.Id, m.Title, m.Type, m.Content, m.GuildId, m.GuildName, m.ChannelId, m.ChannelName, m.PublishAt,
-                           m.Status, m.Link, m.MediaJson, m.SourceType, m.SourceUrl, m.CreatedAt, m.UpdatedAt
+                           m.Status, m.Link, m.MediaJson, m.FailedMediaJson, m.SourceType, m.SourceUrl, m.CreatedAt, m.UpdatedAt
                     FROM MaterialSourceClaims c
                     INNER JOIN Materials m ON m.Id=c.MaterialId
                     WHERE c.AccountKey=$accountKey AND c.SourceType=$sourceType AND c.SourceUrl=$sourceUrl
@@ -520,8 +522,8 @@ public sealed class ContentLibraryStore
                 await using var insert = connection.CreateCommand();
                 insert.Transaction = transaction;
                 insert.CommandText = """
-                    INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
-                    VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$sourceType,$sourceUrl,$now,$now,$accountKey);
+                    INSERT INTO Materials (Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt, AccountKey)
+                    VALUES ($title,$type,$content,$guildId,$guildName,$channelId,$channelName,$publishAt,$status,$link,$media,$failedMedia,$sourceType,$sourceUrl,$now,$now,$accountKey);
                     SELECT last_insert_rowid();
                     """;
                 AddMaterialParameters(insert, material, now);
@@ -565,16 +567,17 @@ public sealed class ContentLibraryStore
         }
     }
 
-    public async Task UpdateMaterialStatusAsync(long id, string status, string? link = null, CancellationToken cancellationToken = default)
+    public async Task UpdateMaterialStatusAsync(long id, string status, string? link = null, bool clearPublishAt = false, CancellationToken cancellationToken = default)
     {
         if (status is not ("waitsend" or "queue" or "published" or "delete")) throw new ArgumentOutOfRangeException(nameof(status));
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE Materials SET Status=$status, Link=CASE WHEN $status='published' THEN $link ELSE Link END, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
+        command.CommandText = $"UPDATE Materials SET Status=$status, Link=CASE WHEN $status='published' THEN $link ELSE Link END, PublishAt=CASE WHEN $clearPublishAt=1 THEN NULL ELSE PublishAt END, UpdatedAt=$now WHERE Id=$id AND {AccountScope("AccountKey")}";
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$link", link ?? "");
+        command.Parameters.AddWithValue("$clearPublishAt", clearPublishAt ? 1 : 0);
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
@@ -740,7 +743,7 @@ public sealed class ContentLibraryStore
     {
         ArgumentNullException.ThrowIfNull(materialIds);
         if (publishAt <= DateTimeOffset.Now)
-            throw new ArgumentException("发布时间必须晚于当前时间。", nameof(publishAt));
+            throw new ArgumentException("定时时间必须晚于当前时间。", nameof(publishAt));
 
         var ids = materialIds.Where(id => id > 0).Distinct().ToArray();
         if (ids.Length == 0) return new([], [], [], []);
@@ -1080,7 +1083,7 @@ public sealed class ContentLibraryStore
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE Materials
-            SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now
+            SET Status='waitsend', UpdatedAt=$now
             WHERE Id=$id AND ACCOUNT_SCOPE AND Status='queue' AND PublishAt IS NOT NULL
               AND EXISTS (SELECT 1 FROM ScheduleExecutions WHERE MaterialId=$id AND ACCOUNT_SCOPE_EXECUTION AND Status='Pending');
             """;
@@ -1280,7 +1283,7 @@ public sealed class ContentLibraryStore
             release.Transaction = transaction;
             release.CommandText = $"""
                 UPDATE Materials
-                SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now
+                SET Status='waitsend', UpdatedAt=$now
                 WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'
                   AND NOT EXISTS (
                       SELECT 1
@@ -1644,8 +1647,8 @@ public sealed class ContentLibraryStore
                 // 限流重排的素材保持 queue，稍后写入新的发布时间。
                 ? $"UPDATE Materials SET Status='queue', UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}"
                 : result.Succeeded
-                    ? $"UPDATE Materials SET Status='published', Link=$link, PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}"
-                    : $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
+                    ? $"UPDATE Materials SET Status='published', Link=$link, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")}"
+                    : $"UPDATE Materials SET Status='waitsend', UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
             material.Parameters.AddWithValue("$link", result.Url ?? result.PostId ?? "");
             material.Parameters.AddWithValue("$now", nowText);
             material.Parameters.AddWithValue("$materialId", materialId);
@@ -1700,7 +1703,7 @@ public sealed class ContentLibraryStore
                 // 策略已被删除或停用：把素材退回待发布，交给用户手工处理，避免永久卡在队列。
                 await using var release = connection.CreateCommand();
                 release.Transaction = transaction;
-                release.CommandText = $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
+                release.CommandText = $"UPDATE Materials SET Status='waitsend', UpdatedAt=$now WHERE Id=$materialId AND {AccountScope("AccountKey")} AND Status='queue'";
                 release.Parameters.AddWithValue("$now", nowText);
                 release.Parameters.AddWithValue("$materialId", materialId);
                 AddAccountParameter(release, accountKey);
@@ -1731,7 +1734,7 @@ public sealed class ContentLibraryStore
         await using (var material = connection.CreateCommand())
         {
             material.Transaction = transaction;
-            material.CommandText = $"UPDATE Materials SET Status='waitsend', PublishAt=NULL, UpdatedAt=$now WHERE {AccountScope("AccountKey")} AND Id IN (SELECT MaterialId FROM ScheduleExecutions WHERE {AccountScope("AccountKey", "ScheduleExecutions")} AND Status='NeedsVerification' AND CompletedAt=$now) AND Status='queue'";
+            material.CommandText = $"UPDATE Materials SET Status='waitsend', UpdatedAt=$now WHERE {AccountScope("AccountKey")} AND Id IN (SELECT MaterialId FROM ScheduleExecutions WHERE {AccountScope("AccountKey", "ScheduleExecutions")} AND Status='NeedsVerification' AND CompletedAt=$now) AND Status='queue'";
             material.Parameters.AddWithValue("$now", now);
             AddAccountParameter(material, accountKey);
             await material.ExecuteNonQueryAsync(cancellationToken);
@@ -1746,7 +1749,7 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt FROM Materials WHERE Id=$id AND {AccountScope("AccountKey")} AND Status<>'delete'";
+        command.CommandText = $"SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt, Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt FROM Materials WHERE Id=$id AND {AccountScope("AccountKey")} AND Status<>'delete'";
         command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1772,6 +1775,7 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$status", material.Status);
         command.Parameters.AddWithValue("$link", material.Link);
         command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(material.MediaLinks));
+        command.Parameters.AddWithValue("$failedMedia", JsonSerializer.Serialize(material.FailedMedia ?? []));
         command.Parameters.AddWithValue("$sourceType", string.IsNullOrWhiteSpace(material.SourceType) ? "手工添加" : material.SourceType.Trim());
         command.Parameters.AddWithValue("$sourceUrl", material.SourceUrl.Trim());
         command.Parameters.AddWithValue("$now", now);
@@ -1912,11 +1916,12 @@ public sealed class ContentLibraryStore
             reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
             reader.GetString(6), reader.GetString(7), reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8)), reader.GetString(9),
             reader.GetString(10), JsonSerializer.Deserialize<string[]>(reader.GetString(11)) ?? [],
-            DateTimeOffset.Parse(reader.GetString(14)), DateTimeOffset.Parse(reader.GetString(15)));
+            DateTimeOffset.Parse(reader.GetString(15)), DateTimeOffset.Parse(reader.GetString(16)));
         return material with
         {
-            SourceType = reader.IsDBNull(12) ? "手工添加" : reader.GetString(12),
-            SourceUrl = reader.IsDBNull(13) ? "" : reader.GetString(13)
+            FailedMedia = reader.IsDBNull(12) ? [] : JsonSerializer.Deserialize<List<TelegramMediaRef>>(reader.GetString(12)) ?? [],
+            SourceType = reader.IsDBNull(13) ? "手工添加" : reader.GetString(13),
+            SourceUrl = reader.IsDBNull(14) ? "" : reader.GetString(14)
         };
     }
 
@@ -1942,7 +1947,7 @@ public sealed class ContentLibraryStore
         var accountScope = AccountScope("AccountKey");
         command.CommandText = $"""
             SELECT Id, Title, Type, Content, GuildId, GuildName, ChannelId, ChannelName, PublishAt,
-                   Status, Link, MediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
+                   Status, Link, MediaJson, FailedMediaJson, SourceType, SourceUrl, CreatedAt, UpdatedAt
             FROM Materials
             WHERE SourceType=$type AND SourceUrl=$url AND Status <> 'delete' AND {accountScope}
             ORDER BY Id
@@ -1953,6 +1958,32 @@ public sealed class ContentLibraryStore
         AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadMaterial(reader) : null;
+    }
+
+    /// <summary>补齐素材媒体：合并新下载的媒体、更新剩余失败媒体和类型。</summary>
+    public async Task UpdateMaterialMediaAsync(
+        long materialId,
+        IReadOnlyList<string> mediaLinks,
+        IReadOnlyList<TelegramMediaRef> failedMedia,
+        string type,
+        CancellationToken cancellationToken = default)
+    {
+        var accountKey = RequireAccountKey();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            UPDATE Materials
+            SET MediaJson=$media, FailedMediaJson=$failedMedia, Type=$type, UpdatedAt=$now
+            WHERE Id=$id AND Status <> 'delete' AND {AccountScope("AccountKey")};
+            """;
+        command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(mediaLinks));
+        command.Parameters.AddWithValue("$failedMedia", JsonSerializer.Serialize(failedMedia));
+        command.Parameters.AddWithValue("$type", type);
+        command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
+        command.Parameters.AddWithValue("$id", materialId);
+        AddAccountParameter(command, accountKey);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static ScheduleExecutionRecord ReadScheduleExecution(SqliteDataReader reader) => new(
@@ -2186,8 +2217,8 @@ public sealed record CollectedItem(long Id, string Url, string SourceHost, strin
 {
     public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个（{string.Join("、", Media.Select(Path.GetFileName))}）";
 }
-public sealed record MaterialDraft(long? Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, string SourceType = "手工添加", string SourceUrl = "");
-public sealed record MaterialRecord(long Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string SourceType = "手工添加", string SourceUrl = "") : INotifyPropertyChanged
+public sealed record MaterialDraft(long? Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, string SourceType = "手工添加", string SourceUrl = "", IReadOnlyList<TelegramMediaRef>? FailedMedia = null);
+public sealed record MaterialRecord(long Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string SourceType = "手工添加", string SourceUrl = "", IReadOnlyList<TelegramMediaRef>? FailedMedia = null) : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -709,7 +709,9 @@ public sealed class TelegramCollectionTests : IDisposable
         var materializer = new TelegramMaterializer(
             new TelegramCollectorService(),
             library,
-            (_, _, _) => Task.FromResult(new TelegramDraftResult(channelDirectory, [stagedImage], 1)),
+            (_, _, _) => Task.FromResult(new TelegramDraftResult(
+                channelDirectory, [stagedImage], 1,
+                [new TelegramMediaRef("https://example.com/missing.jpg", "https://example.com/missing.jpg", "image")])),
             mediaStorage,
             (paths, _) =>
             {
@@ -732,6 +734,90 @@ public sealed class TelegramCollectionTests : IDisposable
         var storedMedia = Assert.Single(material.MediaLinks);
         Assert.True(File.Exists(storedMedia));
         Assert.False(File.Exists(stagedImage));
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/missing.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+    }
+
+    [Fact]
+    public async Task Materializer_RetriesFailedMediaOnNextCollectionAndFillsMissingMedia()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new FlakyMediaTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+        var message = new TelegramChannelMessage(
+            "https://t.me/channel/103",
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "补齐媒体",
+            [
+                new TelegramMediaRef("https://example.com/one.jpg", "https://example.com/one.jpg", "image"),
+                new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image")
+            ],
+            "");
+
+        var first = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(first.Succeeded);
+        Assert.Equal(1, first.FailedMediaCount);
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/two.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+
+        var second = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(second.Succeeded);
+        Assert.Equal(0, second.FailedMediaCount);
+        material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg", "https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Empty(material.FailedMedia);
+        Assert.Equal(["one", "two", "two", "two"], transport.Attempts);
+    }
+
+    [Fact]
+    public async Task Materializer_ReturnsFailureWhenRetryOfFailedMediaStillFails()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new PartialMediaFallbackTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+        var message = new TelegramChannelMessage(
+            "https://t.me/channel/104",
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "媒体缺失",
+            [
+                new TelegramMediaRef("https://example.com/one.jpg", "https://example.com/one.jpg", "image"),
+                new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image")
+            ],
+            "");
+
+        var first = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(first.Succeeded);
+        Assert.Equal(1, first.FailedMediaCount);
+
+        var second = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.False(second.Succeeded);
+        Assert.Equal(1, second.FailedMediaCount);
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/one.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+        Assert.Equal(["one", "one", "two", "one", "one"], transport.Attempts);
     }
 
     [Fact]
@@ -895,6 +981,39 @@ public sealed class TelegramCollectionTests : IDisposable
                 "https://example.com/fallback.jpg",
                 "image")],
             "");
+
+    private sealed class FlakyMediaTransport : ITelegramTransport, ITelegramMediaFallbackTransport
+    {
+        public List<string> Attempts { get; } = [];
+        private int _twoCalls;
+
+        public Task<TelegramTransportPreview> FetchChannelAsync(
+            string channelUrl,
+            TelegramTransportSelection selection,
+            Action<string>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaWithFallbackAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default)
+        {
+            var name = media.OriginalUrl.Contains("two", StringComparison.Ordinal) ? "two" : "one";
+            Attempts.Add(name);
+            if (name == "two" && Interlocked.Increment(ref _twoCalls) <= 2)
+                return Task.FromException<string>(new IOException("two failed"));
+            return Task.FromResult(media.OriginalUrl);
+        }
+    }
 
     private sealed class MediaFallbackTransport : ITelegramTransport, ITelegramMediaFallbackTransport
     {

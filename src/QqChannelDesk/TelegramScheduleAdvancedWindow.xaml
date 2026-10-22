@@ -88,10 +88,10 @@
                          Margin="0,8,0,0" TextWrapping="Wrap"/>
               <TextBlock Text="首次运行方式" FontWeight="SemiBold" Margin="0,14,0,6"/>
               <ComboBox x:Name="FirstRunModeBox" Height="38" VerticalContentAlignment="Center">
-                <ComboBoxItem Content="导入当前首页最新 20 条（默认）" Tag="backfill"/>
-                <ComboBoxItem Content="先导入当前首页，之后仅采新消息" Tag="new-only"/>
+                <ComboBoxItem Content="导入首页最新 20 条（默认）" Tag="backfill"/>
+                <ComboBoxItem Content="先导入首页，之后仅采新消息" Tag="new-only"/>
               </ComboBox>
-              <TextBlock Text="首次执行会先按发布时间从新到旧处理当前首页最多 20 条，再记录首页最高消息号作为水位。之后只处理高于水位的新消息，始终不翻页。"
+              <TextBlock Text="导入首页最新 20 条：每次执行都重新读取频道首页最新 20 条，已入库的消息自动跳过，媒体缺失的消息会在下次采集时补齐。先导入首页，之后仅采新消息：首次执行先采集当前首页并记录水位，之后只处理高于水位的新消息。两种模式都不翻页。"
                          Foreground="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
                          TextWrapping="Wrap"/>
             </StackPanel>

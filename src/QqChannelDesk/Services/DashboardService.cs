@@ -33,7 +33,7 @@ public sealed class DashboardService
         var settings = await settingsTask;
         var today = DateOnly.FromDateTime(now.LocalDateTime);
 
-        var pending = materials.Count(item => item.Status == "waitsend" && item.PublishAt is null);
+        var pending = materials.Count(item => item.Status == "waitsend");
         var scheduled = schedules.Count(item =>
             item.Status == ScheduleExecutionStatus.Pending &&
             !item.IsPaused &&

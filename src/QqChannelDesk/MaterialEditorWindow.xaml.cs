@@ -199,16 +199,16 @@ public partial class MaterialEditorWindow : Window
         {
             if (PublishDatePicker.SelectedDate is not { } date)
             {
-                FormMessage.Text = "请选择发布时间日期。";
+                FormMessage.Text = "请选择定时时间日期。";
                 return;
             }
             if (!TimeSpan.TryParseExact(PublishTimeBox.Text.Trim(), "hh\\:mm\\:ss", CultureInfo.InvariantCulture, out var time) &&
                 !TimeSpan.TryParseExact(PublishTimeBox.Text.Trim(), "h\\:mm\\:ss", CultureInfo.InvariantCulture, out time))
             {
-                FormMessage.Text = "发布时间格式应为 时:分:秒，例如 14:30:00。";
+                FormMessage.Text = "定时时间格式应为 时:分:秒，例如 14:30:00。";
                 return;
             }
-            if (time < TimeSpan.Zero || time >= TimeSpan.FromDays(1)) { FormMessage.Text = "发布时间无效。"; return; }
+            if (time < TimeSpan.Zero || time >= TimeSpan.FromDays(1)) { FormMessage.Text = "定时时间无效。"; return; }
             publishAt = new DateTimeOffset(date.Date + time, TimeZoneInfo.Local.GetUtcOffset(date.Date + time));
         }
         var status = ResolveMaterialStatus(publishAt, _existing?.Status, DateTimeOffset.Now);
@@ -221,7 +221,7 @@ public partial class MaterialEditorWindow : Window
     public static string ResolveMaterialStatus(DateTimeOffset? publishAt, string? existingStatus, DateTimeOffset now)
     {
         if (publishAt is { } scheduled && scheduled > now) return "queue";
-        return publishAt is null && existingStatus == "published" ? "published" : "waitsend";
+        return existingStatus == "published" ? "published" : "waitsend";
     }
 
     internal static ChannelChoice? ResolveChoice(

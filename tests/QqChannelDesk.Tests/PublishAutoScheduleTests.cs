@@ -122,7 +122,7 @@ public sealed class PublishAutoScheduleTests : IDisposable
         var material = await library.GetMaterialAsync(materialId);
         Assert.NotNull(material);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToUniversalTime(), material.PublishAt!.Value.ToUniversalTime());
     }
 
     [Fact]
@@ -369,7 +369,7 @@ public sealed class PublishAutoScheduleTests : IDisposable
         Assert.Equal(ScheduleExecutionMode.Auto, execution.SchedulingMode);
         var material = await library.GetMaterialAsync(execution.MaterialId);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(queued.ScheduledAt!.Value.ToUniversalTime(), material.PublishAt!.Value.ToUniversalTime());
     }
 
     [Fact]

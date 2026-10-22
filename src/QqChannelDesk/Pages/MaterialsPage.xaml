@@ -4,7 +4,7 @@
   <Grid Margin="28,24,28,22">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock Grid.Row="0" Text="素材库" Style="{StaticResource PageTitle}" Margin="0,0,0,6"/>
-    <TextBlock Grid.Row="1" Text="管理素材，可批量设置频道和发布时间。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
+    <TextBlock Grid.Row="1" Text="管理素材，可批量设置频道和定时时间。" Foreground="{StaticResource Muted}" Margin="0,0,0,14"/>
     <DockPanel Grid.Row="2" LastChildFill="True">
       <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,10">
         <TextBox x:Name="MaterialSearchBox" Tag="搜索标题、正文、频道或链接" Width="240" ToolTip="搜索标题、正文、频道或链接" KeyDown="SearchBox_KeyDown"/>
@@ -32,7 +32,7 @@
             <ComboBoxItem Content="批量删除" Tag="delete"/>
             <ComboBoxItem Content="立即发布" Tag="publish"/>
             <ComboBoxItem Content="设置发布频道" Tag="target"/>
-            <ComboBoxItem Content="设置发布时间" Tag="time"/>
+            <ComboBoxItem Content="设置定时时间" Tag="time"/>
           </ComboBox>
         </StackPanel>
       </Grid>
@@ -62,7 +62,7 @@
           <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="48" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="来源" Binding="{Binding SourceDisplay}" Width="1.8*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTextColumn Header="频道/版块" Binding="{Binding TargetDisplay}" Width="1.1*" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" Width="132" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="定时时间" Binding="{Binding PublishAtDisplay}" Width="132" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}"/>
           <DataGridTemplateColumn Header="状态" Width="86">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>

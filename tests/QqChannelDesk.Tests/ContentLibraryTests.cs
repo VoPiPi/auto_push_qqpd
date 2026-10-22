@@ -203,6 +203,31 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public async Task MaterialStore_PersistsFailedMediaAndUpdatesMediaOnCompletion()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-failed-media-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var failedRef = new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image");
+        var id = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "", "image", "正文", "", "", "", "", null, "waitsend", "",
+            ["https://example.com/one.jpg"], "TG采集", "https://t.me/channel/200", [failedRef]));
+
+        var material = Assert.Single(await store.GetMaterialsAsync());
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/two.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+
+        await store.UpdateMaterialMediaAsync(
+            id,
+            ["https://example.com/one.jpg", "https://example.com/two.jpg"],
+            [], "image", CancellationToken.None);
+
+        material = Assert.Single(await store.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg", "https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Empty(material.FailedMedia);
+    }
+
+    [Fact]
     public async Task MaterialSourceClaims_HandleConcurrentSameSourceSaves()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-source-race-{Guid.NewGuid():N}.db");
@@ -367,11 +392,34 @@ public sealed class ContentLibraryTests
         var cancelled = await store.GetMaterialAsync(earlierId);
         Assert.NotNull(cancelled);
         Assert.Equal("waitsend", cancelled.Status);
-        Assert.Null(cancelled.PublishAt);
+        Assert.Equal(earlier.ToString("O"), cancelled.PublishAt!.Value.ToString("O"));
         Assert.Equal(new[] { "https://example.com/photo.jpg" }, cancelled.MediaLinks);
         Assert.False(await store.CancelMaterialScheduleAsync(earlierId));
         Assert.False(await store.CancelMaterialScheduleAsync(noScheduleId));
         Assert.DoesNotContain(await store.GetScheduledMaterialsAsync(), item => item.Id == earlierId);
+    }
+
+    [Fact]
+    public async Task ManualPublish_ClearsScheduledTime()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-manual-publish-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var scheduledAt = DateTimeOffset.Now.AddHours(1);
+        var materialId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "手工发布", "text", "正文", "guild", "频道", "channel", "版块",
+            scheduledAt, "queue", "", []));
+
+        var scheduled = await store.GetMaterialAsync(materialId);
+        Assert.NotNull(scheduled);
+        Assert.Equal(scheduledAt.ToString("O"), scheduled!.PublishAt!.Value.ToString("O"));
+
+        await store.UpdateMaterialStatusAsync(materialId, "published", "https://pd.qq.com/s/manual", clearPublishAt: true);
+
+        var published = await store.GetMaterialAsync(materialId);
+        Assert.NotNull(published);
+        Assert.Equal("published", published!.Status);
+        Assert.Null(published.PublishAt);
+        Assert.Equal("https://pd.qq.com/s/manual", published.Link);
     }
 
     [Fact]
@@ -407,7 +455,7 @@ public sealed class ContentLibraryTests
         Assert.NotNull(material);
         Assert.Equal("published", material!.Status);
         Assert.Equal("https://pd.qq.com/s/test", material.Link);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
     }
 
     [Fact]
@@ -481,7 +529,7 @@ public sealed class ContentLibraryTests
         var material = await store.GetMaterialAsync(materialId);
         Assert.NotNull(material);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
     }
 
     [Fact]
@@ -504,7 +552,7 @@ public sealed class ContentLibraryTests
         var material = await store.GetMaterialAsync(materialId);
         Assert.NotNull(material);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
 
         Assert.False(await store.CompleteScheduleExecutionAsync(claimed!.Id, null,
             new PublishResult(true, PublishErrorCategory.None, "迟到成功", "https://example.test/post", null)));
@@ -626,6 +674,7 @@ public sealed class ContentLibraryTests
         Assert.Equal("waitsend", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(-1), null, now));
         Assert.Equal("queue", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(1), null, now));
         Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(null, "published", now));
+        Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(-1), "published", now));
     }
 
     [Fact]

@@ -223,6 +223,49 @@ public sealed class TelegramCollectionSchedulerTests
     }
 
     [Fact]
+    public async Task BackfillModeAlwaysProcessesAllHomePageMessages()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-tg-scheduler-{Guid.NewGuid():N}.db");
+        var context = new AccountContext();
+        context.Set(CurrentAccountIdentity.Create("global", "nickname"));
+        var store = new TelegramCollectionStore(databasePath, context);
+        var library = new ContentLibraryStore(databasePath, context);
+        var scheduleId = await store.SaveAsync(new TelegramCollectionScheduleDraft(
+            null, "https://t.me/s/channel", "channel", 24, true,
+            WebProxySelection.Automatic, 20, "", FirstRunMode: "backfill"));
+        var firstPublishedAt = new DateTimeOffset(2026, 10, 11, 7, 0, 0, TimeSpan.Zero);
+        var firstHomePage = new[]
+        {
+            Message("https://t.me/channel/100", "", "历史 100", firstPublishedAt),
+            Message("https://t.me/channel/101", "", "历史 101", firstPublishedAt.AddMinutes(1))
+        };
+        var secondHomePage = new[]
+        {
+            Message("https://t.me/channel/101", "", "历史 101", firstPublishedAt.AddMinutes(1)),
+            Message("https://t.me/channel/102", "", "新消息 102", firstPublishedAt.AddMinutes(2))
+        };
+        var scheduler = CreateScheduler(
+            databasePath,
+            store,
+            library,
+            new SequencedTelegramTransport(firstHomePage, secondHomePage));
+
+        var firstResult = await scheduler.RunNowAsync(scheduleId);
+        var secondResult = await scheduler.RunNowAsync(scheduleId);
+
+        Assert.True(firstResult.Succeeded);
+        Assert.Equal(2, firstResult.AddedCount);
+        Assert.True(secondResult.Succeeded);
+        Assert.Equal(1, secondResult.AddedCount);
+        Assert.Equal(1, secondResult.SkippedCount);
+        var materials = await library.GetMaterialsAsync();
+        Assert.Equal(3, materials.Count);
+        Assert.Contains(materials, material => material.Content == "新消息 102");
+        var saved = Assert.Single(await store.GetAsync());
+        Assert.Equal(102, saved.LastMessageId);
+    }
+
+    [Fact]
     public async Task BackfillFirstRunImportsHistoryAndAdvancesWatermark()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-tg-scheduler-{Guid.NewGuid():N}.db");

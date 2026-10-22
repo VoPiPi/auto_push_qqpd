@@ -347,7 +347,7 @@ public partial class MaterialsPage : UserControl
 
     public async Task MarkMaterialPublishedAsync(long id, string? link)
     {
-        await _store.UpdateMaterialStatusAsync(id, "published", link);
+        await _store.UpdateMaterialStatusAsync(id, "published", link, clearPublishAt: true);
         await LoadMaterialsAsync();
     }
 
@@ -702,8 +702,8 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                "所选素材中没有可设置发布时间的记录。已发布素材不参与批量设置。",
-                "批量设置发布时间",
+                "所选素材中没有可设置定时时间的记录。已发布素材不参与批量设置。",
+                "批量设置定时时间",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -723,7 +723,7 @@ public partial class MaterialsPage : UserControl
             publishAt);
         await LoadMaterialsAsync();
         ShowBatchResult(
-            "批量设置发布时间",
+            "批量设置定时时间",
             result.UpdatedIds.Count,
             result.RunningIds,
             result.PublishedIds,

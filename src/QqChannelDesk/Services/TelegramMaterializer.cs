@@ -41,7 +41,8 @@ public sealed class TelegramMaterializer
             message,
             targetRule,
             cancellationToken,
-            token => _draftAsync(message, cookieHeader, token));
+            token => _draftAsync(message, cookieHeader, token),
+            (refs, token) => DownloadRefsWithCookieAsync(refs, cookieHeader, token, message));
 
     /// <summary>使用消息采集时的实际传输上下文下载媒体，避免跨批次串用代理或网页代理 Cookie。</summary>
     public async Task<TelegramMaterializationResult> MaterializeAsync(
@@ -57,18 +58,34 @@ public sealed class TelegramMaterializer
             message,
             targetRule,
             cancellationToken,
-            token => DownloadDraftAsync(transport, message, transportContext, token));
+            token => DownloadDraftAsync(
+                TelegramCollectorService.SelectDraftMedia(message.Media),
+                TelegramCollectorService.ReadMessageChannel(message.Url),
+                transport,
+                transportContext,
+                token),
+            (refs, token) => DownloadDraftAsync(
+                refs,
+                TelegramCollectorService.ReadMessageChannel(message.Url),
+                transport,
+                transportContext,
+                token));
     }
 
     private async Task<TelegramMaterializationResult> MaterializeCoreAsync(
         TelegramChannelMessage message,
         TelegramDistributionRule? targetRule,
         CancellationToken cancellationToken,
-        Func<CancellationToken, Task<TelegramDraftResult>> draftFactory)
+        Func<CancellationToken, Task<TelegramDraftResult>> draftFactory,
+        Func<IReadOnlyList<TelegramMediaRef>, CancellationToken, Task<TelegramDraftResult>> mediaFactory)
     {
         var existing = await _library.FindMaterialBySourceAsync("TG采集", message.Url, cancellationToken);
         if (existing is not null)
-            return new(existing.Id, "", existing.MediaLinks, 0, false, "这条 TG 消息已在素材库中。", true, true);
+        {
+            if (existing.FailedMedia is { Count: 0 })
+                return new(existing.Id, "", existing.MediaLinks, 0, false, "这条 TG 消息已在素材库中。", true, true);
+            return await RetryFailedMediaAsync(message, existing, mediaFactory, cancellationToken);
+        }
 
         var draft = await draftFactory(cancellationToken);
         if (draft.MediaPaths.Count == 0 && string.IsNullOrWhiteSpace(message.Title) && string.IsNullOrWhiteSpace(message.Text))
@@ -96,7 +113,7 @@ public sealed class TelegramMaterializer
                 null, "", type, message.Text,
                 targetRule?.GuildId ?? "", targetRule?.GuildName ?? "",
                 targetRule?.ChannelId ?? "", targetRule?.ChannelName ?? "", null, "waitsend", "",
-                storedMedia, "TG采集", message.Url), cancellationToken);
+                storedMedia, "TG采集", message.Url, draft.FailedMedia), cancellationToken);
             if (!saved.Created)
             {
                 await DeleteImportedCopiesAsync(importedMedia);
@@ -169,24 +186,34 @@ public sealed class TelegramMaterializer
     }
 
     private static async Task<TelegramDraftResult> DownloadDraftAsync(
+        IReadOnlyList<TelegramMediaRef> media,
+        string channelName,
         ITelegramTransport transport,
-        TelegramChannelMessage message,
         TelegramTransportContext context,
         CancellationToken cancellationToken)
     {
         var directory = TelegramCollectorService.BuildDraftDirectory(
             AppContext.BaseDirectory,
             DateTimeOffset.Now,
-            TelegramCollectorService.ReadMessageChannel(message.Url));
-        var media = TelegramCollectorService.SelectDraftMedia(message.Media);
+            channelName);
         if (media.Count > 0) Directory.CreateDirectory(directory);
         Func<TelegramMediaRef, TelegramTransportContext, string?, CancellationToken, Task<string>> downloadMedia =
             context.AllowFallback && transport is ITelegramMediaFallbackTransport fallbackTransport
                 ? fallbackTransport.DownloadMediaWithFallbackAsync
                 : transport.DownloadMediaAsync;
+        return await DownloadRefsAsync(media, directory, context, downloadMedia, cancellationToken);
+    }
 
+    private static async Task<TelegramDraftResult> DownloadRefsAsync(
+        IReadOnlyList<TelegramMediaRef> media,
+        string directory,
+        TelegramTransportContext context,
+        Func<TelegramMediaRef, TelegramTransportContext, string?, CancellationToken, Task<string>> downloadMedia,
+        CancellationToken cancellationToken)
+    {
         var paths = new List<string>();
         var failed = 0;
+        var failedRefs = new List<TelegramMediaRef>();
         for (var index = 0; index < media.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -211,6 +238,7 @@ public sealed class TelegramMaterializer
                     if (attempt == MediaAttempts)
                     {
                         failed++;
+                        failedRefs.Add(media[index]);
                         AppLogger.Instance.Warning($"TG 媒体下载失败：{error}");
                     }
                     else
@@ -221,7 +249,71 @@ public sealed class TelegramMaterializer
             }
         }
 
-        return new TelegramDraftResult(directory, paths, failed);
+        return new TelegramDraftResult(directory, paths, failed, failedRefs);
+    }
+
+    private async Task<TelegramDraftResult> DownloadRefsWithCookieAsync(
+        IReadOnlyList<TelegramMediaRef> refs,
+        string cookieHeader,
+        CancellationToken cancellationToken,
+        TelegramChannelMessage message)
+    {
+        var directory = TelegramCollectorService.BuildDraftDirectory(
+            AppContext.BaseDirectory,
+            DateTimeOffset.Now,
+            TelegramCollectorService.ReadMessageChannel(message.Url));
+        var download = await _collector.DownloadMediaAsync(
+            refs,
+            cookieHeader,
+            cancellationToken: cancellationToken,
+            targetDirectory: directory);
+        return new TelegramDraftResult(directory, download.Paths, download.Failed, download.FailedMedia);
+    }
+
+    /// <summary>跨批次补齐：用当前消息重新下载历史失败的媒体，合并进已有素材。</summary>
+    private async Task<TelegramMaterializationResult> RetryFailedMediaAsync(
+        TelegramChannelMessage message,
+        MaterialRecord existing,
+        Func<IReadOnlyList<TelegramMediaRef>, CancellationToken, Task<TelegramDraftResult>> mediaFactory,
+        CancellationToken cancellationToken)
+    {
+        var failedRefs = (existing.FailedMedia ?? [])
+            .Select(failed => message.Media
+                .FirstOrDefault(item => string.Equals(item.Kind, failed.Kind, StringComparison.OrdinalIgnoreCase) &&
+                                       string.Equals(item.OriginalUrl, failed.OriginalUrl, StringComparison.OrdinalIgnoreCase))
+                ?? failed)
+            .ToList();
+        var draft = await mediaFactory(failedRefs, cancellationToken);
+        var importedMedia = new List<string>();
+        try
+        {
+            if (draft.MediaPaths.Count == 0)
+            {
+                await DiscardStagingAsync(draft, cancellationToken);
+                return new(existing.Id, draft.Directory, draft.MediaPaths, draft.Failed, false,
+                    "上次缺失的媒体这次仍下载失败，请检查网络或代理后再次采集。", false, false);
+            }
+
+            var newType = MaterialMediaValidator.InferType(draft.MediaPaths) ?? existing.Type;
+            var imported = await ImportToLibraryAsync(draft.MediaPaths, newType, importedMedia, cancellationToken);
+            var merged = new List<string>(existing.MediaLinks.Count + imported.Count);
+            merged.AddRange(existing.MediaLinks);
+            merged.AddRange(imported);
+            var retryType = MaterialMediaValidator.InferType(merged) ?? newType;
+            await _library.UpdateMaterialMediaAsync(
+                existing.Id, merged, draft.FailedMedia ?? [], retryType, cancellationToken);
+            await DiscardStagingAsync(draft, cancellationToken);
+            var warning = draft.Failed > 0
+                ? $"已补齐 {imported.Count} 个媒体，仍有 {draft.Failed} 个媒体下载失败，下次采集会继续尝试。"
+                : $"已补齐 {imported.Count} 个媒体，素材媒体完整。";
+            return new(existing.Id, draft.Directory, merged, draft.Failed, false, warning, true, false);
+        }
+        catch
+        {
+            await DeleteImportedCopiesAsync(importedMedia);
+            await DiscardStagingAsync(draft, cancellationToken);
+            throw;
+        }
     }
 
     private async Task DiscardStagingAsync(TelegramDraftResult draft, CancellationToken cancellationToken)
