@@ -1,0 +1,64 @@
+<UserControl x:Class="QqChannelDesk.Pages.Collection.RunsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <UserControl.Resources>
+    <Style x:Key="RunCell" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellText}">
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}" />
+    </Style>
+  </UserControl.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="采集记录" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <TextBlock x:Name="StatsText" Text="最近 0 个批次" Foreground="{StaticResource Muted}" Margin="14,1,0,0" VerticalAlignment="Center" />
+        </StackPanel>
+        <Button Content="刷新" Style="{StaticResource QuietButton}" Grid.Column="1" Click="RefreshButton_Click" />
+      </Grid>
+    </Border>
+    <DataGrid Grid.Row="1" x:Name="RunsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+              SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" CanUserResizeColumns="True"
+              CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+              RowStyle="{StaticResource CompactDataGridRow}">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="开始时间" Binding="{Binding StartedLabel}" Width="112" MinWidth="104" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="来源" Binding="{Binding SourceName}" Width="1.2*" MinWidth="105" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="触发" Binding="{Binding TriggerLabel}" Width="64" MinWidth="60" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTemplateColumn Header="结果" Width="80" MinWidth="74">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <Border Style="{StaticResource StatusPill}" Background="{Binding ResultLabel, Converter={StaticResource StatusSoftBrushConverter}}"
+                      ToolTip="{Binding ErrorSummary}">
+                <TextBlock Text="{Binding ResultLabel}" Style="{StaticResource StatusPillText}"
+                           Foreground="{Binding ResultLabel, Converter={StaticResource StatusStrongBrushConverter}}" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="耗时" Binding="{Binding DurationLabel}" Width="66" MinWidth="62" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="新增" Binding="{Binding Record.NewItemCount}" Width="52" MinWidth="48" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="重复" Binding="{Binding Record.DuplicateCount}" Width="52" MinWidth="48" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="AI" Binding="{Binding Record.AiFallbackCount}" Width="44" MinWidth="42" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTextColumn Header="错误摘要" Binding="{Binding ErrorSummary}" Width="1.4*" MinWidth="120" ElementStyle="{StaticResource RunCell}" />
+        <DataGridTemplateColumn Header="操作" Width="56" MinWidth="54">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <Button Content="详情" Style="{StaticResource TableLinkButton}" Width="40" Padding="0" Click="DetailButton_Click" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+    <TextBlock Grid.Row="2" x:Name="StatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" />
+  </Grid>
+</UserControl>

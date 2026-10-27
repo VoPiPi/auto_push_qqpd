@@ -141,7 +141,7 @@ public sealed class UpdateCheckServiceTests
         Assert.True(result.Succeeded);
         Assert.True(result.HasUpdate);
         Assert.Equal("v10.0.0", result.LatestRelease?.Version);
-        Assert.Equal(UpdateCheckService.ReleasesApiUrl, Assert.Single(handler.RequestUris).ToString());
+        Assert.Equal(UpdateCheckService.BuildReleasesPageUrl(1), Assert.Single(handler.RequestUris).ToString());
     }
 
     [Fact]
@@ -231,7 +231,78 @@ public sealed class UpdateCheckServiceTests
         Assert.True(result.HasUpdate);
         Assert.Null(result.LatestRelease?.WindowsPackage);
         Assert.Null(result.LatestRelease?.ChecksumAsset);
-        Assert.Equal(UpdateCheckService.ReleasesApiUrl, Assert.Single(handler.RequestUris).ToString());
+        Assert.Equal(UpdateCheckService.BuildReleasesPageUrl(1), Assert.Single(handler.RequestUris).ToString());
+    }
+
+    [Fact]
+    public async Task CheckAsyncStopsAtFirstPageWhenStableReleasePresent()
+    {
+        // direction=desc 时第 1 页就是最新版本；出现正式版本后不应再请求后续页。
+        var firstPage = "[" + string.Join(",", Enumerable.Range(0, 20).Select(index =>
+            $"{{\"tag_name\":\"v1.0.{index}\",\"prerelease\":false}}")) + "]";
+        var handler = new StubHandler(_ => JsonResponse(firstPage));
+        using var client = new HttpClient(handler);
+
+        var result = await new UpdateCheckService(client).CheckAsync("1.0.0");
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.HasUpdate);
+        Assert.Equal("v1.0.19", result.LatestRelease?.Version);
+        Assert.Equal(
+            UpdateCheckService.BuildReleasesPageUrl(1),
+            Assert.Single(handler.RequestUris).ToString());
+    }
+
+    [Fact]
+    public async Task CheckAsyncReadsNextPageWhenFirstPageHasOnlyPrereleases()
+    {
+        // 第 1 页全是预发布版本时继续翻页，从更旧的页里找最新的正式版本。
+        var firstPage = "[" + string.Join(",", Enumerable.Range(0, 20).Select(index =>
+            $"{{\"tag_name\":\"v9.{index}.0-beta\",\"prerelease\":true}}")) + "]";
+        var handler = new StubHandler(request =>
+            // 用 "page=2&" 整段匹配，避免误命中 per_page=20 里的 "page=2" 子串。
+            request.RequestUri?.Query.Contains("page=2&", StringComparison.Ordinal) == true
+                ? JsonResponse("""
+                    [
+                      {
+                        "tag_name": "v1.1.1-release",
+                        "prerelease": false
+                      }
+                    ]
+                    """)
+                : JsonResponse(firstPage));
+        using var client = new HttpClient(handler);
+
+        var result = await new UpdateCheckService(client).CheckAsync("1.0.0");
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.HasUpdate);
+        Assert.Equal("v1.1.1-release", result.LatestRelease?.Version);
+        Assert.Equal(
+            new[]
+            {
+                UpdateCheckService.BuildReleasesPageUrl(1),
+                UpdateCheckService.BuildReleasesPageUrl(2)
+            },
+            handler.RequestUris.Select(uri => uri.ToString()).ToArray());
+    }
+
+    [Fact]
+    public async Task CheckAsyncReportsNoStableReleaseWhenLaterPageFails()
+    {
+        var firstPage = "[" + string.Join(",", Enumerable.Range(0, 20).Select(index =>
+            $"{{\"tag_name\":\"v9.{index}.0-beta\",\"prerelease\":true}}")) + "]";
+        var handler = new StubHandler(request =>
+            request.RequestUri?.Query.Contains("page=1", StringComparison.Ordinal) == true
+                ? JsonResponse(firstPage)
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        using var client = new HttpClient(handler);
+
+        var result = await new UpdateCheckService(client).CheckAsync("1.0.0");
+
+        Assert.True(result.Succeeded);
+        Assert.False(result.HasUpdate);
+        Assert.Contains("暂无正式发布版本", result.Message);
     }
 
     [Fact]
@@ -271,7 +342,7 @@ public sealed class UpdateCheckServiceTests
         Assert.Equal(
             new[]
             {
-                UpdateCheckService.ReleasesApiUrl,
+                UpdateCheckService.BuildReleasesPageUrl(1),
                 ChecksumUrl
             },
             handler.RequestUris.Select(uri => uri.ToString()).ToArray());

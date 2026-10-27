@@ -18,10 +18,24 @@ public sealed class PublicArticleFetcher
     public async Task<ArticleFetchResult> FetchAsync(string input, CancellationToken cancellationToken = default)
         => await FetchAsync(input, PublicArticleRequestContext.SystemProxyOrDefault, cancellationToken);
 
+    /// <summary>带自定义正文选择器获取文章；选择器为空时使用内置通用规则。</summary>
+    public async Task<ArticleFetchResult> FetchAsync(
+        string input,
+        string? contentSelector,
+        CancellationToken cancellationToken = default)
+        => await FetchAsync(input, PublicArticleRequestContext.SystemProxyOrDefault, contentSelector, cancellationToken);
+
     /// <summary>直连/显式代理模式使用的入口；<paramref name="requestContext"/> 为 null 表示保留系统代理行为。</summary>
     internal async Task<ArticleFetchResult> FetchAsync(
         string input,
         PublicArticleRequestContext? requestContext,
+        CancellationToken cancellationToken = default)
+        => await FetchAsync(input, requestContext, null, cancellationToken);
+
+    internal async Task<ArticleFetchResult> FetchAsync(
+        string input,
+        PublicArticleRequestContext? requestContext,
+        string? contentSelector,
         CancellationToken cancellationToken = default)
     {
         if (!TryNormalizePublicUrl(input, out var current, out var error)) return new(false, "", "", "", "", error);
@@ -39,9 +53,10 @@ public sealed class PublicArticleFetcher
                 }
                 if (raw.Error.Length > 0) return Failed(raw.Error);
 
-                var parsed = await Task.Run(() => ParseHtml(raw.Html), cancellationToken);
-                if (parsed.Title.Length == 0 && parsed.Content.Length == 0) return Failed("网页没有可用标题或正文，请换一个链接。");
-                return new(true, raw.FinalUrl.Length == 0 ? current.AbsoluteUri : raw.FinalUrl, current.DnsSafeHost, parsed.Title, parsed.Content, "");
+                var parsed = await Task.Run(() => ParseHtml(raw.Html, contentSelector), cancellationToken);
+                if (parsed.Title.Length == 0 && parsed.Content.Length == 0)
+                    return Failed("网页没有可用标题或正文，请换一个链接。", raw.Html);
+                return new(true, raw.FinalUrl.Length == 0 ? current.AbsoluteUri : raw.FinalUrl, current.DnsSafeHost, parsed.Title, parsed.Content, "", raw.Html);
             }
             return Failed("无法读取网页，请检查链接或网络后重试。");
         }
@@ -221,26 +236,277 @@ public sealed class PublicArticleFetcher
         return true;
     }
 
-    public static (string Title, string Content) ParseHtml(string html)
+    /// <summary>
+    /// 通用文章内容提取：按优先级尝试常见正文容器、JSON-LD 结构化数据和 meta 摘要，
+    /// 以覆盖市面上大多数新闻/博客站点，而不是只识别 article/main 标签。
+    /// </summary>
+    public static (string Title, string Content) ParseHtml(string html, string? contentSelector = null)
     {
         var doc = new HtmlDocument { OptionFixNestedTags = true };
         doc.LoadHtml(html);
-        IEnumerable<HtmlNode> removableNodes = doc.DocumentNode.SelectNodes("//script|//style|//noscript|//svg|//nav|//header|//footer|//aside|//form|//button|//iframe") ?? Enumerable.Empty<HtmlNode>();
-        foreach (var node in removableNodes)
-            node.Remove();
-        var title = Clean(doc.DocumentNode.SelectSingleNode("//meta[@property='og:title']")?.GetAttributeValue("content", "") ??
-                          doc.DocumentNode.SelectSingleNode("//title")?.InnerText ??
-                          doc.DocumentNode.SelectSingleNode("//h1")?.InnerText ?? "");
-        var body = doc.DocumentNode.SelectSingleNode("//article") ?? doc.DocumentNode.SelectSingleNode("//main") ?? doc.DocumentNode.SelectSingleNode("//body");
-        var paragraphs = body?.SelectNodes(".//p|.//h1|.//h2|.//h3|.//li|.//blockquote")
-            ?? body?.SelectNodes(".//text()[normalize-space()]");
-        var lines = paragraphs is null
-            ? Array.Empty<string>()
-            : paragraphs.Select(node => Clean(node.InnerText)).Where(text => text.Length >= 2).Distinct().ToArray();
+
+        // JSON-LD 结构化数据通常比 DOM 更可靠，先解析但不立即采用，作为提取不到 DOM 时的兜底。
+        var jsonLd = TryParseJsonLd(doc);
+        var title = Clean(
+            doc.DocumentNode.SelectSingleNode("//meta[@property='og:title']")?.GetAttributeValue("content", "") ??
+            doc.DocumentNode.SelectSingleNode("//meta[@name='twitter:title']")?.GetAttributeValue("content", "") ??
+            doc.DocumentNode.SelectSingleNode("//title")?.InnerText ??
+            doc.DocumentNode.SelectSingleNode("//h1")?.InnerText ??
+            jsonLd.Title);
+
+        RemoveNoiseNodes(doc);
+        var body = SelectArticleBody(doc, contentSelector);
+        var lines = ExtractReadableLines(body);
+
+        // 正文容器未提取到足够内容时，用 meta 摘要或 JSON-LD 内容兜底。
+        if (lines.Count < 2)
+        {
+            var fallback = Clean(
+                doc.DocumentNode.SelectSingleNode("//meta[@property='og:description']")?.GetAttributeValue("content", "") ??
+                doc.DocumentNode.SelectSingleNode("//meta[@name='description']")?.GetAttributeValue("content", "") ??
+                doc.DocumentNode.SelectSingleNode("//meta[@name='twitter:description']")?.GetAttributeValue("content", "") ??
+                jsonLd.Content);
+            if (fallback.Length >= 10) lines.Add(fallback);
+        }
+
         var content = string.Join(Environment.NewLine + Environment.NewLine, lines);
         if (content.Length > 100_000) content = content[..100_000];
         return (title.Length > 300 ? title[..300] : title, content);
     }
+
+    /// <summary>
+    /// 常见新闻/博客正文容器的 XPath 列表，按优先级从高到低尝试。
+    /// 同时匹配 id 与 class，覆盖新浪、网易、腾讯、CSDN、WordPress 等主流结构。
+    /// </summary>
+    private static readonly string[] ArticleContainerSelectors =
+    [
+        "//article",
+        "//*[@id='article-content']", "//*[@id='article_content']", "//*[@id='content']",
+        "//*[@id='article']", "//*[@id='detail']", "//*[@id='post-content']",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article_content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article-body ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article_body ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article-detail ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article-detail-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' post-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' post_content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' entry-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' entry_content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' detail-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' news-content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' news_content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' content-article ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article-main ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' postBody ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' post_body ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' rich_media_content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' rich_media_area_primary ')]",
+        "//main",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' content ')]",
+        "//*[contains(concat(' ', normalize-space(@class), ' '), ' article ')]",
+        "//body"
+    ];
+
+    private static HtmlNode? SelectArticleBody(HtmlDocument doc, string? contentSelector)
+    {
+        // 用户显式配置的选择器优先；支持 CSS 选择器（#id/.class/tag）与 XPath。
+        if (!string.IsNullOrWhiteSpace(contentSelector))
+        {
+            var custom = contentSelector.Trim();
+            try
+            {
+                var node = custom.StartsWith("//", StringComparison.Ordinal)
+                    ? doc.DocumentNode.SelectSingleNode(custom)
+                    : doc.DocumentNode.SelectSingleNode(ToXPath(custom));
+                if (node is not null) return node;
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                AppLogger.Instance.Warning($"自定义正文选择器无效：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+        }
+
+        foreach (var selector in ArticleContainerSelectors)
+        {
+            try
+            {
+                var node = doc.DocumentNode.SelectSingleNode(selector);
+                if (node is not null && HasReadableContent(node)) return node;
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                // 单个选择器失败不阻断后续尝试。
+            }
+        }
+
+        return doc.DocumentNode.SelectSingleNode("//body");
+    }
+
+    private static bool HasReadableContent(HtmlNode node)
+    {
+        var text = Clean(node.InnerText);
+        return text.Length >= 20;
+    }
+
+    private static List<string> ExtractReadableLines(HtmlNode? body)
+    {
+        if (body is null) return new List<string>();
+        var paragraphs = body.SelectNodes(".//p|.//h1|.//h2|.//h3|.//h4|.//h5|.//h6|.//li|.//blockquote|.//pre|.//td")
+            ?? body.SelectNodes(".//text()[normalize-space()]");
+        if (paragraphs is null) return [];
+
+        var lines = new List<string>();
+        foreach (var node in paragraphs)
+        {
+            // 跳过被移除节点后的空文本和明显噪音。
+            var text = Clean(node.InnerText);
+            if (text.Length < 2) continue;
+            if (IsNoiseLine(text)) continue;
+            lines.Add(text);
+        }
+
+        // 去重且保留顺序，但不去掉重复引用的同类段落。
+        var distinct = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            if (seen.Add(line)) distinct.Add(line);
+        }
+
+        return distinct;
+    }
+
+    private static bool IsNoiseLine(string text)
+    {
+        // 常见页脚/版权/分享/广告提示，避免污染正文。
+        string[] markers =
+        [
+            "版权声明", "版权所有", "免责声明", "责任编辑", "来源：", "扫码", "分享到",
+            "点击分享", "相关阅读", "延伸阅读", "上一篇", "下一篇", "广告", "更多精彩"
+        ];
+        return text.Length < 80 && markers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void RemoveNoiseNodes(HtmlDocument doc)
+    {
+        IEnumerable<HtmlNode> removableNodes = doc.DocumentNode.SelectNodes(
+            "//script|//style|//noscript|//svg|//nav|//header|//footer|//aside|//form|//button|//iframe") ??
+            Enumerable.Empty<HtmlNode>();
+        foreach (var node in removableNodes)
+            node.Remove();
+    }
+
+    private static (string Title, string Content) TryParseJsonLd(HtmlDocument doc)
+    {
+        var nodes = doc.DocumentNode.SelectNodes("//script[@type='application/ld+json']");
+        if (nodes is null) return ("", "");
+        foreach (var node in nodes)
+        {
+            try
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(node.InnerText);
+                var root = document.RootElement;
+                var candidates = root.ValueKind == System.Text.Json.JsonValueKind.Array
+                    ? root.EnumerateArray().ToArray()
+                    : [root];
+                foreach (var candidate in candidates)
+                {
+                    if (candidate.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    var type = candidate.TryGetProperty("@type", out var typeElement)
+                        ? typeElement.ValueKind == System.Text.Json.JsonValueKind.String
+                            ? typeElement.GetString() ?? ""
+                            : typeElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                                ? string.Join(",", typeElement.EnumerateArray().Select(item => item.GetString() ?? ""))
+                                : ""
+                        : "";
+                    if (type.Length > 0 &&
+                        !type.Contains("Article", StringComparison.OrdinalIgnoreCase) &&
+                        !type.Contains("News", StringComparison.OrdinalIgnoreCase) &&
+                        !type.Contains("Blog", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var title = ReadJsonString(candidate, "headline") ?? ReadJsonString(candidate, "name") ?? "";
+                    var content = ReadJsonString(candidate, "articleBody") ??
+                                  ReadJsonString(candidate, "description") ??
+                                  "";
+                    if (title.Length > 0 || content.Length > 0) return (title, content);
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // 单个 JSON-LD 块无效时继续尝试下一个。
+            }
+        }
+        return ("", "");
+    }
+
+    private static string? ReadJsonString(System.Text.Json.JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) return null;
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => value.GetString() ?? "",
+            System.Text.Json.JsonValueKind.Object => ReadJsonString(value, "name") ?? "",
+            _ => ""
+        };
+    }
+
+    /// <summary>把简单 CSS 选择器转成 XPath，支持 #id、.class、tag、tag.class、tag#id。</summary>
+    private static string ToXPath(string selector)
+    {
+        var trimmed = selector.Trim();
+        if (trimmed.StartsWith("//", StringComparison.Ordinal)) return trimmed;
+        var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "//body";
+        var xpath = string.Join("/", parts.Select(ToXPathSegment));
+        return xpath.StartsWith("/", StringComparison.Ordinal) ? xpath : "//" + xpath;
+    }
+
+    private static string ToXPathSegment(string segment)
+    {
+        var tag = "div";
+        var id = "";
+        var classes = new List<string>();
+        var index = 0;
+        while (index < segment.Length)
+        {
+            var ch = segment[index];
+            if (ch is '#')
+            {
+                var start = ++index;
+                while (index < segment.Length && IsCssNameChar(segment[index])) index++;
+                id = segment[start..index];
+            }
+            else if (ch is '.')
+            {
+                var start = ++index;
+                while (index < segment.Length && IsCssNameChar(segment[index])) index++;
+                classes.Add(segment[start..index]);
+            }
+            else if (char.IsLetter(ch))
+            {
+                var start = index;
+                while (index < segment.Length && IsCssNameChar(segment[index])) index++;
+                tag = segment[start..index];
+            }
+            else
+            {
+                index++;
+            }
+        }
+
+        var conditions = new List<string>();
+        if (id.Length > 0) conditions.Add($"@id='{id}'");
+        foreach (var cls in classes)
+            conditions.Add($"contains(concat(' ', normalize-space(@class), ' '), ' {cls} ')");
+        return conditions.Count == 0 ? tag : $"{tag}[{string.Join(" and ", conditions)}]";
+    }
+
+    private static bool IsCssNameChar(char ch) =>
+        char.IsLetterOrDigit(ch) || ch is '-' or '_';
 
     internal static Uri? GetConfiguredProxyUri(Uri target, IWebProxy proxy)
     {
@@ -396,7 +662,7 @@ public sealed class PublicArticleFetcher
     private static bool IsRedirect(HttpStatusCode status) => status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
     private static Encoding TryEncoding(string? charset) { try { return string.IsNullOrWhiteSpace(charset) ? new UTF8Encoding(false, true) : Encoding.GetEncoding(charset); } catch (ArgumentException) { return Encoding.UTF8; } }
     private static string Clean(string value) => HtmlEntity.DeEntitize(value).Replace('\u00a0', ' ').Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } parts ? string.Join(' ', parts).Trim() : "";
-    private static ArticleFetchResult Failed(string message) => new(false, "", "", "", "", message);
+    private static ArticleFetchResult Failed(string message, string rawHtml = "") => new(false, "", "", "", "", message, rawHtml);
 }
 
-public sealed record ArticleFetchResult(bool Succeeded, string Url, string SourceHost, string Title, string Content, string Error);
+public sealed record ArticleFetchResult(bool Succeeded, string Url, string SourceHost, string Title, string Content, string Error, string RawHtml = "");

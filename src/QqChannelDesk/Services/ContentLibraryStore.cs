@@ -7,15 +7,22 @@ namespace QqChannelDesk.Services;
 
 public sealed class ContentLibraryStore
 {
+    private const string ItemColumns = """
+        Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson,
+        SourceId, OriginalContent, CandidateContent, DuplicateOfId, ParsedBy, SourceItemId
+        """;
+
     private readonly string _databasePath;
     private readonly AccountContext? _accountContext;
+    private readonly int _originalContentBackfillLimit;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private bool _initialized;
 
-    public ContentLibraryStore(string? databasePath = null, AccountContext? accountContext = null)
+    public ContentLibraryStore(string? databasePath = null, AccountContext? accountContext = null, int originalContentBackfillLimit = 5000)
     {
         _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "channels.db");
         _accountContext = accountContext;
+        _originalContentBackfillLimit = Math.Max(1, originalContentBackfillLimit);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -117,6 +124,19 @@ public sealed class ContentLibraryStore
             pausedIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_ScheduleExecutions_PausedStatusTime ON ScheduleExecutions (IsPaused, Status, ScheduledAt)";
             await pausedIndex.ExecuteNonQueryAsync(cancellationToken);
             await EnsureColumnAsync(connection, "CollectedItems", "MediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "SourceId", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "OriginalContent", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "CandidateContent", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "DuplicateOfId", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "ParsedBy", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await EnsureColumnAsync(connection, "CollectedItems", "SourceItemId", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+            await BackfillCollectedItemOriginalContentAsync(connection, cancellationToken);
+            await using var sourceItemIndex = connection.CreateCommand();
+            sourceItemIndex.CommandText = """
+                CREATE INDEX IF NOT EXISTS IX_CollectedItems_SourceItem
+                ON CollectedItems (AccountKey, SourceId, SourceItemId) WHERE SourceId <> 0 AND SourceItemId <> ''
+                """;
+            await sourceItemIndex.ExecuteNonQueryAsync(cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceType", "TEXT NOT NULL DEFAULT '手工添加'", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "SourceUrl", "TEXT NOT NULL DEFAULT ''", cancellationToken);
             await EnsureColumnAsync(connection, "Materials", "FailedMediaJson", "TEXT NOT NULL DEFAULT '[]'", cancellationToken);
@@ -139,8 +159,11 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson, AccountKey)
-            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error, $media, $accountKey);
+            INSERT INTO CollectedItems (Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson,
+                AccountKey, SourceId, OriginalContent, CandidateContent, DuplicateOfId, ParsedBy, SourceItemId)
+            VALUES ($url, $host, $title, $content, $at, $status, $notes, $tags, $error, $media,
+                $accountKey, $sourceId, CASE WHEN $originalContent='' THEN $content ELSE $originalContent END,
+                $candidateContent, $duplicateOfId, $parsedBy, $sourceItemId);
             SELECT last_insert_rowid();
             """;
         AddItemParameters(command, item);
@@ -157,7 +180,14 @@ public sealed class ContentLibraryStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE CollectedItems SET Url=$url, SourceHost=$host, Title=$title, Content=$content,
-                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error, MediaJson=$media WHERE Id=$id AND ACCOUNT_SCOPE;
+                Status=$status, Notes=$notes, TagsJson=$tags, ParseError=$error, MediaJson=$media,
+                SourceId=CASE WHEN $sourceId=0 THEN SourceId ELSE $sourceId END,
+                OriginalContent=CASE WHEN $originalContent='' THEN OriginalContent ELSE $originalContent END,
+                CandidateContent=CASE WHEN $candidateContent='' THEN CandidateContent ELSE $candidateContent END,
+                DuplicateOfId=CASE WHEN $duplicateOfId=0 THEN DuplicateOfId ELSE $duplicateOfId END,
+                ParsedBy=CASE WHEN $parsedBy='' THEN ParsedBy ELSE $parsedBy END,
+                SourceItemId=CASE WHEN $sourceItemId='' THEN SourceItemId ELSE $sourceItemId END
+            WHERE Id=$id AND ACCOUNT_SCOPE;
             """;
         command.CommandText = command.CommandText.Replace("ACCOUNT_SCOPE", AccountScope("AccountKey"), StringComparison.Ordinal);
         AddItemParameters(command, item, includeCollectedAt: false);
@@ -174,8 +204,91 @@ public sealed class ContentLibraryStore
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson FROM CollectedItems WHERE Url=$url AND {AccountScope("AccountKey")} ORDER BY Id LIMIT 1";
+        command.CommandText = $"""
+            SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson,
+                   SourceId, OriginalContent, CandidateContent, DuplicateOfId, ParsedBy, SourceItemId
+            FROM CollectedItems WHERE Url=$url AND {AccountScope("AccountKey")} ORDER BY Id LIMIT 1
+            """;
         command.Parameters.AddWithValue("$url", normalizedUrl);
+        AddAccountParameter(command, accountKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadItem(reader) : null;
+    }
+
+    public async Task<CollectedItem?> FindCollectionDuplicateAsync(
+        long sourceId,
+        string sourceItemId,
+        string normalizedUrl,
+        string contentFingerprint,
+        CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        var sourceItem = sourceItemId.Trim();
+        var url = normalizedUrl.Trim();
+        if (sourceId > 0 && sourceItem.Length > 0)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                SELECT {ItemColumns}
+                FROM CollectedItems
+                WHERE SourceId=$sourceId AND SourceItemId=$sourceItemId AND {AccountScope("AccountKey")}
+                ORDER BY Id LIMIT 1;
+                """;
+            command.Parameters.AddWithValue("$sourceId", sourceId);
+            command.Parameters.AddWithValue("$sourceItemId", sourceItem);
+            AddAccountParameter(command, accountKey);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken)) return ReadItem(reader);
+        }
+
+        if (url.Length > 0)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                SELECT {ItemColumns}
+                FROM CollectedItems
+                WHERE Url=$url AND {AccountScope("AccountKey")}
+                ORDER BY Id LIMIT 1;
+                """;
+            command.Parameters.AddWithValue("$url", url);
+            AddAccountParameter(command, accountKey);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken)) return ReadItem(reader);
+        }
+
+        if (contentFingerprint.Length == 0) return null;
+        await using var allCommand = connection.CreateCommand();
+        allCommand.CommandText = $"""
+            SELECT Id, Title, Content
+            FROM CollectedItems
+            WHERE Content <> '' AND {AccountScope("AccountKey")};
+            """;
+        AddAccountParameter(allCommand, accountKey);
+        var candidates = new List<(long Id, string Title, string Content)>();
+        await using (var reader = await allCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                candidates.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        return candidates.FirstOrDefault(item =>
+            QqChannelDesk.Services.Collection.ContentFingerprint.Compute(item.Title, item.Content) == contentFingerprint) is { } duplicate
+            ? await GetItemAsync(duplicate.Id, cancellationToken)
+            : null;
+    }
+
+    public async Task<CollectedItem?> GetItemAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return null;
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT {ItemColumns} FROM CollectedItems WHERE Id=$id AND {AccountScope("AccountKey")} LIMIT 1";
+        command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadItem(reader) : null;
@@ -189,7 +302,8 @@ public sealed class ContentLibraryStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson
+            SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson,
+                   SourceId, OriginalContent, CandidateContent, DuplicateOfId, ParsedBy, SourceItemId
             FROM CollectedItems
             WHERE ACCOUNT_SCOPE
               AND ($status='' OR Status=$status)
@@ -222,7 +336,7 @@ public sealed class ContentLibraryStore
 
     public async Task SetItemStatusAsync(long id, string status, CancellationToken cancellationToken = default)
     {
-        if (status is not ("待处理" or "保留" or "忽略" or "已入素材库")) throw new ArgumentOutOfRangeException(nameof(status));
+        if (status is not ("待处理" or "保留" or "忽略" or "已入素材库" or "重复")) throw new ArgumentOutOfRangeException(nameof(status));
         var accountKey = RequireAccountKey();
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
@@ -232,6 +346,67 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<long, int>> GetPendingCountsBySourceAsync(CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return new Dictionary<long, int>();
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT SourceId, COUNT(*) FROM CollectedItems
+            WHERE Status='待处理' AND SourceId > 0 AND {AccountScope("AccountKey")}
+            GROUP BY SourceId;
+            """;
+        AddAccountParameter(command, accountKey);
+        var counts = new Dictionary<long, int>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) counts[reader.GetInt64(0)] = reader.GetInt32(1);
+        return counts;
+    }
+
+    public async Task<int> GetTodayPendingCountAsync(DateTimeOffset todayStart, CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return 0;
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT COUNT(*) FROM CollectedItems
+            WHERE Status='待处理' AND CollectedAt >= $since AND {AccountScope("AccountKey")};
+            """;
+        command.Parameters.AddWithValue("$since", todayStart.ToString("O"));
+        AddAccountParameter(command, accountKey);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    public async Task<IReadOnlyList<CollectedItem>> GetItemsBySourceWindowAsync(
+        long sourceId,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        var accountKey = ReadAccountKey();
+        if (_accountContext is not null && accountKey is null) return [];
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT {ItemColumns} FROM CollectedItems
+            WHERE SourceId=$sourceId AND CollectedAt >= $from AND CollectedAt <= $to AND {AccountScope("AccountKey")}
+            ORDER BY CollectedAt DESC, Id DESC;
+            """;
+        command.Parameters.AddWithValue("$sourceId", sourceId);
+        command.Parameters.AddWithValue("$from", from.ToString("O"));
+        command.Parameters.AddWithValue("$to", to.ToString("O"));
+        AddAccountParameter(command, accountKey);
+        var items = new List<CollectedItem>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) items.Add(ReadItem(reader));
+        return items;
     }
 
     public async Task<IReadOnlyList<MaterialRecord>> GetMaterialsAsync(string? keyword = null, string? status = null, CancellationToken cancellationToken = default)
@@ -2179,9 +2354,39 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$tags", JsonSerializer.Serialize(item.Tags));
         command.Parameters.AddWithValue("$error", item.ParseError.Trim());
         command.Parameters.AddWithValue("$media", JsonSerializer.Serialize(item.Media));
+        command.Parameters.AddWithValue("$sourceId", item.SourceId);
+        command.Parameters.AddWithValue("$originalContent", item.OriginalContent.Trim());
+        command.Parameters.AddWithValue("$candidateContent", item.CandidateContent.Trim());
+        command.Parameters.AddWithValue("$duplicateOfId", item.DuplicateOfId);
+        command.Parameters.AddWithValue("$parsedBy", item.ParsedBy.Trim());
+        command.Parameters.AddWithValue("$sourceItemId", item.SourceItemId.Trim());
     }
 
-    private static CollectedItem ReadItem(SqliteDataReader reader) => new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5)), reader.GetString(6), reader.GetString(7), JsonSerializer.Deserialize<string[]>(reader.GetString(8)) ?? [], reader.GetString(9), reader.IsDBNull(10) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? []);
+    private static CollectedItem ReadItem(SqliteDataReader reader) => new(
+        reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+        DateTimeOffset.Parse(reader.GetString(5)), reader.GetString(6), reader.GetString(7),
+        JsonSerializer.Deserialize<string[]>(reader.GetString(8)) ?? [], reader.GetString(9),
+        reader.IsDBNull(10) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? [],
+        reader.GetInt64(11), reader.GetString(12), reader.GetString(13), reader.GetInt64(14),
+        reader.GetString(15), reader.GetString(16));
+
+    // 每次启动只回填一批，避免大表拖慢初始化；未回填的行靠 OriginalContent='' 条件在下次启动续填。
+    private async Task BackfillCollectedItemOriginalContentAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE CollectedItems
+            SET OriginalContent = Content
+            WHERE rowid IN (
+                SELECT rowid FROM CollectedItems
+                WHERE Content <> '' AND OriginalContent = ''
+                LIMIT $limit);
+            """;
+        command.Parameters.AddWithValue("$limit", _originalContentBackfillLimit);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
     private async Task<SqliteConnection> OpenAsync(CancellationToken token)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -2208,13 +2413,20 @@ public sealed class ContentLibraryStore
 
 public sealed record MaterialSourceSaveResult(long MaterialId, bool Created, MaterialRecord? ExistingMaterial);
 
-public sealed record CollectedItemDraft(string Url, string SourceHost, string Title, string Content, string Status = "待处理", string Notes = "", IReadOnlyList<string>? TagList = null, string ParseError = "", long? Id = null, IReadOnlyList<string>? MediaList = null)
+public sealed record CollectedItemDraft(string Url, string SourceHost, string Title, string Content, string Status = "待处理", string Notes = "", IReadOnlyList<string>? TagList = null, string ParseError = "", long? Id = null, IReadOnlyList<string>? MediaList = null, long SourceId = 0, string OriginalContent = "", string CandidateContent = "", long DuplicateOfId = 0, string ParsedBy = "", string SourceItemId = "")
 {
     public IReadOnlyList<string> Tags => TagList ?? [];
     public IReadOnlyList<string> Media => MediaList ?? [];
 }
-public sealed record CollectedItem(long Id, string Url, string SourceHost, string Title, string Content, DateTimeOffset CollectedAt, string Status, string Notes, IReadOnlyList<string> Tags, string ParseError, IReadOnlyList<string> Media)
+public sealed record CollectedItem(long Id, string Url, string SourceHost, string Title, string Content, DateTimeOffset CollectedAt, string Status, string Notes, IReadOnlyList<string> Tags, string ParseError, IReadOnlyList<string> Media, long SourceId = 0, string OriginalContent = "", string CandidateContent = "", long DuplicateOfId = 0, string ParsedBy = "", string SourceItemId = "")
 {
+    public string ParsedByLabel => ParsedBy switch
+    {
+        "ai-fallback" => "AI",
+        "ai-only" => "AI",
+        "rule" => "规则",
+        _ => "-"
+    };
     public string MediaSummary => Media.Count == 0 ? "" : $"媒体 {Media.Count} 个（{string.Join("、", Media.Select(Path.GetFileName))}）";
 }
 public sealed record MaterialDraft(long? Id, string Title, string Type, string Content, string GuildId, string GuildName, string ChannelId, string ChannelName, DateTimeOffset? PublishAt, string Status, string Link, IReadOnlyList<string> MediaLinks, string SourceType = "手工添加", string SourceUrl = "", IReadOnlyList<TelegramMediaRef>? FailedMedia = null);

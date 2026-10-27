@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using QqChannelDesk.Services;
+using QqChannelDesk.Services.Collection;
 using Xunit;
 
 namespace QqChannelDesk.Tests;
@@ -25,8 +26,11 @@ public sealed class AppDatabaseInitializerTests : IDisposable
         var channels = new ChannelCacheStore(_databasePath);
         var content = new ContentLibraryStore(_databasePath);
         var history = new PublishHistoryStore(_databasePath);
+        var sources = new CollectionSourceStore(_databasePath);
+        var runs = new CollectionRunStore(_databasePath);
+        var aiUsage = new CollectionAiUsageStore(_databasePath);
 
-        await new AppDatabaseInitializer(settings, channels, content, history).InitializeAsync();
+        await new AppDatabaseInitializer(settings, channels, content, history, collectionSources: sources, collectionRuns: runs, collectionAiUsage: aiUsage).InitializeAsync();
 
         Assert.True(File.Exists(_databasePath));
         var persisted = await settings.GetAsync();
@@ -40,9 +44,12 @@ public sealed class AppDatabaseInitializerTests : IDisposable
 
         Assert.Equal(new[]
         {
+            "AiUsageCalls",
             "AppSettings",
             "Channels",
             "CollectedItems",
+            "CollectionRuns",
+            "CollectionSources",
             "Guilds",
             "MaterialImports",
             "MaterialSourceClaims",

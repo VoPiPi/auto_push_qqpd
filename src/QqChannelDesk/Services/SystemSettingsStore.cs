@@ -1,6 +1,8 @@
 using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QqChannelDesk.Services;
 
@@ -20,6 +22,11 @@ public sealed class SystemSettingsStore
     private const string CloseWindowBehaviorKey = "close_window_behavior";
     private const string LastUpdateCheckAtKey = "last_update_check_at";
     private const string SkippedUpdateVersionKey = "skipped_update_version";
+    private const string AiAssistEnabledKey = "ai_assist_enabled";
+    private const string AiBaseUrlKey = "ai_base_url";
+    private const string AiModelNameKey = "ai_model_name";
+    private const string AiApiKeyCipherKey = "ai_api_key_cipher";
+    private const string AiDailyCallLimitKey = "ai_daily_call_limit";
     private readonly string _databasePath;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -64,7 +71,12 @@ public sealed class SystemSettingsStore
                 [StartWithWindowsKey] = "false",
                 [CloseWindowBehaviorKey] = CloseWindowBehavior.ExitApplication.ToString(),
                 [LastUpdateCheckAtKey] = string.Empty,
-                [SkippedUpdateVersionKey] = string.Empty
+                [SkippedUpdateVersionKey] = string.Empty,
+                [AiAssistEnabledKey] = "false",
+                [AiBaseUrlKey] = string.Empty,
+                [AiModelNameKey] = string.Empty,
+                [AiApiKeyCipherKey] = string.Empty,
+                [AiDailyCallLimitKey] = "100"
             };
 
             foreach (var pair in defaults)
@@ -102,7 +114,12 @@ public sealed class SystemSettingsStore
             MaxScheduleConcurrency: ReadConcurrency(values, MaxScheduleConcurrencyKey),
             StartWithWindows: ReadBoolean(values, StartWithWindowsKey),
             CloseWindowBehavior: ReadCloseWindowBehavior(values, CloseWindowBehaviorKey),
-            FfmpegPath: ReadString(values, FfmpegPathKey));
+            FfmpegPath: ReadString(values, FfmpegPathKey),
+            AiAssistEnabled: ReadBoolean(values, AiAssistEnabledKey),
+            AiBaseUrl: ReadString(values, AiBaseUrlKey) ?? "",
+            AiModelName: ReadString(values, AiModelNameKey) ?? "",
+            AiApiKeyCipher: ReadString(values, AiApiKeyCipherKey) ?? "",
+            AiDailyCallLimit: ReadAiDailyCallLimit(values, AiDailyCallLimitKey));
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
@@ -133,12 +150,43 @@ public sealed class SystemSettingsStore
             await UpsertAsync(connection, transaction, StartWithWindowsKey, settings.StartWithWindows, cancellationToken);
             await UpsertAsync(connection, transaction, CloseWindowBehaviorKey,
                 NormalizeCloseWindowBehavior(settings.CloseWindowBehavior).ToString(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiAssistEnabledKey, settings.AiAssistEnabled, cancellationToken);
+            await UpsertAsync(connection, transaction, AiBaseUrlKey, settings.AiBaseUrl.Trim(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiModelNameKey, settings.AiModelName.Trim(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiDailyCallLimitKey,
+                NormalizeAiDailyCallLimit(settings.AiDailyCallLimit).ToString(CultureInfo.InvariantCulture), cancellationToken);
+            // API Key only changes through SaveAiApiKeyAsync so ordinary settings saves cannot overwrite it.
             await transaction.CommitAsync(cancellationToken);
         }
         finally
         {
             _writeLock.Release();
         }
+    }
+
+    public async Task SaveAiApiKeyAsync(string? apiKey, CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            var encrypted = string.IsNullOrWhiteSpace(apiKey) ? "" : ProtectSecret(apiKey.Trim());
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var transaction = connection.BeginTransaction();
+            await UpsertAsync(connection, transaction, AiApiKeyCipherKey, encrypted, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async Task<string> GetAiApiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureDefaultsAsync(cancellationToken);
+        var encrypted = (await GetAsync(cancellationToken)).AiApiKeyCipher;
+        return encrypted.Length == 0 ? "" : UnprotectSecret(encrypted);
     }
 
     public async Task<UpdatePreferences> GetUpdatePreferencesAsync(CancellationToken cancellationToken = default)
@@ -321,6 +369,33 @@ public sealed class SystemSettingsStore
             ? NormalizeTelegramCollectionConcurrency(concurrency)
             : 1;
 
+    private static int ReadAiDailyCallLimit(IReadOnlyDictionary<string, string> values, string key) =>
+        values.TryGetValue(key, out var value) && int.TryParse(value, CultureInfo.InvariantCulture, out var limit)
+            ? NormalizeAiDailyCallLimit(limit)
+            : 100;
+
+    public static int NormalizeAiDailyCallLimit(int limit) =>
+        limit is >= 1 and <= 10_000 ? limit : 100;
+
+    private static string ProtectSecret(string value)
+    {
+        var cipher = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), optionalEntropy: null, DataProtectionScope.CurrentUser);
+        return Convert.ToBase64String(cipher);
+    }
+
+    private static string UnprotectSecret(string value)
+    {
+        try
+        {
+            var plain = ProtectedData.Unprotect(Convert.FromBase64String(value), optionalEntropy: null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(plain);
+        }
+        catch (Exception exception) when (exception is CryptographicException or FormatException)
+        {
+            return "";
+        }
+    }
+
     private static CloseWindowBehavior ReadCloseWindowBehavior(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) && Enum.TryParse<CloseWindowBehavior>(value, true, out var behavior)
             ? NormalizeCloseWindowBehavior(behavior)
@@ -348,7 +423,12 @@ public sealed record AppSettings(
     string? FfmpegPath = null,
     bool TelegramCollectionSchedulerEnabled = true,
     bool NotifyTelegramCollectionFailure = true,
-    int TelegramCollectionConcurrency = 1)
+    int TelegramCollectionConcurrency = 1,
+    bool AiAssistEnabled = false,
+    string AiBaseUrl = "",
+    string AiModelName = "",
+    string AiApiKeyCipher = "",
+    int AiDailyCallLimit = 100)
 {
     public string EffectiveMaterialStoragePath =>
         Path.GetFullPath(string.IsNullOrWhiteSpace(MaterialStoragePath)

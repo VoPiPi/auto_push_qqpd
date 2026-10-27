@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using QqChannelDesk.Services;
+using QqChannelDesk.Services.Collection;
 using Xunit;
 
 namespace QqChannelDesk.Tests;
@@ -125,6 +126,73 @@ public sealed class AccountIsolationTests : IDisposable
         Assert.Equal(execution.Id, unchanged.Id);
         Assert.Equal(ScheduleExecutionStatus.Pending, unchanged.Status);
         Assert.False(unchanged.IsPaused);
+    }
+
+    [Fact]
+    public async Task CollectionSources_AreIsolatedByAccount()
+    {
+        var context = new AccountContext();
+        var store = new CollectionSourceStore(_databasePath, context);
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        var sourceId = await store.CreateSourceAsync(new CollectionSourceDraft("A 来源", "rss", "https://example.test/a"));
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "nickname-b"));
+        Assert.Empty(await store.GetSourcesAsync());
+        Assert.Null(await store.GetSourceAsync(sourceId));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateSourceAsync(
+            new CollectionSourceDraft("越权", "rss", "https://example.test/b", Id: sourceId)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateHealthAsync(
+            new SourceHealthUpdate(sourceId, "failed", DateTimeOffset.Now, null, null)));
+        Assert.False(await store.SoftDeleteSourceAsync(sourceId));
+
+        context.Clear();
+        Assert.Empty(await store.GetSourcesAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.CreateSourceAsync(
+            new CollectionSourceDraft("无账号", "rss", "https://example.test/no-account")));
+
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        Assert.Equal(sourceId, (await store.GetSourcesAsync()).Single().Id);
+    }
+
+    [Fact]
+    public async Task CollectionRuns_AreIsolatedByAccount()
+    {
+        var context = new AccountContext();
+        var sourceStore = new CollectionSourceStore(_databasePath, context);
+        var runStore = new CollectionRunStore(_databasePath, context);
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        var sourceId = await sourceStore.CreateSourceAsync(new CollectionSourceDraft("A 来源", "rss", "https://example.test/a"));
+        var runId = await runStore.CreateRunAsync(new CollectionRunDraft(sourceId, "manual"));
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "nickname-b"));
+        Assert.Empty(await runStore.GetRunsAsync());
+        Assert.Null(await runStore.GetRunAsync(runId));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runStore.CreateRunAsync(new CollectionRunDraft(sourceId)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runStore.CompleteRunAsync(new CollectionRunUpdate(runId, "failed")));
+
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        Assert.Equal(runId, (await runStore.GetRunsAsync()).Single().Id);
+    }
+
+    [Fact]
+    public async Task AiUsageCalls_AreIsolatedByAccount()
+    {
+        var context = new AccountContext();
+        var settings = new SystemSettingsStore(_databasePath);
+        await settings.SaveAsync(new AppSettings(AiAssistEnabled: true, AiDailyCallLimit: 10));
+        var usage = new CollectionAiUsageStore(_databasePath, context);
+        var gate = new AiUsageGate(settings, usage);
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        var source = new CollectionSource(1, "A 来源", "single-page", "https://example.test/a", true, true, null,
+            "rule-first", 60, "", "{}", true, 10, "", "", null, null, null, "healthy", "", "", "",
+            null, DateTimeOffset.Now, DateTimeOffset.Now);
+        Assert.True(await gate.TryReserveAsync(source));
+
+        context.Set(CurrentAccountIdentity.Create("global-b", "nickname-b"));
+        Assert.Equal(0, await usage.CountAsync(source.Id));
+        Assert.True(await gate.TryReserveAsync(source));
+        context.Set(CurrentAccountIdentity.Create("global-a", "nickname-a"));
+        Assert.Equal(1, await usage.CountAsync(source.Id));
     }
 
     public void Dispose()

@@ -344,6 +344,15 @@
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
+    <Style TargetType="PasswordBox">
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="Background" Value="{StaticResource Surface}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
     <Style TargetType="ComboBox" BasedOn="{StaticResource ComboBoxBaseStyle}">
       <Setter Property="Foreground" Value="{StaticResource Ink}" />
       <Setter Property="Background" Value="{StaticResource Surface}" />

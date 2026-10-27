@@ -75,6 +75,7 @@
     <Grid Grid.Row="2">
       <DataGrid x:Name="HistoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
                 CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow"
+                CanUserResizeColumns="True" CanUserReorderColumns="False"
                 HeadersVisibility="Column" HorizontalScrollBarVisibility="Auto"
                 VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>

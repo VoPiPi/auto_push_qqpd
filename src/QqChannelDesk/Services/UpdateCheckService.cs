@@ -45,7 +45,11 @@ public sealed record UpdateCheckResult(
 public sealed class UpdateCheckService
 {
     public const string RepositoryReleaseUrl = "https://gitee.com/vopipi/auto_push_qqpd/releases";
-    public const string ReleasesApiUrl = "https://gitee.com/api/v5/repos/vopipi/auto_push_qqpd/releases?page=1&per_page=10";
+    public const string ReleasesApiUrl = "https://gitee.com/api/v5/repos/vopipi/auto_push_qqpd/releases";
+
+    // Gitee 按页返回 release；只取第 1 页会漏掉第 11 个及以后的版本，必须翻页找最新。
+    private const int ReleasesPerPage = 20;
+    private const int MaxReleasePages = 5;
 
     private const int MaxResponseBytes = 512 * 1024;
     private const int MaxChecksumBytes = 4 * 1024;
@@ -71,18 +75,30 @@ public sealed class UpdateCheckService
 
         try
         {
-            using var response = await _httpClient.GetAsync(
-                ReleasesApiUrl,
-                HttpCompletionOption.ResponseHeadersRead,
-                timeout.Token);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-                return new(true, false, "Gitee 暂无正式发布版本。");
+            var releases = new List<ReleaseUpdateInfo>();
+            for (var page = 1; page <= MaxReleasePages; page++)
+            {
+                using var response = await _httpClient.GetAsync(
+                    BuildReleasesPageUrl(page),
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (page > 1) break;
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                        return new(true, false, "Gitee 暂无正式发布版本。");
+                    return new(false, false, $"Gitee 版本检查未完成，请稍后重试或打开 Gitee Releases 查看。HTTP {(int)response.StatusCode}");
+                }
 
-            if (!response.IsSuccessStatusCode)
-                return new(false, false, $"Gitee 版本检查未完成，请稍后重试或打开 Gitee Releases 查看。HTTP {(int)response.StatusCode}");
+                var payload = await ReadLimitedResponseAsync(response, MaxResponseBytes, timeout.Token);
+                var pageReleases = ParseReleases(payload);
+                releases.AddRange(pageReleases);
+                if (pageReleases.Count < ReleasesPerPage) break;
+                // direction=desc 时后续页只会更旧；本页已出现正式版本，无需继续翻页。
+                if (pageReleases.Any(release => !release.IsPrerelease)) break;
+            }
 
-            var payload = await ReadLimitedResponseAsync(response, MaxResponseBytes, timeout.Token);
-            var release = SelectLatestStableRelease(ParseReleases(payload));
+            var release = SelectLatestStableRelease(releases);
             if (release is null)
                 return new(true, false, "Gitee 暂无正式发布版本。");
 
@@ -269,6 +285,10 @@ public sealed class UpdateCheckService
 
         return match.Groups["hash"].Value.ToUpperInvariant();
     }
+
+    // Gitee 默认按时间正序返回（最新在末页）；direction=desc 让最新版本排在第 1 页。
+    internal static string BuildReleasesPageUrl(int page) =>
+        $"{ReleasesApiUrl}?page={page}&per_page={ReleasesPerPage}&direction=desc";
 
     private static ReleaseUpdateInfo? SelectLatestStableRelease(IReadOnlyList<ReleaseUpdateInfo> releases)
     {

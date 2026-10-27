@@ -14,11 +14,9 @@ public sealed class ComboBoxStyleTests
         Exception? failure = null;
         var thread = new Thread(() =>
         {
-            App? app = null;
             try
             {
-                app = new App();
-                app.InitializeComponent();
+                var app = WpfTestApplication.GetOrCreate();
                 var combo = new ComboBox
                 {
                     Style = (Style)app.FindResource(typeof(ComboBox)),
@@ -61,10 +59,6 @@ public sealed class ComboBoxStyleTests
             catch (Exception ex)
             {
                 failure = ex;
-            }
-            finally
-            {
-                app?.Shutdown();
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

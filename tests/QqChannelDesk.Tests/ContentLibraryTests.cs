@@ -43,6 +43,95 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public void ParseHtml_ExtractsFromDivContentContainer()
+    {
+        // 常见新闻站点：正文在 div.article-content 中，且不在 article/main 标签内。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><meta property="og:title" content="科技新闻标题"/></head>
+            <body>
+              <div class="header">站点头部</div>
+              <div class="article-content">
+                <p>这是新闻正文的第一段，包含足够长度的内容。</p>
+                <p>这是新闻正文的第二段，介绍更多细节。</p>
+              </div>
+              <div class="footer">版权所有</div>
+            </body></html>
+            """);
+
+        Assert.Equal("科技新闻标题", result.Title);
+        Assert.Contains("这是新闻正文的第一段", result.Content);
+        Assert.Contains("这是新闻正文的第二段", result.Content);
+        Assert.DoesNotContain("站点头部", result.Content);
+        Assert.DoesNotContain("版权所有", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_ExtractsFromJsonLd()
+    {
+        // 使用 JSON-LD 提供结构化文章数据的新闻站点。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head>
+              <script type="application/ld+json">
+                {"@type":"NewsArticle","headline":"JSON-LD 标题","articleBody":"JSON-LD 正文第一段。JSON-LD 正文第二段。"}
+              </script>
+            </head>
+            <body><div class="content"><p>普通正文段。</p></div></body></html>
+            """);
+
+        Assert.Equal("JSON-LD 标题", result.Title);
+        Assert.Contains("JSON-LD 正文", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_FallsBackToMetaDescription()
+    {
+        // 页面没有 article/main 容器时，用 meta description 兜底。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head>
+              <meta property="og:title" content="只有摘要的页面"/>
+              <meta property="og:description" content="这是页面摘要，作为正文兜底内容使用，长度足够。" />
+            </head>
+            <body><div class="banner">广告横幅</div></body></html>
+            """);
+
+        Assert.Equal("只有摘要的页面", result.Title);
+        Assert.Contains("这是页面摘要", result.Content);
+        Assert.DoesNotContain("广告横幅", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_SupportsCustomContentSelector()
+    {
+        // 用户配置 contentSelector 时优先使用自定义容器。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><title>自定义选择器</title></head>
+            <body>
+              <div class="main-content"><p>其他正文。</p></div>
+              <div id="my-article"><p>自定义容器正文内容，足够长。</p><p>第二段内容。</p></div>
+            </body></html>
+            """, "#my-article");
+
+        Assert.Equal("自定义选择器", result.Title);
+        Assert.Contains("自定义容器正文内容", result.Content);
+        Assert.DoesNotContain("其他正文", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_RemovesFooterNoise()
+    {
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><title>页面</title></head>
+            <body>
+              <article><p>正文第一段内容，足够长。</p><p>正文第二段内容。</p></article>
+              <footer><p>版权声明：所有内容转载需授权。</p></footer>
+            </body></html>
+            """);
+
+        Assert.DoesNotContain("版权声明", result.Content);
+        Assert.Contains("正文第一段内容", result.Content);
+    }
+
+    [Fact]
     public async Task Store_AllowsMultipleManualItemsAndDeletesOneItem()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
@@ -74,6 +163,39 @@ public sealed class ContentLibraryTests
         Assert.NotNull(remaining);
         Assert.Equal("更新标题", remaining.Title);
         Assert.Equal(3, (await store.GetItemsAsync()).Count);
+    }
+
+    [Fact]
+    public async Task Store_ReportsPendingCountsBySourceAndTodayWindow()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-stats-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new ContentLibraryStore(databasePath);
+            await store.SaveItemAsync(new CollectedItemDraft("https://a1.example", "a.example", "A1", "正文 A", SourceId: 1));
+            await store.SaveItemAsync(new CollectedItemDraft("https://a2.example", "a.example", "A2", "正文 A", SourceId: 1));
+            var keptId = await store.SaveItemAsync(new CollectedItemDraft("https://b1.example", "b.example", "B1", "正文 B", SourceId: 2));
+            await store.SetItemStatusAsync(keptId, "保留");
+            var duplicateId = await store.SaveItemAsync(new CollectedItemDraft("https://a3.example", "a.example", "A3", "正文 A", SourceId: 1));
+            await store.SetItemStatusAsync(duplicateId, "重复");
+
+            var counts = await store.GetPendingCountsBySourceAsync();
+            Assert.Equal(2, counts.GetValueOrDefault(1));
+            Assert.False(counts.ContainsKey(2));
+
+            var todayStart = new DateTimeOffset(DateTime.Now.Date);
+            Assert.Equal(2, await store.GetTodayPendingCountAsync(todayStart));
+            Assert.Equal(0, await store.GetTodayPendingCountAsync(DateTimeOffset.Now.AddMinutes(5)));
+
+            var window = await store.GetItemsBySourceWindowAsync(1, todayStart, DateTimeOffset.Now.AddMinutes(1));
+            Assert.Equal(3, window.Count);
+            Assert.Empty(await store.GetItemsBySourceWindowAsync(2, todayStart.AddMinutes(1), todayStart.AddMinutes(2)));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
     }
 
     [Fact]

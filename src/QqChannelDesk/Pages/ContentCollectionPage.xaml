@@ -1,10 +1,33 @@
 <UserControl x:Class="QqChannelDesk.Pages.ContentCollectionPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:collection="clr-namespace:QqChannelDesk.Pages.Collection">
   <UserControl.Resources>
     <Style x:Key="TelegramScheduleTextCell" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellText}">
       <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
       <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+    </Style>
+    <Style x:Key="SourceFilterItemStyle" TargetType="ListBoxItem">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Padding" Value="8,6" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="ItemBorder" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="4">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource Canvas}" />
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource Line}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
   </UserControl.Resources>
   <Grid Margin="28,24,28,22">
@@ -16,11 +39,15 @@
             </StackPanel>
     </DockPanel>
     <TabControl Grid.Row="1" x:Name="WorkspaceTabs">
-      <TabItem Header="内容收件箱">
+      <TabItem Header="收件箱">
         <Grid Margin="0,4,0,0">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="270" MinWidth="250" />
+            <ColumnDefinition Width="1.05*" MinWidth="260" />
+            <ColumnDefinition Width="1.3*" MinWidth="300" />
+          </Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Border Grid.ColumnSpan="2" Style="{StaticResource Card}" Margin="0,0,0,12">
+          <Border Grid.ColumnSpan="3" Style="{StaticResource Card}" Margin="0,0,0,12">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="UrlBox" Tag="输入公开网页地址，例：https://example.com/page" VerticalContentAlignment="Center" ToolTip="输入公开网页 HTTP/HTTPS 地址"/>
@@ -28,14 +55,46 @@
               <Button Grid.Column="2" Content="新增素材" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="NewItemButton_Click"/>
             </Grid>
           </Border>
-          <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+          <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Padding="12" Margin="0,0,12,0">
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                <TextBlock Text="来源筛选" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="按内容来源过滤收件箱，角标为待审数量。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <ListBox x:Name="SourceFilterList" Background="Transparent" BorderThickness="0" Padding="0"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                       ItemContainerStyle="{StaticResource SourceFilterItemStyle}"
+                       ToolTip="按来源筛选收件箱">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="{Binding Name}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"
+                                 ToolTip="{Binding Name}" VerticalAlignment="Center" />
+                      <Border Grid.Column="1" Style="{StaticResource StatusPill}" Background="{StaticResource Line}"
+                              Visibility="{Binding PendingVisibility}" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding PendingLabel}" Style="{StaticResource StatusPillText}" Foreground="{StaticResource Muted}" />
+                      </Border>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
+          </Border>
+          <Grid Grid.Row="1" Grid.Column="1" Margin="0,0,12,0">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <WrapPanel Margin="0,0,0,8">
               <TextBox x:Name="ItemSearchBox" Tag="搜索标题、正文、来源或标签" Width="190" Margin="0,0,8,0" ToolTip="搜索标题、正文、来源或标签" KeyDown="SearchBox_KeyDown"/>
-              <ComboBox x:Name="ItemStatusFilter" Width="112" SelectedIndex="0" SelectionChanged="ItemStatusFilter_SelectionChanged"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待处理"/><ComboBoxItem Content="保留"/><ComboBoxItem Content="忽略"/><ComboBoxItem Content="已入素材库"/></ComboBox>
+              <ComboBox x:Name="ItemStatusFilter" Width="112" SelectedIndex="0" SelectionChanged="ItemStatusFilter_SelectionChanged"><ComboBoxItem Content="全部状态"/><ComboBoxItem Content="待处理"/><ComboBoxItem Content="保留"/><ComboBoxItem Content="忽略"/><ComboBoxItem Content="重复"/><ComboBoxItem Content="已入素材库"/></ComboBox>
               <Button Content="搜索" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="SearchItemsButton_Click"/>
+              <Button Content="批量保留" Style="{StaticResource QuietButton}" Margin="12,0,0,0" Click="BatchKeepItemsButton_Click"/>
+              <Button Content="批量忽略" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="BatchIgnoreItemsButton_Click"/>
+              <Button Content="批量入库" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="BatchAddItemsToMaterialsButton_Click"/>
             </WrapPanel>
-            <DataGrid x:Name="ItemsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="ItemsGrid_SelectionChanged" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid x:Name="ItemsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Extended" SelectionChanged="ItemsGrid_SelectionChanged" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="55" ElementStyle="{StaticResource DataGridCellText}"/>
                 <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="1.4*" ElementStyle="{StaticResource DataGridCellText}"/>
@@ -50,6 +109,7 @@
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="采集时间" Binding="{Binding CollectedAt, StringFormat={}{0:MM-dd HH:mm}}" Width="105" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="解析" Binding="{Binding ParsedByLabel}" Width="72" ElementStyle="{StaticResource DataGridCellText}"/>
               </DataGrid.Columns>
             </DataGrid>
             <Grid Grid.Row="2" Margin="0,8,0,0">
@@ -63,33 +123,76 @@
               </StackPanel>
             </Grid>
           </Grid>
-          <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-              <TextBlock Text="素材详情" Style="{StaticResource SectionTitle}"/>
-              <TextBlock Text="原文链接" Foreground="{StaticResource Muted}" Margin="0,4,0,4"/>
-              <TextBox x:Name="ItemUrlBox" IsReadOnly="True" ToolTip="来源链接只作为出处信息，不会附加到帖子正文"/>
-              <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="ItemTitleBox"/>
-              <TextBlock Text="正文" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="ItemContentBox" MinHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
-              <TextBlock Text="备注" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="ItemNotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" VerticalContentAlignment="Top"/>
-              <TextBlock Text="标签（用逗号分隔）" Foreground="{StaticResource Muted}" Margin="0,10,0,4"/>
-              <TextBox x:Name="ItemTagsBox"/>
-              <TextBlock x:Name="ItemMediaInfo" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
-              <TextBlock x:Name="ItemMessage" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,9,0,0"/>
-              <WrapPanel Margin="0,12,0,0">
-                <Button Content="保存修改" Style="{StaticResource QuietButton}" Click="SaveItemButton_Click"/>
-                <Button Content="保留" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="KeepItemButton_Click"/>
-                <Button Content="忽略" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="IgnoreItemButton_Click"/>
-                <Button Content="加入素材库" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="AddItemToMaterialsButton_Click"/>
-                <Button Content="删除" Style="{StaticResource TableLinkButton}" Margin="8,0,0,0" Click="DeleteItemButton_Click"/>
-              </WrapPanel>
-            </StackPanel>
-          </ScrollViewer>
+            <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="素材详情" Style="{StaticResource SectionTitle}"/>
+                  <TextBlock x:Name="ItemParsedByText" Grid.Column="1" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+                </Grid>
+                <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,8,0,4"/>
+                <TextBox x:Name="ItemTitleBox"/>
+                <TextBlock Text="原文链接" Foreground="{StaticResource Muted}" Margin="0,8,0,4"/>
+                <TextBox x:Name="ItemUrlBox" IsReadOnly="True" ToolTip="来源链接只作为出处信息，不会附加到帖子正文"/>
+                <TextBlock x:Name="ItemOriginalHeader" Text="原文（只读）" Foreground="{StaticResource Muted}" Margin="0,8,0,4" Visibility="Collapsed"/>
+                <TextBox x:Name="ItemOriginalBox" IsReadOnly="True" MinHeight="84" MaxHeight="200" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" ToolTip="采集时的原始内容，仅供对照；请在下方候选稿中编辑"/>
+                <TextBlock Text="正文（候选稿，可编辑）" Foreground="{StaticResource Muted}" Margin="0,8,0,4"/>
+                <TextBox x:Name="ItemContentBox" MinHeight="160" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+                <Grid Margin="0,8,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="备注" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ItemNotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="46" VerticalContentAlignment="Top"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="标签（逗号分隔）" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ItemTagsBox" VerticalContentAlignment="Top"/>
+                  </StackPanel>
+                </Grid>
+                <TextBlock x:Name="ItemMediaInfo" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                <TextBlock x:Name="ItemMessage" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                <Grid Margin="0,12,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Button Content="保留" Style="{StaticResource QuietButton}" Click="KeepItemButton_Click"/>
+                  <Button Content="忽略" Style="{StaticResource QuietButton}" Grid.Column="1" Margin="8,0,0,0" Click="IgnoreItemButton_Click"/>
+                  <Button x:Name="MarkDuplicateButton" Content="标记重复" Style="{StaticResource QuietButton}" Grid.Column="2" Margin="8,0,0,0" Click="MarkDuplicateButton_Click"/>
+                  <Button x:Name="ReparseItemButton" Content="再次解析" Style="{StaticResource QuietButton}" Grid.Column="3" Margin="8,0,0,0" Click="ReparseItemButton_Click" ToolTip="按原文链接重新提取标题和正文；规则失败时尝试 AI 兜底"/>
+                  <Button Content="删除" Style="{StaticResource TableLinkButton}" Grid.Column="5" Click="DeleteItemButton_Click"/>
+                </Grid>
+                <Grid Margin="0,8,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Button Content="保存修改" Style="{StaticResource QuietButton}" Click="SaveItemButton_Click"/>
+                  <Button Content="加入素材库" Style="{StaticResource PrimaryButton}" Grid.Column="2" Click="AddItemToMaterialsButton_Click"/>
+                </Grid>
+              </StackPanel>
+            </ScrollViewer>
         </Grid>
       </TabItem>
-      <TabItem Header="TG采集">
+      <TabItem Header="来源管理">
+        <ContentControl x:Name="SourcesHost" Margin="0,4,0,0" />
+      </TabItem>
+      <TabItem Header="采集记录">
+        <ContentControl x:Name="RunsHost" Margin="0,4,0,0" />
+      </TabItem>
+      <TabItem x:Name="LegacyTgTempTab" Header="TG采集" Visibility="Collapsed">
         <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -192,7 +295,7 @@
           <TextBlock x:Name="TgStatusText" Grid.Row="3" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
         </Grid>
       </TabItem>
-      <TabItem Header="TG定时采集">
+      <TabItem x:Name="LegacyTgScheduleTab" Header="TG定时采集" Visibility="Collapsed">
         <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
@@ -218,7 +321,7 @@
                          Foreground="{StaticResource Muted}" Margin="0,8,0,0" TextWrapping="Wrap"/>
             </StackPanel>
           </Border>
-          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+          <DataGrid Grid.Row="1" x:Name="TgSchedulesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="TgSchedulesGrid_SelectionChanged" HeadersVisibility="Column" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
             <DataGrid.Columns>
               <DataGridTextColumn Header="采集地址" Binding="{Binding ChannelUrl}" Width="1.4*" MinWidth="90" ElementStyle="{StaticResource TelegramScheduleTextCell}"/>
               <DataGridTextColumn Header="采集数量" Binding="{Binding MessageLimitDisplay}" Width="72" MinWidth="72" ElementStyle="{StaticResource TelegramScheduleTextCell}"/>
@@ -272,7 +375,7 @@
           </Grid>
         </Grid>
       </TabItem>
-      <TabItem Header="代理池">
+      <TabItem x:Name="LegacyProxyTab" Header="代理池">
         <Grid Margin="0,4,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
@@ -320,7 +423,7 @@
             </StackPanel>
           </Grid>
           <Grid Grid.Row="3">
-            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="ProxyNodesGrid_SelectionChanged" PreviewMouseLeftButtonDown="ProxyNodesGrid_PreviewMouseLeftButtonDown" IsReadOnly="False" HeadersVisibility="Column" HorizontalAlignment="Stretch" Width="Auto" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+            <DataGrid x:Name="ProxyNodesGrid" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="ProxyNodesGrid_SelectionChanged" PreviewMouseLeftButtonDown="ProxyNodesGrid_PreviewMouseLeftButtonDown" IsReadOnly="False" HeadersVisibility="Column" HorizontalAlignment="Stretch" Width="Auto" CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
                 <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
                   <DataGridTemplateColumn.CellTemplate>

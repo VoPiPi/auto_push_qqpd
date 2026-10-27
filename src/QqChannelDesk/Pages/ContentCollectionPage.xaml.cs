@@ -1,4 +1,6 @@
 using QqChannelDesk.Services;
+using QqChannelDesk.Services.Collection;
+using QqChannelDesk.Pages.Collection;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -48,6 +50,16 @@ public partial class ContentCollectionPage : UserControl
     private readonly TelegramCollectionStore? _telegramCollectionStore;
     private readonly TelegramCollectionScheduler? _telegramCollectionScheduler;
     private readonly ChannelSyncService? _channelSync;
+    private readonly CollectionSourceStore? _collectionSourceStore;
+    private readonly CollectionRunStore? _collectionRunStore;
+    private readonly CollectionSchedulerService? _collectionScheduler;
+    private readonly TelegramSourceAdapter? _telegramSourceAdapter;
+    private readonly IAiAssistService? _aiAssist;
+    private readonly SourcesView? _sourcesView;
+    private readonly RunsView? _runsView;
+    private bool _collectionSchedulerEventsSubscribed;
+    private long _sourceFilterId;
+    private bool _databaseReady;
     private readonly ObservableCollection<TelegramScheduleRow> _telegramSchedules = [];
     private TelegramCollectionSchedule? _editingTelegramSchedule;
     private string _scheduleCronExpression = "0 0 * * *";
@@ -78,7 +90,12 @@ public partial class ContentCollectionPage : UserControl
         TelegramCollectionStore? telegramCollectionStore,
         TelegramCollectionScheduler? telegramCollectionScheduler,
         ChannelSyncService? channelSync,
-        ITelegramTransport? telegramTransport)
+        ITelegramTransport? telegramTransport,
+        CollectionSourceStore? collectionSourceStore = null,
+        CollectionRunStore? collectionRunStore = null,
+        CollectionSchedulerService? collectionScheduler = null,
+        TelegramSourceAdapter? telegramSourceAdapter = null,
+        SystemSettingsStore? settingsStore = null)
     {
         InitializeComponent();
         _store = store ?? new ContentLibraryStore();
@@ -89,6 +106,27 @@ public partial class ContentCollectionPage : UserControl
         _telegramCollectionStore = telegramCollectionStore;
         _telegramCollectionScheduler = telegramCollectionScheduler;
         _channelSync = channelSync;
+        _collectionSourceStore = collectionSourceStore;
+        _collectionRunStore = collectionRunStore;
+        _collectionScheduler = collectionScheduler;
+        _telegramSourceAdapter = telegramSourceAdapter;
+        _aiAssist = settingsStore is null ? null : new SystemSettingsAiAssistService(settingsStore);
+        var sourcesView = collectionSourceStore is null || collectionRunStore is null || collectionScheduler is null
+            ? null
+            : new SourcesView(collectionSourceStore, collectionRunStore, collectionScheduler, telegramSourceAdapter, _store);
+        _sourcesView = sourcesView;
+        if (sourcesView is not null)
+        {
+            sourcesView.AdvancedTabRequested += SelectLegacyCollectionTab;
+            // 来源管理里对 TG 来源的启停/立即采集改的是同一份旧表，这里联动刷新 TG 定时页签。
+            sourcesView.TelegramScheduleChanged += ScheduleTelegramSchedulesRefresh;
+        }
+        SourcesHost.Content = sourcesView;
+        var runsView = collectionSourceStore is null || collectionRunStore is null
+            ? null
+            : new RunsView(collectionSourceStore, collectionRunStore, telegramSourceAdapter, collectionScheduler, _store);
+        _runsView = runsView;
+        RunsHost.Content = runsView;
         TgGrid.ItemsSource = _tempItems;
         TgProxyBox.ItemsSource = TelegramTransportSelector.Options;
         TgProxyBox.SelectedIndex = 0;
@@ -101,8 +139,22 @@ public partial class ContentCollectionPage : UserControl
         TgScheduleProxyBox.SelectedIndex = 0;
         TgScheduleLimitBox.Text = "20";
         ProxyConcurrencyBox.Text = ProxyPoolService.DefaultConcurrency.ToString();
-        Loaded += (_, _) => StartPageLifetime();
+        WorkspaceTabs.SelectionChanged += WorkspaceTabs_SelectionChanged;
+        // 来源筛选列表先放默认项，页面加载后再异步刷新成带待审计数的完整列表。
+        SourceFilterList.ItemsSource = new List<SourceFilterItem> { new(0, "全部来源", 0) };
+        SourceFilterList.SelectedIndex = 0;
+        SourceFilterList.SelectionChanged += SourceFilterList_SelectionChanged;
+        Loaded += (_, _) =>
+        {
+            if (_databaseReady) StartPageLifetime();
+        };
         Unloaded += (_, _) => EndPageLifetime();
+    }
+
+    public void OnDatabaseReady()
+    {
+        _databaseReady = true;
+        if (IsLoaded && _pageLifetimeCts is null) StartPageLifetime();
     }
 
     private CancellationToken CurrentPageToken => _pageLifetimeCts?.Token ?? new CancellationToken(canceled: true);
@@ -111,11 +163,11 @@ public partial class ContentCollectionPage : UserControl
         IsLoaded
         && _pageLifetimeCts is { IsCancellationRequested: false };
 
+    // 不比较 token 实例：防抖刷新使用链接 token（CreateLinkedTokenSource），
+    // 实例永远不等于页面 token，但页面退出时链接 token 会随之取消，防串台依然成立。
     private bool IsPageActive(CancellationToken token) =>
         IsPageActiveForUpdates
-        && !token.IsCancellationRequested
-        && _pageLifetimeCts is { IsCancellationRequested: false }
-        && _pageLifetimeCts.Token == token;
+        && !token.IsCancellationRequested;
 
     private void StartPageLifetime()
     {
@@ -125,6 +177,7 @@ public partial class ContentCollectionPage : UserControl
         previous?.Cancel();
 
         SubscribeSchedulerEvents();
+        SubscribeCollectionSchedulerEvents();
         SetTgBusy(false);
         _proxyBatchActionBusy = false;
         SetProxyBusy(false);
@@ -132,11 +185,13 @@ public partial class ContentCollectionPage : UserControl
         UiAsync.Run("内容采集初始化收件箱", () => LoadItemsAsync(token));
         UiAsync.Run("内容采集初始化代理源", () => LoadProxySourcesAsync(token));
         UiAsync.Run("内容采集初始化定时任务", () => LoadTelegramSchedulesAsync(cancellationToken: token));
+        UiAsync.Run("内容采集初始化来源筛选", () => LoadSourceFiltersAsync(token));
     }
 
     private void EndPageLifetime()
     {
         UnsubscribeSchedulerEvents();
+        UnsubscribeCollectionSchedulerEvents();
         _telegramSchedulesRefreshCts?.Cancel();
         _telegramSchedulesRefreshCts = null;
         var lifetime = _pageLifetimeCts;
@@ -162,7 +217,10 @@ public partial class ContentCollectionPage : UserControl
                 status is "全部状态" ? null : status,
                 cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _itemsLoadVersion) return;
-            _allItems = items;
+            var filteredItems = _sourceFilterId == 0
+                ? items
+                : items.Where(item => item.SourceId == _sourceFilterId).ToArray();
+            _allItems = filteredItems;
             _itemsPage = 1;
             RenderItemsPage();
         }
@@ -174,6 +232,107 @@ public partial class ContentCollectionPage : UserControl
             ItemsGrid.ItemsSource = null;
             UpdateItemsPagination();
             ItemsStatus.Text = $"未能读取收件箱，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
+        }
+    }
+
+    private async Task LoadSourceFiltersAsync(CancellationToken cancellationToken)
+    {
+        if (!IsPageActive(cancellationToken) || _collectionSourceStore is null) return;
+        try
+        {
+            var sources = await _collectionSourceStore.GetSourcesAsync(cancellationToken);
+            if (!IsPageActive(cancellationToken)) return;
+            var pendingCounts = await _store.GetPendingCountsBySourceAsync(cancellationToken);
+            if (!IsPageActive(cancellationToken)) return;
+            var totalPending = pendingCounts.Values.Sum();
+            var items = new List<SourceFilterItem>
+            {
+                new(0, totalPending > 0 ? $"全部来源（待审 {totalPending}）" : "全部来源", 0)
+            };
+            items.AddRange(sources.OrderBy(item => item.Name).Select(source =>
+                new SourceFilterItem(source.Id, source.Name, pendingCounts.GetValueOrDefault(source.Id))));
+            SourceFilterList.SelectionChanged -= SourceFilterList_SelectionChanged;
+            SourceFilterList.ItemsSource = items;
+            var selected = items.FirstOrDefault(item => item.Id == _sourceFilterId) ?? items[0];
+            SourceFilterList.SelectedItem = selected;
+            SourceFilterList.SelectionChanged += SourceFilterList_SelectionChanged;
+            _sourceFilterId = selected.Id;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            ItemMessage.Text = $"加载来源筛选失败：{CliDiagnostics.Sanitize(exception.Message)}";
+        }
+    }
+
+    private void SourceFilterList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _sourceFilterId = (SourceFilterList.SelectedItem as SourceFilterItem)?.Id ?? 0;
+        if (IsLoaded) UiAsync.Observe("筛选来源内容", LoadItemsAsync());
+    }
+
+    private void SubscribeCollectionSchedulerEvents()
+    {
+        if (_collectionScheduler is null || _collectionSchedulerEventsSubscribed) return;
+        _collectionScheduler.RunCompleted += CollectionScheduler_RunCompleted;
+        _collectionSchedulerEventsSubscribed = true;
+    }
+
+    private void UnsubscribeCollectionSchedulerEvents()
+    {
+        if (_collectionScheduler is null || !_collectionSchedulerEventsSubscribed) return;
+        _collectionScheduler.RunCompleted -= CollectionScheduler_RunCompleted;
+        _collectionSchedulerEventsSubscribed = false;
+    }
+
+    private void CollectionScheduler_RunCompleted(CollectionSchedulerRunCompleted completed)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            UiAsync.Post(Dispatcher, () => CollectionScheduler_RunCompleted(completed));
+            return;
+        }
+        if (!IsPageActiveForUpdates || !_collectionSchedulerEventsSubscribed) return;
+        UiAsync.Observe("刷新统一采集结果", RefreshAfterCollectionRunAsync());
+    }
+
+    private async Task RefreshAfterCollectionRunAsync()
+    {
+        var token = CurrentPageToken;
+        if (!IsPageActive(token)) return;
+        await LoadItemsAsync(token);
+        await LoadSourceFiltersAsync(token);
+        if (_sourcesView is not null) await _sourcesView.RefreshAsync();
+        if (_runsView is not null) await _runsView.RefreshAsync();
+    }
+
+    private void SelectLegacyCollectionTab(string tab)
+    {
+        var target = tab switch
+        {
+            "tg-temp" => LegacyTgTempTab,
+            "tg-schedule" => LegacyTgScheduleTab,
+            "proxy" => LegacyProxyTab,
+            _ => null
+        };
+        if (target is null) return;
+        target.Visibility = Visibility.Visible;
+        WorkspaceTabs.SelectedItem = target;
+    }
+
+    private void WorkspaceTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // 只有页签自身的切换才收起临时入口；内部的 ComboBox/状态筛选事件会冒泡到这里。
+        // 代理池是常驻页签不收起；TG快采和 TG定时仍是按需展开的临时入口。
+        if (!ReferenceEquals(e.OriginalSource, WorkspaceTabs)) return;
+        if (WorkspaceTabs.SelectedItem is TabItem selected &&
+            !ReferenceEquals(selected, LegacyTgTempTab) &&
+            !ReferenceEquals(selected, LegacyTgScheduleTab))
+        {
+            LegacyTgTempTab.Visibility = Visibility.Collapsed;
+            LegacyTgScheduleTab.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -256,6 +415,7 @@ public partial class ContentCollectionPage : UserControl
             ItemTagsBox.Clear();
             _pendingMedia.Clear();
             ShowMediaInfo();
+            UpdateOriginalContentPanel();
             ItemMessage.Text = result.Succeeded
                 ? $"已提取自 {result.SourceHost}。请检查并确认内容使用权限后保存。"
                 : $"{result.Error}\n可补全标题和正文后保存。";
@@ -288,6 +448,7 @@ public partial class ContentCollectionPage : UserControl
         ShowMediaInfo();
         ItemMessage.Text = "手动素材不需要来源链接。";
         _parseError = "";
+        UpdateOriginalContentPanel();
     }
 
     private void SaveItemButton_Click(object sender, RoutedEventArgs e) =>
@@ -329,7 +490,7 @@ public partial class ContentCollectionPage : UserControl
         }
         var tags = ItemTagsBox.Text.Split([',', '，', ';', '；'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var status = _selectedItem?.Status ?? "待处理";
-        var model = new CollectedItemDraft(normalizedUrl, host, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _parseError, _selectedItem?.Id, MediaList: media);
+        var model = new CollectedItemDraft(normalizedUrl, host, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _parseError, _selectedItem?.Id, MediaList: media, OriginalContent: ItemOriginalBox.Text);
         try
         {
             if (_selectedItem is null) await _store.SaveItemAsync(model);
@@ -364,7 +525,31 @@ public partial class ContentCollectionPage : UserControl
         _parseError = _selectedItem.ParseError;
         _pendingMedia.Clear();
         ShowMediaInfo(_selectedItem.Media);
+        UpdateOriginalContentPanel();
     }
+
+    private void UpdateOriginalContentPanel()
+    {
+        var item = _selectedItem;
+        var original = item?.OriginalContent ?? "";
+        var showOriginal = original.Length > 0;
+        ItemOriginalHeader.Visibility = showOriginal ? Visibility.Visible : Visibility.Collapsed;
+        ItemOriginalBox.Visibility = showOriginal ? Visibility.Visible : Visibility.Collapsed;
+        ItemOriginalBox.Text = showOriginal ? original : "";
+        var parsedLabel = ParsedByLabel(item?.ParsedBy ?? "");
+        ItemParsedByText.Text = parsedLabel.Length == 0 ? "" : $"解析方式：{parsedLabel}";
+        ItemParsedByText.Visibility = parsedLabel.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ReparseItemButton.IsEnabled = item is not null && item.Url.Length > 0;
+        MarkDuplicateButton.IsEnabled = item is not null;
+    }
+
+    private static string ParsedByLabel(string parsedBy) => parsedBy switch
+    {
+        "rule" => "规则解析",
+        "ai-fallback" => "AI 兜底",
+        "ai-only" => "AI 专用",
+        _ => ""
+    };
 
     private void KeepItemButton_Click(object sender, RoutedEventArgs e) =>
         UiAsync.Run("保留采集项", async () =>
@@ -382,12 +567,97 @@ public partial class ContentCollectionPage : UserControl
         await SaveCurrentItemAsync("忽略", pageToken);
         });
 
+    private void BatchKeepItemsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("批量保留采集项", () => BatchSetItemStatusAsync("保留", CurrentPageToken));
+
+    private void BatchIgnoreItemsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("批量忽略采集项", () => BatchSetItemStatusAsync("忽略", CurrentPageToken));
+
+    private async Task BatchSetItemStatusAsync(string status, CancellationToken cancellationToken)
+    {
+        var items = ItemsGrid.SelectedItems.OfType<CollectedItem>()
+            .Where(item => item.Status != status)
+            .ToArray();
+        if (!IsPageActive(cancellationToken) || items.Length == 0)
+        {
+            ItemMessage.Text = status == "保留" ? "请先选择要保留的采集项。" : "请先选择要忽略的采集项。";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+            return;
+        }
+
+        try
+        {
+            foreach (var item in items)
+                await _store.SetItemStatusAsync(item.Id, status, cancellationToken);
+            if (!IsPageActive(cancellationToken)) return;
+            ItemMessage.Text = $"已批量{status} {items.Length} 条采集项。";
+            ItemMessage.Foreground = UiStatusBrushes.Success;
+            await LoadItemsAsync(cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            ItemMessage.Text = $"批量{status}未完成：{CliDiagnostics.Sanitize(exception.Message)}";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+        }
+    }
+
+    private void BatchAddItemsToMaterialsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("批量加入素材库", async () =>
+        {
+            var pageToken = CurrentPageToken;
+            if (!IsPageActive(pageToken)) return;
+            var items = ItemsGrid.SelectedItems.OfType<CollectedItem>()
+                .Where(item => item.Status != "已入素材库")
+                .ToArray();
+            if (items.Length == 0)
+            {
+                ItemMessage.Text = "请先选择要加入素材库的采集项。";
+                ItemMessage.Foreground = UiStatusBrushes.Warning;
+                return;
+            }
+
+            if (MessageBox.Show(Window.GetWindow(this), $"将批量创建 {items.Length} 条素材。\n请确认你拥有这些内容的使用授权。是否继续？", "批量入库确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            var created = 0;
+            try
+            {
+                foreach (var item in items)
+                {
+                    if (string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Content) && item.Media.Count == 0) continue;
+                    var type = MaterialMediaValidator.InferType(item.Media) ?? (item.Media.Count == 0 ? "text" : "");
+                    if (type.Length == 0) continue;
+                    await _store.SaveMaterialAsync(new MaterialDraft(
+                        null,
+                        item.Title,
+                        type,
+                        item.Content,
+                        "", "", "", "", null, "waitsend", "", item.Media,
+                        item.Url.Length > 0 ? "网络采集" : "手工添加",
+                        item.Url), pageToken);
+                    await _store.SetItemStatusAsync(item.Id, "已入素材库", pageToken);
+                    created++;
+                }
+
+                if (!IsPageActive(pageToken)) return;
+                ItemMessage.Text = created == items.Length
+                    ? $"已批量加入素材库 {created} 条。"
+                    : $"已加入 {created} 条，跳过 {items.Length - created} 条无标题正文或媒体类型无效的内容。";
+                ItemMessage.Foreground = created == items.Length ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
+                await LoadItemsAsync(pageToken);
+            }
+            catch (Exception exception) when (!pageToken.IsCancellationRequested)
+            {
+                ItemMessage.Text = $"批量入库在第 {created + 1} 条附近未完成：{CliDiagnostics.Sanitize(exception.Message)}";
+                ItemMessage.Foreground = UiStatusBrushes.Warning;
+                await LoadItemsAsync(pageToken);
+            }
+        });
+
     private async Task SaveCurrentItemAsync(string status, CancellationToken cancellationToken)
     {
         if (_selectedItem is null || !IsPageActive(cancellationToken)) return;
         var tags = ItemTagsBox.Text.Split([',', '，', ';', '；'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem.Media;
-        await _store.UpdateItemAsync(new CollectedItemDraft(_selectedItem.Url, _selectedItem.SourceHost, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _selectedItem.ParseError, _selectedItem.Id, MediaList: media));
+        await _store.UpdateItemAsync(new CollectedItemDraft(_selectedItem.Url, _selectedItem.SourceHost, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _selectedItem.ParseError, _selectedItem.Id, MediaList: media, OriginalContent: ItemOriginalBox.Text));
         if (!IsPageActive(cancellationToken)) return;
         await LoadItemsAsync(cancellationToken);
     }
@@ -444,6 +714,78 @@ public partial class ContentCollectionPage : UserControl
         if (!IsPageActive(pageToken)) return;
         _selectedItem = null;
         await LoadItemsAsync(pageToken);
+        });
+
+    private void MarkDuplicateButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("标记重复采集项", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if (_selectedItem is null || !IsPageActive(pageToken)) return;
+        await _store.SetItemStatusAsync(_selectedItem.Id, "重复", pageToken);
+        if (!IsPageActive(pageToken)) return;
+        ItemMessage.Text = "已标记为重复。";
+        ItemMessage.Foreground = UiStatusBrushes.Success;
+        await LoadItemsAsync(pageToken);
+        });
+
+    private void ReparseItemButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("再次解析采集项", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if (_selectedItem is null || !IsPageActive(pageToken)) return;
+        if (!PublicArticleFetcher.TryNormalizePublicUrl(_selectedItem.Url, out var normalized, out var urlError))
+        {
+            ItemMessage.Text = $"无法再次解析：{urlError}";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+            return;
+        }
+
+        try
+        {
+            ItemMessage.Text = "正在重新解析…";
+            var result = await _fetcher.FetchAsync(normalized.AbsoluteUri, pageToken);
+            if (!IsPageActive(pageToken)) return;
+            if (result.Succeeded)
+            {
+                ItemTitleBox.Text = result.Title;
+                ItemContentBox.Text = result.Content;
+                ItemOriginalBox.Text = result.Content;
+                ItemOriginalHeader.Visibility = Visibility.Visible;
+                ItemOriginalBox.Visibility = Visibility.Visible;
+                _parseError = "";
+                ItemMessage.Text = "已重新解析，请检查后保存修改。";
+                ItemMessage.Foreground = UiStatusBrushes.Success;
+                return;
+            }
+
+            _parseError = result.Error;
+            if (_aiAssist is not null && result.RawHtml.Length > 0)
+            {
+                var aiResult = await _aiAssist.ExtractAsync(result.RawHtml, "single-page", pageToken);
+                if (!IsPageActive(pageToken)) return;
+                if (aiResult.Succeeded)
+                {
+                    ItemTitleBox.Text = aiResult.Title;
+                    ItemContentBox.Text = aiResult.Content;
+                    ItemMessage.Text = "规则解析失败，已用 AI 兜底生成候选稿，请检查后保存修改。";
+                    ItemMessage.Foreground = UiStatusBrushes.Success;
+                    return;
+                }
+
+                ItemMessage.Text = $"重新解析未成功：{result.Error}{Environment.NewLine}AI 兜底：{aiResult.ErrorSummary}";
+                ItemMessage.Foreground = UiStatusBrushes.Warning;
+                return;
+            }
+
+            ItemMessage.Text = $"重新解析未成功：{result.Error}";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (!IsPageActive(pageToken)) return;
+            ItemMessage.Text = $"重新解析未成功：{CliDiagnostics.Sanitize(exception.Message)}";
+            ItemMessage.Foreground = UiStatusBrushes.Warning;
+        }
         });
 
     private void SearchItemsButton_Click(object sender, RoutedEventArgs e) =>
@@ -1148,6 +1490,7 @@ public partial class ContentCollectionPage : UserControl
             if (!IsPageActive(pageToken)) return id;
             await LoadTelegramSchedulesAsync(cancellationToken: pageToken);
             if (!IsPageActive(pageToken)) return id;
+            RefreshSourcesViewAfterTelegramChange();
             TgScheduleStatusText.Text = $"定时采集配置已保存（编号 {id}）。";
             return id;
         }
@@ -1214,6 +1557,7 @@ public partial class ContentCollectionPage : UserControl
             if (!IsPageActive(pageToken)) return;
             await LoadTelegramSchedulesAsync(cancellationToken: pageToken);
             if (!IsPageActive(pageToken)) return;
+            RefreshSourcesViewAfterTelegramChange();
             TgScheduleStatusText.Text = schedule.Enabled ? "定时采集已关闭。" : "定时采集已开启。";
         }
         catch (Exception ex)
@@ -1238,6 +1582,7 @@ public partial class ContentCollectionPage : UserControl
             if (!IsPageActive(pageToken)) return;
             if (_editingTelegramSchedule?.Id == schedule.Id) ClearTelegramScheduleEditor();
             await LoadTelegramSchedulesAsync(cancellationToken: pageToken);
+            RefreshSourcesViewAfterTelegramChange();
         }
         catch (Exception ex)
         {
@@ -1276,6 +1621,7 @@ public partial class ContentCollectionPage : UserControl
             // pageToken 只结束页面等待；已经进入调度器队列的采集会继续运行。
             var result = await _telegramCollectionScheduler.RunNowAsync(schedule.Id, pageToken);
             if (!IsPageActive(pageToken)) return;
+            RefreshSourcesViewAfterTelegramChange();
             TgScheduleStatusText.Text = result.Succeeded
                 ? $"立即采集完成：新增 {result.AddedCount} 条，跳过 {result.SkippedCount} 条。"
                 : $"立即采集未完成，请检查频道或代理后重试：{result.Message}";
@@ -1453,8 +1799,22 @@ public partial class ContentCollectionPage : UserControl
         ScheduleTelegramSchedulesRefresh();
     }
 
+    // TG 定时页的启停/保存/删除/运行改的是旧 TG 表；统一来源视图基于同一数据，需同步刷新。
+    private void RefreshSourcesViewAfterTelegramChange()
+    {
+        if (!IsPageActiveForUpdates) return;
+        if (_sourcesView is not null) UiAsync.Observe("刷新统一来源视图", _sourcesView.RefreshAsync());
+    }
+
     private void ScheduleTelegramSchedulesRefresh()
     {
+        // 事件可能来自后台线程（调度器事件、来源管理联动），先回到页面 Dispatcher。
+        if (!Dispatcher.CheckAccess())
+        {
+            UiAsync.Post(Dispatcher, ScheduleTelegramSchedulesRefresh);
+            return;
+        }
+
         var previous = _telegramSchedulesRefreshCts;
         var refresh = CancellationTokenSource.CreateLinkedTokenSource(CurrentPageToken);
         _telegramSchedulesRefreshCts = refresh;
@@ -1468,6 +1828,18 @@ public partial class ContentCollectionPage : UserControl
         {
             // 并发任务的终态事件可能几乎同时到达，短暂合并后再读取数据库。
             await Task.Delay(200, refresh.Token);
+            // Delay 的延续可能落在线程池（无同步上下文的调用方），加载前必须回到页面 Dispatcher。
+            if (!Dispatcher.CheckAccess())
+            {
+                await await Dispatcher.InvokeAsync(() =>
+                {
+                    if (IsPageActive(refresh.Token))
+                        return LoadTelegramSchedulesAsync(updateSummary: false, cancellationToken: refresh.Token);
+                    return Task.CompletedTask;
+                });
+                return;
+            }
+
             if (!IsPageActive(refresh.Token)) return;
             await LoadTelegramSchedulesAsync(updateSummary: false, cancellationToken: refresh.Token);
         }
@@ -2113,4 +2485,21 @@ public partial class ContentCollectionPage : UserControl
     #endregion
 
     #endregion
+}
+
+/// <summary>收件箱左侧来源筛选行：名称 + 待审角标，Id=0 表示全部来源。</summary>
+public sealed class SourceFilterItem
+{
+    public SourceFilterItem(long id, string name, int pendingCount)
+    {
+        Id = id;
+        Name = name;
+        PendingCount = pendingCount;
+    }
+
+    public long Id { get; }
+    public string Name { get; }
+    public int PendingCount { get; }
+    public string PendingLabel => $"待审 {PendingCount}";
+    public Visibility PendingVisibility => PendingCount > 0 ? Visibility.Visible : Visibility.Collapsed;
 }

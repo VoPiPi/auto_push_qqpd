@@ -11,6 +11,7 @@ using Button = System.Windows.Controls.Button;
 using UserControl = System.Windows.Controls.UserControl;
 using QqChannelDesk.Pages;
 using QqChannelDesk.Services;
+using QqChannelDesk.Services.Collection;
 
 namespace QqChannelDesk;
 
@@ -31,6 +32,11 @@ public partial class MainWindow : Window
     private readonly TelegramTransportService _telegramTransport;
     private readonly TelegramCollectionStore _telegramCollectionStore;
     private readonly PublishPolicyStore _publishPolicyStore;
+    private readonly CollectionSourceStore _collectionSourceStore;
+    private readonly CollectionRunStore _collectionRunStore;
+    private readonly CollectionAiUsageStore _collectionAiUsageStore;
+    private readonly CollectionSchedulerService _collectionScheduler;
+    private readonly TelegramSourceAdapter _telegramSourceAdapter;
     private readonly PublishAutoScheduleService _publishAutoScheduleService;
     private readonly PublishExecutionService _publisher;
     private readonly PublishScheduler _scheduler;
@@ -97,6 +103,20 @@ public partial class MainWindow : Window
         _telegramTransport = new TelegramTransportService(_proxyPoolStore);
         _telegramCollectionStore = new TelegramCollectionStore(accountContext: _accountContext);
         _publishPolicyStore = new PublishPolicyStore(accountContext: _accountContext);
+        _collectionSourceStore = new CollectionSourceStore(accountContext: _accountContext);
+        _collectionRunStore = new CollectionRunStore(accountContext: _accountContext);
+        _collectionAiUsageStore = new CollectionAiUsageStore(accountContext: _accountContext);
+        _collectionScheduler = new CollectionSchedulerService(
+            _collectionSourceStore,
+            _collectionRunStore,
+            _contentLibrary,
+            new Dictionary<string, ISourceCollector>
+            {
+                ["single-page"] = CreateSinglePageCollector(),
+                ["rss"] = new RssCollector(),
+                ["web-column"] = new WebColumnCollector(new PublicWebColumnPageFetcher())
+            },
+            maxConcurrency: 1);
         _publishAutoScheduleService = new PublishAutoScheduleService(_contentLibrary, _publishPolicyStore);
         _mediaStorage = new MediaStorageService(_settingsStore);
         _channelSync = new ChannelSyncService(_workflow, _channelCache);
@@ -108,7 +128,10 @@ public partial class MainWindow : Window
             _historyStore,
             _proxyPoolStore,
             _telegramCollectionStore,
-            publishPolicies: _publishPolicyStore);
+            publishPolicies: _publishPolicyStore,
+            collectionSources: _collectionSourceStore,
+            collectionRuns: _collectionRunStore,
+            collectionAiUsage: _collectionAiUsageStore);
         _scheduler = new PublishScheduler(
             _contentLibrary,
             _publisher,
@@ -121,8 +144,21 @@ public partial class MainWindow : Window
             autoSchedule: _publishAutoScheduleService,
             logger: _logger,
             transport: _telegramTransport);
+        // 适配器必须持有上面刚创建的 TG 调度器实例；先建适配器会拿到 null，立即采集会报“未初始化”。
+        _telegramSourceAdapter = new TelegramSourceAdapter(_telegramCollectionStore, _telegramCollectionScheduler, maxConcurrency: 1);
         _historyPage = new HistoryPage(_historyStore);
-        _contentCollectionPage = new ContentCollectionPage(_contentLibrary, _proxyPoolStore, _telegramCollectionStore, _telegramCollectionScheduler, _channelSync, _telegramTransport);
+        _contentCollectionPage = new ContentCollectionPage(
+            _contentLibrary,
+            _proxyPoolStore,
+            _telegramCollectionStore,
+            _telegramCollectionScheduler,
+            _channelSync,
+            _telegramTransport,
+            _collectionSourceStore,
+            _collectionRunStore,
+            _collectionScheduler,
+            _telegramSourceAdapter,
+            _settingsStore);
         _materialsPage = new MaterialsPage(_contentLibrary, _channelSync, _mediaStorage, _scheduler);
         _schedulePage = new PublishSchedulePage(_contentLibrary, _scheduler);
         _publishPolicyPage = new PublishPolicyPage(_publishPolicyStore, _channelSync);
@@ -171,6 +207,7 @@ public partial class MainWindow : Window
                 await _databaseInitializer.InitializeAsync();
                 //_logger.Info("本地数据库初始化完成，默认配置已检查。\n数据库位置：程序目录\\channels.db");
                 _logger.Debug("本地数据库初始化完成，默认配置已检查。");
+                _contentCollectionPage.OnDatabaseReady();
             }
             catch (Exception ex)
             {
@@ -204,6 +241,8 @@ public partial class MainWindow : Window
             ApplyTelegramCollectionConcurrency(settings.TelegramCollectionConcurrency);
             _telegramCollectionScheduler.SetEnabled(settings.TelegramCollectionSchedulerEnabled);
             if (_accountContext.IsAuthenticated) _telegramCollectionScheduler.Start();
+            // 统一采集调度与 TG 调度同步启停：都依赖当前账号的来源配置。
+            if (_accountContext.IsAuthenticated) _collectionScheduler.Start();
             _operationsCenterPage.SetSchedulerSwitches(settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
             _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
             _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
@@ -1104,10 +1143,12 @@ public partial class MainWindow : Window
     {
         var publishActive = _scheduler.Status.Running || _scheduler.Status.Paused;
         var telegramActive = _telegramCollectionScheduler.IsRunning;
-        if (!publishActive && !telegramActive) return true;
+        var collectionActive = _collectionScheduler.IsRunning;
+        if (!publishActive && !telegramActive && !collectionActive) return true;
         var stopped = true;
         if (publishActive) stopped &= await _scheduler.StopAsync();
         if (telegramActive) stopped &= await _telegramCollectionScheduler.StopAsync();
+        if (collectionActive) await _collectionScheduler.StopAsync();
         if (stopped) return true;
 
         _operationsCenterPage.SetFooter(failureMessage);
@@ -1124,6 +1165,7 @@ public partial class MainWindow : Window
         ApplyTelegramCollectionConcurrency(settings.TelegramCollectionConcurrency);
         _telegramCollectionScheduler.SetEnabled(settings.TelegramCollectionSchedulerEnabled);
         _telegramCollectionScheduler.Start();
+        _collectionScheduler.Start();
         _operationsCenterPage.SetSchedulerSwitches(settings.AutoExecuteSchedules, settings.TelegramCollectionSchedulerEnabled);
         _operationsCenterPage.UpdateSchedulerStatus(_scheduler.Status);
         _operationsCenterPage.UpdateTelegramSchedulerStatus(_telegramCollectionScheduler.Status);
@@ -1245,6 +1287,16 @@ public partial class MainWindow : Window
         _trayIconTemporarilyShown = false;
         if (_trayIcon is not null && IsVisible)
             _trayIcon.Visible = false;
+    }
+
+    private SinglePageCollector CreateSinglePageCollector()
+    {
+        var fetcher = new PublicArticleFetcher();
+        return new SinglePageCollector(
+            fetcher.FetchAsync,
+            new SystemSettingsAiAssistService(_settingsStore),
+            new AiUsageGate(_settingsStore, _collectionAiUsageStore),
+            fetchPageWithSelector: fetcher.FetchAsync);
     }
 
     private void ApplyTelegramCollectionConcurrency(int concurrency)
@@ -1520,6 +1572,14 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 _logger.Error($"关闭程序时停止 TG 定时采集执行器失败：{CliDiagnostics.Sanitize(ex.Message)}");
+            }
+            try
+            {
+                await _collectionScheduler.StopAsync().WaitAsync(ShutdownSchedulerWait);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"关闭程序时停止统一内容采集调度器失败：{CliDiagnostics.Sanitize(ex.Message)}");
             }
             if (!publishSchedulerStopped || !telegramSchedulerStopped)
             {
