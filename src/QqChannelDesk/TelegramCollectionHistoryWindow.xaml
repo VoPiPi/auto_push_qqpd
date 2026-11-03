@@ -22,7 +22,6 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
     <Grid>
@@ -72,20 +71,26 @@
       </WrapPanel>
     </Border>
 
-    <Grid Grid.Row="2">
+    <Border x:Name="HistoryTableCard" Grid.Row="2" Style="{StaticResource TableCard}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+      <Grid>
       <DataGrid x:Name="HistoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
                 CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow"
                 CanUserResizeColumns="True" CanUserReorderColumns="False"
                 HeadersVisibility="Column" HorizontalScrollBarVisibility="Auto"
                 VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="开始时间" Binding="{Binding StartedDisplay}" Width="145"
+          <DataGridTextColumn Header="开始时间" Binding="{Binding StartedDisplay}" Width="Auto" MinWidth="145"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="频道" Binding="{Binding ChannelName}" Width="1.1*"
+          <DataGridTextColumn Header="频道" Binding="{Binding ChannelName}" Width="1.1*" MinWidth="140"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="触发来源" Binding="{Binding TriggerDisplay}" Width="82"
+          <DataGridTextColumn Header="触发来源" Binding="{Binding TriggerDisplay}" Width="Auto" MinWidth="82"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTemplateColumn Header="状态" Width="92">
+          <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="92">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <Border Style="{StaticResource StatusPill}"
@@ -96,15 +101,15 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="耗时" Binding="{Binding DurationDisplay}" Width="76"
+          <DataGridTextColumn Header="耗时" Binding="{Binding DurationDisplay}" Width="Auto" MinWidth="76"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="统计" Binding="{Binding StatisticsDisplay}" Width="2.1*"
+          <DataGridTextColumn Header="统计" Binding="{Binding StatisticsDisplay}" Width="2.1*" MinWidth="140"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="首页 / 水位" Binding="{Binding PagingDisplay}" Width="128"
+          <DataGridTextColumn Header="首页 / 水位" Binding="{Binding PagingDisplay}" Width="Auto" MinWidth="128"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="自动排期" Binding="{Binding AutoScheduleDisplay}" Width="1.35*"
+          <DataGridTextColumn Header="自动排期" Binding="{Binding AutoScheduleDisplay}" Width="1.35*" MinWidth="130"
                               ElementStyle="{StaticResource HistoryCellText}"/>
-          <DataGridTextColumn Header="错误摘要" Binding="{Binding Error}" Width="1.45*"
+          <DataGridTextColumn Header="错误摘要" Binding="{Binding Error}" Width="1.45*" MinWidth="140"
                               ElementStyle="{StaticResource HistoryCellText}"/>
         </DataGrid.Columns>
       </DataGrid>
@@ -119,9 +124,9 @@
                      Margin="0,7,0,0" TextWrapping="Wrap"/>
         </StackPanel>
       </Border>
-    </Grid>
+      </Grid>
 
-    <Grid Grid.Row="3" Margin="0,12,0,0">
+    <Grid Grid.Row="1" Margin="0,12,0,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
@@ -131,5 +136,7 @@
       <Button Grid.Column="1" Content="关闭" Width="86" HorizontalAlignment="Right"
               Style="{StaticResource QuietButton}" IsCancel="True"/>
     </Grid>
+      </Grid>
+    </Border>
   </Grid>
 </Window>

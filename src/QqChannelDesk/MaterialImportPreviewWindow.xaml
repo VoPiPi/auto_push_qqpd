@@ -82,7 +82,8 @@
                  TextTrimming="CharacterEllipsis"/>
     </Grid>
 
-    <Grid Grid.Row="3">
+    <Border x:Name="PreviewTableCard" Grid.Row="3" Style="{StaticResource TableCard}">
+    <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="*"/>
         <RowDefinition Height="Auto"/>
@@ -95,8 +96,8 @@
                 RowStyle="{StaticResource ImportPreviewRow}"
                 BeginningEdit="PreviewGrid_BeginningEdit">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="行" Binding="{Binding RowNumber}" IsReadOnly="True" Width="50" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTemplateColumn Header="状态" Width="96" IsReadOnly="True">
+          <DataGridTextColumn Header="行" Binding="{Binding RowNumber}" IsReadOnly="True" Width="Auto" MinWidth="50" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="96" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <Border x:Name="StatusPillBorder" Style="{StaticResource StatusPill}" Background="{StaticResource SuccessSoft}">
@@ -111,10 +112,10 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="标题（选填）" Binding="{Binding Title}" IsReadOnly="True" Width="170" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="正文" Binding="{Binding Content}" IsReadOnly="True" Width="230" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTemplateColumn Header="频道名称" Width="160">
+          <DataGridTextColumn Header="标题（选填）" Binding="{Binding Title}" IsReadOnly="True" Width="1.2*" MinWidth="170" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="正文" Binding="{Binding Content}" IsReadOnly="True" Width="1.6*" MinWidth="230" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="Auto" MinWidth="72" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTemplateColumn Header="频道名称" Width="Auto" MinWidth="160">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <ComboBox ItemsSource="{Binding GuildOptions}" SelectedItem="{Binding GuildName, UpdateSourceTrigger=PropertyChanged}"
@@ -122,7 +123,7 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="版块名称" Width="160">
+          <DataGridTemplateColumn Header="版块名称" Width="Auto" MinWidth="160">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <ComboBox ItemsSource="{Binding ChannelOptions}" SelectedItem="{Binding ChannelName, UpdateSourceTrigger=PropertyChanged}"
@@ -130,8 +131,8 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" IsReadOnly="True" Width="150" ElementStyle="{StaticResource DataGridCellText}"/>
-          <DataGridTextColumn Header="媒体文件或链接" Binding="{Binding MediaDisplay}" IsReadOnly="True" Width="220" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="发布时间" Binding="{Binding PublishAtDisplay}" IsReadOnly="True" Width="Auto" MinWidth="150" ElementStyle="{StaticResource DataGridCellText}"/>
+          <DataGridTextColumn Header="媒体文件或链接" Binding="{Binding MediaDisplay}" IsReadOnly="True" Width="1.5*" MinWidth="220" ElementStyle="{StaticResource DataGridCellText}"/>
         </DataGrid.Columns>
       </DataGrid>
 
@@ -182,6 +183,7 @@
         </Grid>
       </Border>
     </Grid>
+    </Border>
 
     <DockPanel Grid.Row="4" Margin="0,12,0,0" LastChildFill="True">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

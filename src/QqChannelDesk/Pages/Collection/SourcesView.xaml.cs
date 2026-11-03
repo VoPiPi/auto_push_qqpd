@@ -338,6 +338,7 @@ public sealed class CollectionSourceRow : INotifyPropertyChanged
     public string ToggleLabel => Source.Enabled ? "暂停" : "启用";
     public int PendingCount { get; private set; }
     public string PendingLabel => Source.SourceType == "telegram" ? "-" : PendingCount.ToString();
+    public string PendingSummary => IsTelegram ? "" : $"待审 {PendingCount} 条";
 
     private bool _isRunning;
 

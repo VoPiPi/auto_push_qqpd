@@ -147,6 +147,10 @@ public sealed class ContentLibraryStore
             await sourceIndex.ExecuteNonQueryAsync(cancellationToken);
             await EnsureMaterialSourceClaimsAsync(connection, cancellationToken);
             await PublishPolicyStore.EnsureSchemaAsync(connection, cancellationToken);
+            if (_accountContext is null || _accountContext.IsAuthenticated)
+            {
+                await ReconcileArchivedCollectionStatusAsync(connection, cancellationToken);
+            }
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -300,6 +304,10 @@ public sealed class ContentLibraryStore
         if (_accountContext is not null && accountKey is null) return [];
         await InitializeAsync(cancellationToken);
         await using var connection = await OpenAsync(cancellationToken);
+        if (_accountContext is null || _accountContext.IsAuthenticated)
+        {
+            await ReconcileArchivedCollectionStatusAsync(connection, cancellationToken);
+        }
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Url, SourceHost, Title, Content, CollectedAt, Status, Notes, TagsJson, ParseError, MediaJson,
@@ -756,7 +764,20 @@ public sealed class ContentLibraryStore
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         command.Parameters.AddWithValue("$id", id);
         AddAccountParameter(command, accountKey);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) == 1 && status == "delete")
+        {
+            await using var transaction = connection.BeginTransaction();
+            try
+            {
+                await ReleaseArchivedCollectionStatusAsync(connection, transaction, id, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        }
     }
 
     public async Task<BatchMaterialDeleteResult> DeleteMaterialsAsync(
@@ -819,6 +840,7 @@ public sealed class ContentLibraryStore
             update.Parameters.AddWithValue("$id", id);
             AddAccountParameter(update, accountKey);
             await update.ExecuteNonQueryAsync(cancellationToken);
+            await ReleaseArchivedCollectionStatusAsync(connection, transaction, id, cancellationToken);
             await CancelPendingExecutionsAsync(connection, transaction, id, now, accountKey, cancellationToken);
             deletedIds.Add(id);
         }
@@ -2055,6 +2077,59 @@ public sealed class ContentLibraryStore
                   AND (SourceType <> NEW.SourceType OR SourceUrl <> NEW.SourceUrl);
             END;
             """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task ReconcileArchivedCollectionStatusAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var accountKey = RequireAccountKey();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            UPDATE CollectedItems
+            SET Status='待处理'
+            WHERE Status='已入素材库'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM Materials m
+                  WHERE m.SourceType='网络采集'
+                    AND m.SourceUrl=CollectedItems.Url
+                    AND m.Status <> 'delete'
+                    AND {AccountScope("m.AccountKey")}
+              )
+              AND {AccountScope("AccountKey")};
+            """;
+        AddAccountParameter(command, accountKey);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task ReleaseArchivedCollectionStatusAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long materialId,
+        CancellationToken cancellationToken)
+    {
+        var accountKey = ReadAccountKey();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            UPDATE CollectedItems
+            SET Status='待处理'
+            WHERE Status='已入素材库'
+              AND EXISTS (
+                  SELECT 1
+                  FROM Materials m
+                  WHERE m.Id=$materialId
+                    AND m.SourceType='网络采集'
+                    AND m.SourceUrl=CollectedItems.Url
+                    AND m.Status='delete'
+                    AND {AccountScope("m.AccountKey")}
+              )
+              AND {AccountScope("AccountKey")};
+            """;
+        command.Parameters.AddWithValue("$materialId", materialId);
+        AddAccountParameter(command, accountKey);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

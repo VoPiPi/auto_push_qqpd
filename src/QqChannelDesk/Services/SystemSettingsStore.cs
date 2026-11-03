@@ -27,6 +27,7 @@ public sealed class SystemSettingsStore
     private const string AiModelNameKey = "ai_model_name";
     private const string AiApiKeyCipherKey = "ai_api_key_cipher";
     private const string AiDailyCallLimitKey = "ai_daily_call_limit";
+    private const string AiSystemPromptKey = "ai_system_prompt";
     private readonly string _databasePath;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -76,7 +77,8 @@ public sealed class SystemSettingsStore
                 [AiBaseUrlKey] = string.Empty,
                 [AiModelNameKey] = string.Empty,
                 [AiApiKeyCipherKey] = string.Empty,
-                [AiDailyCallLimitKey] = "100"
+                [AiDailyCallLimitKey] = "100",
+                [AiSystemPromptKey] = string.Empty
             };
 
             foreach (var pair in defaults)
@@ -119,7 +121,8 @@ public sealed class SystemSettingsStore
             AiBaseUrl: ReadString(values, AiBaseUrlKey) ?? "",
             AiModelName: ReadString(values, AiModelNameKey) ?? "",
             AiApiKeyCipher: ReadString(values, AiApiKeyCipherKey) ?? "",
-            AiDailyCallLimit: ReadAiDailyCallLimit(values, AiDailyCallLimitKey));
+            AiDailyCallLimit: ReadAiDailyCallLimit(values, AiDailyCallLimitKey),
+            AiSystemPrompt: ReadString(values, AiSystemPromptKey) ?? "");
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
@@ -155,6 +158,7 @@ public sealed class SystemSettingsStore
             await UpsertAsync(connection, transaction, AiModelNameKey, settings.AiModelName.Trim(), cancellationToken);
             await UpsertAsync(connection, transaction, AiDailyCallLimitKey,
                 NormalizeAiDailyCallLimit(settings.AiDailyCallLimit).ToString(CultureInfo.InvariantCulture), cancellationToken);
+            await UpsertAsync(connection, transaction, AiSystemPromptKey, settings.AiSystemPrompt.Trim(), cancellationToken);
             // API Key only changes through SaveAiApiKeyAsync so ordinary settings saves cannot overwrite it.
             await transaction.CommitAsync(cancellationToken);
         }
@@ -428,7 +432,8 @@ public sealed record AppSettings(
     string AiBaseUrl = "",
     string AiModelName = "",
     string AiApiKeyCipher = "",
-    int AiDailyCallLimit = 100)
+    int AiDailyCallLimit = 100,
+    string AiSystemPrompt = "")
 {
     public string EffectiveMaterialStoragePath =>
         Path.GetFullPath(string.IsNullOrWhiteSpace(MaterialStoragePath)

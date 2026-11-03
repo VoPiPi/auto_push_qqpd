@@ -6,9 +6,9 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
-    <Grid Grid.Row="0" Margin="0,2,0,12">
+    <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,2,0,12">
+    <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
@@ -29,6 +29,7 @@
         <Button Content="刷新" Style="{StaticResource QuietButton}" Click="RefreshButton_Click" />
       </StackPanel>
     </Grid>
+    </Border>
     <Grid Grid.Row="1" Margin="0,0,0,8">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
@@ -44,7 +45,13 @@
         <ComboBoxItem Content="批量删除" Tag="delete"/>
       </ComboBox>
     </Grid>
-    <Grid Grid.Row="2">
+    <Border x:Name="SchedulesTableCard" Grid.Row="2" Style="{StaticResource TableCard}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+    <Grid Grid.Row="0">
       <DataGrid x:Name="SchedulesGrid"
                 AutoGenerateColumns="False"
                 IsReadOnly="False"
@@ -56,11 +63,11 @@
                 HeadersVisibility="Column"
                 CanUserResizeColumns="True"
                 CanUserReorderColumns="False"
-                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollBarVisibility="Auto"
                 VerticalScrollBarVisibility="Auto"
                 RowStyle="{StaticResource CompactDataGridRow}">
         <DataGrid.Columns>
-          <DataGridTemplateColumn Header="选" Width="44" IsReadOnly="False">
+          <DataGridTemplateColumn Header="选" Width="Auto" MinWidth="44" IsReadOnly="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -71,19 +78,19 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="标题/正文" Width="1.25*" IsReadOnly="True">
+          <DataGridTemplateColumn Header="标题/正文" Width="1.25*" MinWidth="180" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
               <TextBlock Text="{Binding TitleContentDisplay}" ToolTip="{Binding TitleContentDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="55" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="频道/版块" Width="1*" IsReadOnly="True">
+          <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="Auto" MinWidth="55" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
+          <DataGridTemplateColumn Header="频道/版块" Width="1*" MinWidth="120" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
               <TextBlock Text="{Binding TargetDisplay}" ToolTip="{Binding TargetDisplay}" Style="{StaticResource DataGridCellText}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="计划时间" Binding="{Binding ScheduledAtDisplay}" Width="135" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="状态" Width="96" IsReadOnly="True">
+          <DataGridTextColumn Header="计划时间" Binding="{Binding ScheduledAtDisplay}" Width="Auto" MinWidth="135" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
+          <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="96" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate>
                 <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
@@ -92,14 +99,14 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="结果" Width="1.6*" IsReadOnly="True">
+          <DataGridTemplateColumn Header="结果" Width="1.6*" MinWidth="160" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
               <TextBlock Text="{Binding ErrorDisplay}" ToolTip="{Binding ErrorDisplay}" Style="{StaticResource DataGridCellText}"
                          Foreground="{Binding ErrorDisplay, Converter={StaticResource StatusStrongBrushConverter}}" />
             </DataTemplate></DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="记录" Binding="{Binding PublishRecordDisplay}" Width="75" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
-          <DataGridTemplateColumn Header="操作" Width="104" IsReadOnly="True">
+          <DataGridTextColumn Header="记录" Binding="{Binding PublishRecordDisplay}" Width="Auto" MinWidth="75" IsReadOnly="True" ElementStyle="{StaticResource DataGridCellText}" />
+          <DataGridTemplateColumn Header="操作" Width="Auto" MinWidth="104" IsReadOnly="True">
             <DataGridTemplateColumn.CellTemplate><DataTemplate>
               <StackPanel Style="{StaticResource TableActionPanel}">
                 <Button Content="{Binding ToggleLabel}" IsEnabled="{Binding CanToggle}" Style="{StaticResource TableLinkButton}" Margin="0,0,10,0" Click="ToggleScheduleButton_Click" />
@@ -116,12 +123,7 @@
         </StackPanel>
       </Border>
     </Grid>
-    <Grid Grid.Row="3" Margin="0,10,0,0">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
-      </Grid.RowDefinitions>
-      <Grid Grid.Row="0">
+    <Grid Grid.Row="1" Margin="0,10,0,0">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock x:Name="StatusText" Text="尚未加载计划" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
           <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
@@ -131,9 +133,8 @@
           </StackPanel>
         </StackPanel>
         <TextBlock x:Name="LastRefreshText" Text="尚未刷新" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
-      </Grid>
-      <TextBlock Grid.Row="1" Text="失败或超时不会自动重试。暂停不会改变素材状态和原定时间；删除计划不会删除素材和发布记录。"
-                 Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
     </Grid>
+      </Grid>
+    </Border>
   </Grid>
 </UserControl>

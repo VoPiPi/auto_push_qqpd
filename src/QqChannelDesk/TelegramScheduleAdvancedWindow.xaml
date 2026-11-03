@@ -205,15 +205,15 @@
                         RowStyle="{StaticResource CompactDataGridRow}" MinHeight="170" MaxHeight="280"
                         Visibility="Collapsed">
                 <DataGrid.Columns>
-                  <DataGridTextColumn Header="类型" Binding="{Binding MessageTypeLabel}" Width="76"
+                  <DataGridTextColumn Header="类型" Binding="{Binding MessageTypeLabel}" Width="Auto" MinWidth="76"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTextColumn Header="分发匹配词" Binding="{Binding KeywordDisplay}" Width="1.5*"
+                  <DataGridTextColumn Header="分发匹配词" Binding="{Binding KeywordDisplay}" Width="1.5*" MinWidth="160"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTextColumn Header="目标频道" Binding="{Binding GuildName}" Width="1.15*"
+                  <DataGridTextColumn Header="目标频道" Binding="{Binding GuildName}" Width="1.15*" MinWidth="130"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTextColumn Header="目标版块" Binding="{Binding ChannelName}" Width="1.15*"
+                  <DataGridTextColumn Header="目标版块" Binding="{Binding ChannelName}" Width="1.15*" MinWidth="130"
                                       ElementStyle="{StaticResource DataGridCellText}"/>
-                  <DataGridTemplateColumn Header="操作" Width="118">
+                  <DataGridTemplateColumn Header="操作" Width="Auto" MinWidth="118">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
                         <StackPanel Style="{StaticResource TableActionPanel}">

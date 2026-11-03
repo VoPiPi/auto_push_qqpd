@@ -221,7 +221,11 @@ public sealed class CollectionSchedulerService(
             UrlNormalizer.CanonicalItemId(canonicalUrl, item.SourceItemId),
             canonicalUrl,
             fingerprint);
-        if (duplicate is not null) return false;
+        if (duplicate is not null)
+        {
+            await RepairEncodingDamageAsync(source, item, canonicalUrl, duplicate);
+            return false;
+        }
         if (string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Content)) return false;
 
         await _contentLibrary.SaveItemAsync(new CollectedItemDraft(
@@ -238,6 +242,41 @@ public sealed class CollectionSchedulerService(
             SourceItemId: item.SourceItemId.Trim()));
         return true;
     }
+
+    private async Task RepairEncodingDamageAsync(
+        CollectionSource source,
+        CollectionItemDraft item,
+        string canonicalUrl,
+        CollectedItem duplicate)
+    {
+        if (!ContainsReplacementCharacter(duplicate.Title) &&
+            !ContainsReplacementCharacter(duplicate.Content))
+            return;
+        if (ContainsReplacementCharacter(item.Title) ||
+            ContainsReplacementCharacter(item.Content) ||
+            string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Content))
+            return;
+
+        await _contentLibrary.UpdateItemAsync(new CollectedItemDraft(
+            canonicalUrl,
+            duplicate.SourceHost,
+            item.Title.Trim(),
+            item.Content,
+            duplicate.Status,
+            duplicate.Notes,
+            duplicate.Tags,
+            duplicate.ParseError,
+            duplicate.Id,
+            duplicate.Media,
+            source.Id,
+            item.OriginalContent.Length > 0 ? item.OriginalContent : item.Content,
+            duplicate.CandidateContent,
+            duplicate.DuplicateOfId,
+            duplicate.ParsedBy.Length > 0 ? duplicate.ParsedBy : item.ParsedBy,
+            item.SourceItemId.Trim()));
+    }
+
+    private static bool ContainsReplacementCharacter(string value) => value.Contains('\uFFFD');
 
     private async Task UpdateHealthAsync(
         CollectionSource source,

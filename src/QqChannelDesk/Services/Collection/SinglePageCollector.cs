@@ -40,6 +40,7 @@ public sealed class SinglePageCollector : ISourceCollector
                     result.Content,
                     CanonicalUrl(result.Url.Length > 0 ? result.Url : url.AbsoluteUri),
                     CanonicalItemId(result.Url.Length > 0 ? result.Url : url.AbsoluteUri),
+                    MediaList: result.Media,
                     OriginalContent: result.Content)]);
             }
 
@@ -55,6 +56,7 @@ public sealed class SinglePageCollector : ISourceCollector
                 aiResult.Content,
                 CanonicalUrl(url.AbsoluteUri),
                 CanonicalItemId(url.AbsoluteUri),
+                MediaList: ExtractMedia(result, url.AbsoluteUri),
                 ParsedBy: "ai-fallback",
                 CandidateContent: aiResult.Content)]);
         }
@@ -77,6 +79,15 @@ public sealed class SinglePageCollector : ISourceCollector
 
     private static string CanonicalUrl(string url) =>
         UrlNormalizer.Canonicalize(url);
+
+    private static IReadOnlyList<string> ExtractMedia(ArticleFetchResult result, string fallbackUrl)
+    {
+        if (result.Media.Count > 0) return result.Media;
+        if (result.RawHtml.Length == 0) return [];
+        return PublicArticleFetcher.ParseHtmlWithRule(
+            result.RawHtml,
+            baseUrl: result.Url.Length > 0 ? result.Url : fallbackUrl).Media;
+    }
 
     /// <summary>从解析规则 JSON 中读取可选的自定义正文选择器（支持 CSS 与 XPath）。</summary>
     internal static string? ReadContentSelector(string? ruleConfigJson)

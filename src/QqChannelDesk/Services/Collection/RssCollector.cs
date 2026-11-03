@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using System.Globalization;
 using System.Xml;
 using System.IO;
+using System.Text.RegularExpressions;
 using QqChannelDesk.Services;
 
 namespace QqChannelDesk.Services.Collection;
@@ -15,15 +16,21 @@ public sealed class RssCollector : ISourceCollector
     private const int MaximumRedirects = 5;
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     private static readonly XNamespace Atom = "http://www.w3.org/2005/Atom";
+    private static readonly Regex XmlEncodingPattern = new(
+        @"<\?xml\b[^>]*\bencoding\s*=\s*[""'](?<encoding>[^""']+)[""']",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private readonly HttpClient _client;
-    private readonly bool _disposeClient;
+    private readonly HttpMessageHandler? _handler;
+    private readonly Func<Uri, HttpClient>? _clientFactory;
 
     public RssCollector(HttpMessageHandler? handler = null)
     {
-        _client = handler is null ? PublicUrlGuard.CreateHttpClient() : new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        _disposeClient = handler is null;
+        _handler = handler;
     }
+
+    internal RssCollector(Func<Uri, HttpClient> clientFactory) => _clientFactory = clientFactory;
+
+    static RssCollector() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
     public string SourceType => "rss";
 
@@ -71,7 +78,8 @@ public sealed class RssCollector : ISourceCollector
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             request.Headers.UserAgent.ParseAdd("QqChannelDesk/1.0 (+rss-reader)");
             request.Headers.Accept.ParseAdd("application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8");
-            using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
+            using var client = CreateClient(current);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
             if (IsRedirect(response.StatusCode))
             {
                 if (redirect == MaximumRedirects || response.Headers.Location is null)
@@ -90,10 +98,124 @@ public sealed class RssCollector : ISourceCollector
                 throw new InvalidOperationException("订阅源内容超过 2 MB。");
             var bytes = await response.Content.ReadAsByteArrayAsync(linked.Token);
             if (bytes.Length > MaximumBytes) throw new InvalidOperationException("订阅源内容超过 2 MB。");
-            return Encoding.UTF8.GetString(bytes);
+            var responseCharset = response.Content.Headers.ContentType?.CharSet?.Trim('"', '\'');
+            return DecodeXml(bytes, responseCharset);
         }
 
         throw new HttpRequestException("订阅源跳转次数过多。");
+    }
+
+    private HttpClient CreateClient(Uri target)
+    {
+        if (_clientFactory is not null) return _clientFactory(target);
+        if (_handler is not null)
+            return new HttpClient(_handler, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan };
+        return PublicUrlGuard.CreateHttpClient(target);
+    }
+
+    private static string DecodeXml(byte[] bytes, string? responseCharset)
+    {
+        if (TryDetectBom(bytes, out var bomEncoding, out var bomLength) &&
+            TryDecode(bytes.AsSpan(bomLength), bomEncoding, out var bomText))
+            return bomText;
+
+        foreach (var charset in new[] { ReadXmlDeclarationEncoding(bytes), responseCharset })
+        {
+            if (TryGetEncoding(charset, out var encoding) &&
+                TryDecode(bytes, encoding, out var text))
+                return text;
+        }
+
+        if (TryDecode(bytes, new UTF8Encoding(false, true), out var utf8Text))
+            return utf8Text;
+        if (TryGetEncoding("GB18030", out var chineseEncoding) &&
+            TryDecode(bytes, chineseEncoding, out var chineseText))
+            return chineseText;
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    private static string? ReadXmlDeclarationEncoding(byte[] bytes)
+    {
+        var length = Math.Min(bytes.Length, 512);
+        if (length == 0) return null;
+        var prefix = Encoding.ASCII.GetString(bytes, 0, length);
+        var match = XmlEncodingPattern.Match(prefix);
+        return match.Success ? match.Groups["encoding"].Value : null;
+    }
+
+    private static bool TryDetectBom(byte[] bytes, out Encoding encoding, out int bomLength)
+    {
+        if (bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00)
+        {
+            encoding = new UTF32Encoding(bigEndian: false, byteOrderMark: false, throwOnInvalidCharacters: true);
+            bomLength = 4;
+            return true;
+        }
+        if (bytes.Length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF)
+        {
+            encoding = new UTF32Encoding(bigEndian: true, byteOrderMark: false, throwOnInvalidCharacters: true);
+            bomLength = 4;
+            return true;
+        }
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        {
+            encoding = new UTF8Encoding(false, true);
+            bomLength = 3;
+            return true;
+        }
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            encoding = Encoding.Unicode;
+            bomLength = 2;
+            return true;
+        }
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            encoding = Encoding.BigEndianUnicode;
+            bomLength = 2;
+            return true;
+        }
+
+        encoding = Encoding.UTF8;
+        bomLength = 0;
+        return false;
+    }
+
+    private static bool TryGetEncoding(string? charset, out Encoding encoding)
+    {
+        encoding = Encoding.UTF8;
+        if (string.IsNullOrWhiteSpace(charset)) return false;
+        var normalized = charset.Trim().Trim('"', '\'');
+        if (normalized.Equals("gb2312", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("gbk", StringComparison.OrdinalIgnoreCase))
+            normalized = "GB18030";
+
+        try
+        {
+            encoding = Encoding.GetEncoding(normalized);
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryDecode(ReadOnlySpan<byte> bytes, Encoding encoding, out string text)
+    {
+        try
+        {
+            var strict = (Encoding)encoding.Clone();
+            strict.DecoderFallback = DecoderFallback.ExceptionFallback;
+            text = strict.GetString(bytes);
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            text = "";
+            return false;
+        }
     }
 
     private static IReadOnlyList<CollectionItemDraft> ParseFeed(CollectionSource source, string xml)

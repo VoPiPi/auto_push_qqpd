@@ -53,10 +53,22 @@ public sealed class PublicArticleFetcher
                 }
                 if (raw.Error.Length > 0) return Failed(raw.Error);
 
-                var parsed = await Task.Run(() => ParseHtml(raw.Html, contentSelector), cancellationToken);
+                var finalUrl = raw.FinalUrl.Length == 0 ? current.AbsoluteUri : raw.FinalUrl;
+                var parsed = await Task.Run(
+                    () => ParseHtmlWithRule(raw.Html, contentSelector, baseUrl: finalUrl),
+                    cancellationToken);
                 if (parsed.Title.Length == 0 && parsed.Content.Length == 0)
                     return Failed("网页没有可用标题或正文，请换一个链接。", raw.Html);
-                return new(true, raw.FinalUrl.Length == 0 ? current.AbsoluteUri : raw.FinalUrl, current.DnsSafeHost, parsed.Title, parsed.Content, "", raw.Html);
+                return new(
+                    true,
+                    finalUrl,
+                    current.DnsSafeHost,
+                    parsed.Title,
+                    parsed.Content,
+                    "",
+                    raw.Html,
+                    parsed.Rule,
+                    parsed.MediaList);
             }
             return Failed("无法读取网页，请检查链接或网络后重试。");
         }
@@ -242,8 +254,24 @@ public sealed class PublicArticleFetcher
     /// </summary>
     public static (string Title, string Content) ParseHtml(string html, string? contentSelector = null)
     {
+        var result = ParseHtmlWithRule(html, contentSelector);
+        return (result.Title, result.Content);
+    }
+
+    /// <summary>
+    /// 解析 HTML 并返回命中的正文规则（内置 XPath 或自定义选择器）。
+    /// <paramref name="excludeSelectors"/> 用于“换一种规则重新解析”：传入已命中的规则后按优先级尝试下一规则；
+    /// 所有内置规则都被排除时返回空结果（Rule 为空），由调用方决定 AI 兜底或提示失败。
+    /// </summary>
+    public static ArticleParseResult ParseHtmlWithRule(
+        string html,
+        string? contentSelector = null,
+        IReadOnlyCollection<string>? excludeSelectors = null,
+        string? baseUrl = null)
+    {
         var doc = new HtmlDocument { OptionFixNestedTags = true };
         doc.LoadHtml(html);
+        var mediaBaseUri = ResolveMediaBaseUri(doc, baseUrl);
 
         // JSON-LD 结构化数据通常比 DOM 更可靠，先解析但不立即采用，作为提取不到 DOM 时的兜底。
         var jsonLd = TryParseJsonLd(doc);
@@ -255,8 +283,10 @@ public sealed class PublicArticleFetcher
             jsonLd.Title);
 
         RemoveNoiseNodes(doc);
-        var body = SelectArticleBody(doc, contentSelector);
+        var body = SelectArticleBody(doc, contentSelector, excludeSelectors, out var rule);
+        if (body is null) return new ArticleParseResult("", "", "", []);
         var lines = ExtractReadableLines(body);
+        var media = ExtractMediaUrls(body, mediaBaseUri);
 
         // 正文容器未提取到足够内容时，用 meta 摘要或 JSON-LD 内容兜底。
         if (lines.Count < 2)
@@ -271,7 +301,11 @@ public sealed class PublicArticleFetcher
 
         var content = string.Join(Environment.NewLine + Environment.NewLine, lines);
         if (content.Length > 100_000) content = content[..100_000];
-        return (title.Length > 300 ? title[..300] : title, content);
+        return new ArticleParseResult(
+            title.Length > 300 ? title[..300] : title,
+            content,
+            rule,
+            media);
     }
 
     /// <summary>
@@ -308,8 +342,9 @@ public sealed class PublicArticleFetcher
         "//body"
     ];
 
-    private static HtmlNode? SelectArticleBody(HtmlDocument doc, string? contentSelector)
+    private static HtmlNode? SelectArticleBody(HtmlDocument doc, string? contentSelector, IReadOnlyCollection<string>? excludeSelectors, out string rule)
     {
+        rule = "";
         // 用户显式配置的选择器优先；支持 CSS 选择器（#id/.class/tag）与 XPath。
         if (!string.IsNullOrWhiteSpace(contentSelector))
         {
@@ -319,7 +354,11 @@ public sealed class PublicArticleFetcher
                 var node = custom.StartsWith("//", StringComparison.Ordinal)
                     ? doc.DocumentNode.SelectSingleNode(custom)
                     : doc.DocumentNode.SelectSingleNode(ToXPath(custom));
-                if (node is not null) return node;
+                if (node is not null)
+                {
+                    rule = custom;
+                    return node;
+                }
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
             {
@@ -329,10 +368,16 @@ public sealed class PublicArticleFetcher
 
         foreach (var selector in ArticleContainerSelectors)
         {
+            // “换一种规则”场景跳过已命中过的选择器，让下一条规则生效。
+            if (excludeSelectors is not null && excludeSelectors.Contains(selector, StringComparer.Ordinal)) continue;
             try
             {
                 var node = doc.DocumentNode.SelectSingleNode(selector);
-                if (node is not null && HasReadableContent(node)) return node;
+                if (node is not null && HasReadableContent(node))
+                {
+                    rule = selector;
+                    return node;
+                }
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
             {
@@ -340,13 +385,194 @@ public sealed class PublicArticleFetcher
             }
         }
 
-        return doc.DocumentNode.SelectSingleNode("//body");
+        // 最终兜底退回 body；“换一种规则”已排除 body 时视为规则用尽，返回 null 交给调用方兜底。
+        const string bodySelector = "//body";
+        if (excludeSelectors is not null && excludeSelectors.Contains(bodySelector, StringComparer.Ordinal)) return null;
+        var fallback = doc.DocumentNode.SelectSingleNode(bodySelector);
+        if (fallback is not null) rule = bodySelector;
+        return fallback;
     }
 
     private static bool HasReadableContent(HtmlNode node)
     {
         var text = Clean(node.InnerText);
         return text.Length >= 20;
+    }
+
+    private static Uri? ResolveMediaBaseUri(HtmlDocument doc, string? baseUrl)
+    {
+        var candidate = baseUrl?.Trim() ?? "";
+        var baseHref = doc.DocumentNode
+            .SelectSingleNode("//base[@href]")
+            ?.GetAttributeValue("href", "")
+            .Trim() ?? "";
+        if (baseHref.Length > 0)
+        {
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var pageUri) &&
+                Uri.TryCreate(pageUri, HtmlEntity.DeEntitize(baseHref), out var combined))
+            {
+                candidate = combined.AbsoluteUri;
+            }
+            else if (Uri.TryCreate(HtmlEntity.DeEntitize(baseHref), UriKind.Absolute, out var absoluteBase))
+            {
+                candidate = absoluteBase.AbsoluteUri;
+            }
+        }
+
+        return Uri.TryCreate(candidate, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri
+            : null;
+    }
+
+    private static IReadOnlyList<string> ExtractMediaUrls(HtmlNode body, Uri? baseUri)
+    {
+        const int maximumMediaCount = 50;
+        var media = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nodes = body.SelectNodes(".//img|.//video|.//source");
+        if (nodes is null) return media;
+
+        foreach (var node in nodes)
+        {
+            if (media.Count >= maximumMediaCount) break;
+            switch (node.Name.ToLowerInvariant())
+            {
+                case "img":
+                    AddImageMedia(node, baseUri, media, seen, maximumMediaCount);
+                    break;
+                case "video":
+                    AddFirstMedia(
+                        node,
+                        baseUri,
+                        media,
+                        seen,
+                        maximumMediaCount,
+                        ["data-src", "src"]);
+                    break;
+                case "source":
+                    AddFirstMedia(
+                        node,
+                        baseUri,
+                        media,
+                        seen,
+                        maximumMediaCount,
+                        ["data-src", "src"]);
+                    AddSrcset(node, "data-srcset", baseUri, media, seen, maximumMediaCount);
+                    AddSrcset(node, "srcset", baseUri, media, seen, maximumMediaCount);
+                    break;
+            }
+        }
+
+        return media;
+    }
+
+    private static void AddImageMedia(
+        HtmlNode node,
+        Uri? baseUri,
+        List<string> media,
+        HashSet<string> seen,
+        int maximumMediaCount)
+    {
+        // 懒加载站点通常把真实地址放在 data-*，而 src 只是占位图。
+        if (AddFirstMedia(
+                node,
+                baseUri,
+                media,
+                seen,
+                maximumMediaCount,
+                ["data-src", "data-original", "data-lazy-src", "data-actualsrc"]))
+        {
+            return;
+        }
+
+        if (AddSrcset(node, "data-srcset", baseUri, media, seen, maximumMediaCount) ||
+            AddSrcset(node, "srcset", baseUri, media, seen, maximumMediaCount))
+        {
+            return;
+        }
+
+        AddFirstMedia(node, baseUri, media, seen, maximumMediaCount, ["src"]);
+    }
+
+    private static bool AddFirstMedia(
+        HtmlNode node,
+        Uri? baseUri,
+        List<string> media,
+        HashSet<string> seen,
+        int maximumMediaCount,
+        IReadOnlyList<string> attributes)
+    {
+        foreach (var attribute in attributes)
+        {
+            if (AddMediaCandidate(
+                    node.GetAttributeValue(attribute, ""),
+                    baseUri,
+                    media,
+                    seen,
+                    maximumMediaCount))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool AddSrcset(
+        HtmlNode node,
+        string attribute,
+        Uri? baseUri,
+        List<string> media,
+        HashSet<string> seen,
+        int maximumMediaCount)
+    {
+        var srcset = HtmlEntity.DeEntitize(node.GetAttributeValue(attribute, "")).Trim();
+        if (srcset.Length == 0) return false;
+        foreach (var entry in srcset.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var source = entry.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            if (AddMediaCandidate(source, baseUri, media, seen, maximumMediaCount)) return true;
+        }
+        return false;
+    }
+
+    private static bool AddMediaCandidate(
+        string? candidate,
+        Uri? baseUri,
+        List<string> media,
+        HashSet<string> seen,
+        int maximumMediaCount)
+    {
+        if (media.Count >= maximumMediaCount || string.IsNullOrWhiteSpace(candidate)) return false;
+        var value = HtmlEntity.DeEntitize(candidate).Trim();
+        if (value.Length == 0 ||
+            value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+            value.StartsWith("blob:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        Uri? resolved = null;
+        if (baseUri is not null && Uri.TryCreate(baseUri, value, out var combined))
+            resolved = combined;
+        else if (Uri.TryCreate(value, UriKind.Absolute, out var absolute))
+            resolved = absolute;
+        if (resolved is null ||
+            !TryNormalizePublicUrl(resolved.AbsoluteUri, out var normalized, out _))
+        {
+            return false;
+        }
+
+        var normalizedUrl = normalized.AbsoluteUri;
+        if (!MaterialMediaValidator.IsValidSource(normalizedUrl, "image") &&
+            !MaterialMediaValidator.IsValidSource(normalizedUrl, "video"))
+        {
+            return false;
+        }
+        if (!seen.Add(normalizedUrl)) return false;
+
+        media.Add(normalizedUrl);
+        return true;
     }
 
     private static List<string> ExtractReadableLines(HtmlNode? body)
@@ -527,7 +753,11 @@ public sealed class PublicArticleFetcher
                string.Equals(endpointHost, proxy.DnsSafeHost, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SocketsHttpHandler CreateHandler(Uri target, PublicArticleRequestContext? requestContext)
+    internal static bool IsConfiguredProxyEndpoint(Uri target, DnsEndPoint endpoint, IWebProxy proxy) =>
+        GetConfiguredProxyUri(target, proxy) is { } proxyUri &&
+        IsConfiguredProxyEndpoint(endpoint, proxyUri);
+
+    internal static SocketsHttpHandler CreateHandler(Uri target, PublicArticleRequestContext? requestContext)
     {
         var proxy = requestContext is null ? HttpClient.DefaultProxy : requestContext.ResolveProxy(target);
         var proxyUri = proxy is null ? null : GetConfiguredProxyUri(target, proxy);
@@ -544,7 +774,8 @@ public sealed class PublicArticleFetcher
         {
             // 使用代理时，SocketsHttpHandler 会在连接层先连接代理；只对已配置的代理端点
             // 放宽本机/私有地址限制，真正直连目标时仍强制公网地址。
-            if (proxyUri is not null && IsConfiguredProxyEndpoint(context.DnsEndPoint, proxyUri))
+            if (proxy is not null && proxyUri is not null &&
+                IsConfiguredProxyEndpoint(target, context.DnsEndPoint, proxy))
                 return ConnectEndpointAsync(context.DnsEndPoint, requirePublicAddress: false, cancellationToken);
             return ConnectPublicAsync(context, cancellationToken);
         };
@@ -665,4 +896,26 @@ public sealed class PublicArticleFetcher
     private static ArticleFetchResult Failed(string message, string rawHtml = "") => new(false, "", "", "", "", message, rawHtml);
 }
 
-public sealed record ArticleFetchResult(bool Succeeded, string Url, string SourceHost, string Title, string Content, string Error, string RawHtml = "");
+public sealed record ArticleFetchResult(
+    bool Succeeded,
+    string Url,
+    string SourceHost,
+    string Title,
+    string Content,
+    string Error,
+    string RawHtml = "",
+    string Rule = "",
+    IReadOnlyList<string>? MediaList = null)
+{
+    public IReadOnlyList<string> Media => MediaList ?? [];
+}
+
+/// <summary>正文解析结果：Rule 是命中的正文选择器（内置 XPath 或自定义选择器），规则用尽时为空。</summary>
+public sealed record ArticleParseResult(
+    string Title,
+    string Content,
+    string Rule,
+    IReadOnlyList<string>? MediaList = null)
+{
+    public IReadOnlyList<string> Media => MediaList ?? [];
+}

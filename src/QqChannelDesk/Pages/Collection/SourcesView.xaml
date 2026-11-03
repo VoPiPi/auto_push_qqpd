@@ -6,67 +6,110 @@
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
       <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}" />
     </Style>
+    <Style x:Key="SourcePrimary" TargetType="TextBlock" BasedOn="{StaticResource SourceCell}">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style x:Key="SourceSecondary" TargetType="TextBlock" BasedOn="{StaticResource SourceCell}">
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style x:Key="SourceRow" TargetType="DataGridRow" BasedOn="{StaticResource CompactDataGridRow}">
+      <Setter Property="MinHeight" Value="60" />
+    </Style>
   </UserControl.Resources>
   <Grid>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
     <Border Style="{StaticResource Card}" Margin="0,0,0,12">
       <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto" />
-          <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="来源管理" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <TextBlock x:Name="StatsText" Text="来源 0 · 启用 0 · 异常 0" Foreground="{StaticResource Muted}" Margin="14,1,0,0" VerticalAlignment="Center" />
+          <StackPanel x:Name="TitleAndTgActionsPanel" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button Content="TG快采" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="AdvancedButton_Click" Tag="tg-temp" />
+            <Button Content="TG定时" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="AdvancedButton_Click" Tag="tg-schedule" />
           </StackPanel>
           <Button x:Name="RefreshButton" Grid.Column="1" Content="刷新" Style="{StaticResource QuietButton}" Margin="10,0,0,0" Click="RefreshButton_Click" />
           <Button Grid.Column="2" Content="新建来源" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="NewSourceButton_Click" />
         </Grid>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
-          <TextBlock Text="TG 采集：" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-          <Button Content="TG快采" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="AdvancedButton_Click" Tag="tg-temp" />
-          <Button Content="TG定时" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="AdvancedButton_Click" Tag="tg-schedule" />
-        </StackPanel>
       </Grid>
     </Border>
-    <TextBlock Grid.Row="1" Text="TG 来源来自现有定时采集配置；执行、启停和水位仍由原 TG 采集器负责。公开网页来源由统一调度器执行。"
-               Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10" />
-    <DataGrid Grid.Row="2" x:Name="SourcesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
-              SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column"
-              CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto"
-              VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
-      <DataGrid.Columns>
-        <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="1.25*" MinWidth="110" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="72" MinWidth="66" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="地址" Binding="{Binding EntryUrl}" Width="1.5*" MinWidth="130" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="频率" Binding="{Binding FrequencyLabel}" Width="104" MinWidth="96" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="最近尝试" Binding="{Binding LastAttemptLabel}" Width="96" MinWidth="92" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="最近成功" Binding="{Binding LastSuccessLabel}" Width="96" MinWidth="92" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTextColumn Header="下次运行" Binding="{Binding NextRunLabel}" Width="96" MinWidth="92" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTemplateColumn Header="状态" Width="84" MinWidth="78">
+    <Border x:Name="SourcesTableCard" Grid.Row="1" Style="{StaticResource TableCard}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="StatsText" Text="来源 0 · 启用 0 · 异常 0"
+                   Foreground="{StaticResource Muted}" Margin="0,0,0,8"
+                   TextTrimming="CharacterEllipsis"
+                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+        <TextBlock Grid.Row="1" Text="TG 来源来自现有定时采集配置；执行、启停和水位仍由原 TG 采集器负责。公开网页来源由统一调度器执行。"
+                   Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10" />
+        <DataGrid Grid.Row="2" x:Name="SourcesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column"
+                  CanUserResizeColumns="True" CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource SourceRow}">
+        <DataGrid.Columns>
+        <DataGridTemplateColumn Header="来源" Width="2*" MinWidth="170">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
-              <Border Style="{StaticResource StatusPill}" Background="{Binding HealthLabel, Converter={StaticResource StatusSoftBrushConverter}}"
-                      ToolTip="{Binding HealthToolTip}">
-                <TextBlock Text="{Binding HealthLabel}" Style="{StaticResource StatusPillText}"
-                           Foreground="{Binding HealthLabel, Converter={StaticResource StatusStrongBrushConverter}}" />
-              </Border>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding Name}" Style="{StaticResource SourcePrimary}" />
+                <Grid Margin="0,3,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="{Binding TypeLabel}" Style="{StaticResource SourceSecondary}" Margin="0,0,8,0" />
+                  <TextBlock Grid.Column="1" Text="{Binding EntryUrl}" Style="{StaticResource SourceSecondary}" />
+                </Grid>
+              </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="待审" Binding="{Binding PendingLabel}" Width="56" MinWidth="52" ElementStyle="{StaticResource SourceCell}" />
-        <DataGridTemplateColumn Header="操作" Width="240" MinWidth="200">
+        <DataGridTemplateColumn Header="调度" Width="1.1*" MinWidth="110">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding FrequencyLabel}" Style="{StaticResource SourcePrimary}" />
+                <TextBlock Text="{Binding NextRunLabel, StringFormat=下次 {0}}" Style="{StaticResource SourceSecondary}" Margin="0,3,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="最近采集" Width="1.3*" MinWidth="125">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding LastAttemptLabel, StringFormat=尝试 {0}}" Style="{StaticResource SourcePrimary}" />
+                <TextBlock Text="{Binding LastSuccessLabel, StringFormat=成功 {0}}" Style="{StaticResource SourceSecondary}" Margin="0,3,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="88">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel VerticalAlignment="Center">
+                <Border Style="{StaticResource StatusPill}" Background="{Binding HealthLabel, Converter={StaticResource StatusSoftBrushConverter}}"
+                        HorizontalAlignment="Left" ToolTip="{Binding HealthToolTip}">
+                  <TextBlock Text="{Binding HealthLabel}" Style="{StaticResource StatusPillText}"
+                             Foreground="{Binding HealthLabel, Converter={StaticResource StatusStrongBrushConverter}}" />
+                </Border>
+                <TextBlock Text="{Binding PendingSummary}" Style="{StaticResource SourceSecondary}" Margin="0,3,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="操作" Width="Auto">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Style="{StaticResource TableActionPanel}">
@@ -88,8 +131,10 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-      </DataGrid.Columns>
-    </DataGrid>
-    <TextBlock Grid.Row="3" x:Name="StatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" />
+        </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+    <TextBlock Grid.Row="2" x:Name="StatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" />
   </Grid>
 </UserControl>

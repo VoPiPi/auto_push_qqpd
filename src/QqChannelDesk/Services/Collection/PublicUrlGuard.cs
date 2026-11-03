@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.IO;
+using QqChannelDesk.Services;
 
 namespace QqChannelDesk.Services.Collection;
 
@@ -20,8 +21,16 @@ public static class PublicUrlGuard
         };
     }
 
+    public static HttpMessageHandler CreatePublicHandler(Uri target)
+    {
+        return PublicArticleFetcher.CreateHandler(target, PublicArticleRequestContext.SystemProxyOrDefault);
+    }
+
     public static HttpClient CreateHttpClient() =>
         new(CreatePublicHandler()) { Timeout = Timeout.InfiniteTimeSpan };
+
+    public static HttpClient CreateHttpClient(Uri target) =>
+        new(CreatePublicHandler(target)) { Timeout = Timeout.InfiniteTimeSpan };
 
     private static async ValueTask<Stream> ConnectPublicAsync(
         SocketsHttpConnectionContext context,

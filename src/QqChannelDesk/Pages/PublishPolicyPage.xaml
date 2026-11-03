@@ -16,6 +16,7 @@
 
     <TabControl Grid.Row="2">
       <TabItem Header="版块策略">
+        <Border x:Name="PoliciesTableCard" Style="{StaticResource TableCard}" Margin="0,4,0,0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -28,17 +29,17 @@
           <Grid Grid.Row="1">
             <DataGrid x:Name="PoliciesGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
                       SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" CanUserResizeColumns="True"
-                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                       RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
-                <DataGridTemplateColumn Header="频道 / 版块" Width="2*">
+                <DataGridTemplateColumn Header="频道 / 版块" Width="2*" MinWidth="200">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <TextBlock Text="{Binding TargetDisplay}" Style="{StaticResource DataGridCellText}"/>
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="状态" Width="78">
+                <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="78">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
@@ -47,13 +48,13 @@
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="发布窗口" Binding="{Binding WindowDisplay}" Width="104" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="随机间隔" Binding="{Binding IntervalDisplay}" Width="110" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="每日" Binding="{Binding DailyLimitDisplay}" Width="74" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="并发" Binding="{Binding ConcurrencyDisplay}" Width="58" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="排队" Binding="{Binding QueueLimitDisplay}" Width="70" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTemplateColumn Header="操作" Width="150">
+                <DataGridTextColumn Header="发布窗口" Binding="{Binding WindowDisplay}" Width="Auto" MinWidth="104" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="随机间隔" Binding="{Binding IntervalDisplay}" Width="Auto" MinWidth="110" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="每日" Binding="{Binding DailyLimitDisplay}" Width="Auto" MinWidth="74" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="并发" Binding="{Binding ConcurrencyDisplay}" Width="Auto" MinWidth="58" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="排队" Binding="{Binding QueueLimitDisplay}" Width="Auto" MinWidth="70" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="Auto" MinWidth="128" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="Auto" MinWidth="150">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <StackPanel Style="{StaticResource TableActionPanel}">
@@ -76,8 +77,10 @@
             </Border>
           </Grid>
         </Grid>
+        </Border>
       </TabItem>
       <TabItem Header="频道预算">
+        <Border x:Name="BudgetsTableCard" Style="{StaticResource TableCard}" Margin="0,4,0,0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -90,17 +93,17 @@
           <Grid Grid.Row="1">
             <DataGrid x:Name="BudgetsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
                       SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" CanUserResizeColumns="True"
-                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      CanUserReorderColumns="False" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                       RowStyle="{StaticResource CompactDataGridRow}">
               <DataGrid.Columns>
-                <DataGridTemplateColumn Header="频道" Width="2*">
+                <DataGridTemplateColumn Header="频道" Width="2*" MinWidth="200">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <TextBlock Text="{Binding GuildDisplay}" Style="{StaticResource DataGridCellText}"/>
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="状态" Width="78">
+                <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="78">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <Border Style="{StaticResource StatusPill}" Background="{Binding StatusLabel, Converter={StaticResource StatusSoftBrushConverter}}">
@@ -109,9 +112,9 @@
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="每日自动发布上限" Binding="{Binding DailyLimitDisplay}" Width="160" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="128" ElementStyle="{StaticResource DataGridCellText}"/>
-                <DataGridTemplateColumn Header="操作" Width="150">
+                <DataGridTextColumn Header="每日自动发布上限" Binding="{Binding DailyLimitDisplay}" Width="Auto" MinWidth="160" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAtDisplay}" Width="Auto" MinWidth="128" ElementStyle="{StaticResource DataGridCellText}"/>
+                <DataGridTemplateColumn Header="操作" Width="Auto" MinWidth="150">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <StackPanel Style="{StaticResource TableActionPanel}">
@@ -134,6 +137,7 @@
             </Border>
           </Grid>
         </Grid>
+        </Border>
       </TabItem>
     </TabControl>
 

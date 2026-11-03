@@ -13,7 +13,8 @@ public sealed class SinglePageCollectorTests
     public async Task ReturnsRuleParsedItemOnSuccess()
     {
         var collector = new SinglePageCollector((_, _) => Task.FromResult(new ArticleFetchResult(
-            true, "https://example.test/article?b=2&a=1#top", "example.test", "标题", "正文", "")));
+            true, "https://example.test/article?b=2&a=1#top", "example.test", "标题", "正文", "",
+            MediaList: ["https://cdn.example.test/cover.png"])));
         var source = new CollectionSource(1, "Source", "single-page", "https://example.test/article", true, true, null, "rule-first", 60, "", "{}", false, 10, "", "", null, null, null, "healthy", "", "", "", null, DateTimeOffset.Now, DateTimeOffset.Now);
 
         var result = await collector.CollectAsync(source);
@@ -24,6 +25,7 @@ public sealed class SinglePageCollectorTests
         Assert.Equal("正文", item.Content);
         Assert.Equal("https://example.test/article?a=1&b=2", item.Url);
         Assert.Equal(item.Url, item.SourceItemId);
+        Assert.Equal("https://cdn.example.test/cover.png", Assert.Single(item.Media));
     }
 
     [Fact]
@@ -76,8 +78,88 @@ public sealed class SinglePageCollectorTests
     }
 }
 
+public sealed class PublicArticleMediaParsingTests
+{
+    [Fact]
+    public void ExtractsLazyRelativeAndDeduplicatedBodyMedia()
+    {
+        var html = """
+            <html>
+              <head><base href="https://cdn.example.test/media/"></head>
+              <body>
+                <nav><img src="https://cdn.example.test/navigation.png"></nav>
+                <article>
+                  <p>正文第一段内容。</p>
+                  <p>正文第二段内容。</p>
+                  <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP" data-src="cover.png?x=1&amp;y=2">
+                  <img data-original="//cdn.example.test/media/cover.png?x=1&amp;y=2#duplicate">
+                  <img srcset="small.jpg 1x, large.jpg 2x">
+                  <video><source src="clip.mp4" type="video/mp4"></video>
+                </article>
+              </body>
+            </html>
+            """;
+
+        var parsed = PublicArticleFetcher.ParseHtmlWithRule(
+            html,
+            baseUrl: "https://blog.example.test/post/733");
+
+        Assert.Equal(
+            [
+                "https://cdn.example.test/media/cover.png?x=1&y=2",
+                "https://cdn.example.test/media/small.jpg",
+                "https://cdn.example.test/media/clip.mp4"
+            ],
+            parsed.Media);
+    }
+
+    [Fact]
+    public void ExtractsPublishedArticleImageFromBody()
+    {
+        var html = """
+            <html>
+              <body>
+                <article>
+                  <h1>文章标题</h1>
+                  <div class="msg__text post-page__text">
+                    <p>这是正文内容，用于验证图片会随正文一起采集。</p>
+                    <img src="https://img.cdn.vopipi.cn/local/202611/12ac2b58f9f14d399e6d94d9.png" alt="文章配图" loading="lazy">
+                  </div>
+                </article>
+              </body>
+            </html>
+            """;
+
+        var parsed = PublicArticleFetcher.ParseHtmlWithRule(
+            html,
+            baseUrl: "https://blog.vopipi.cn/post/733");
+
+        Assert.Equal(
+            "https://img.cdn.vopipi.cn/local/202611/12ac2b58f9f14d399e6d94d9.png",
+            Assert.Single(parsed.Media));
+    }
+}
+
 public sealed class RssCollectorTests
 {
+    [Fact]
+    public async Task FeedRequestUsesTargetAwareHttpClient()
+    {
+        var requestedUrls = new List<Uri>();
+        var collector = new RssCollector(target =>
+        {
+            requestedUrls.Add(target);
+            return new HttpClient(FakeHttp.Ok(
+                "<rss version=\"2.0\"><channel><item><title>条目</title><description>正文</description></item></channel></rss>",
+                "application/rss+xml"));
+        });
+
+        var result = await collector.CollectAsync(Source("https://www.example.test/feed.xml"));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("https://www.example.test/feed.xml", Assert.Single(requestedUrls).AbsoluteUri);
+    }
+
     [Fact]
     public async Task ParsesRssItemsAndCanonicalizesIds()
     {
@@ -94,6 +176,32 @@ public sealed class RssCollectorTests
         Assert.Equal(2, result.Items.Count);
         Assert.Equal("guid-a", result.Items[0].SourceItemId);
         Assert.Equal("https://example.test/a", result.Items[0].Url);
+    }
+
+    [Fact]
+    public async Task DecodesGb2312FeedDeclaredInXml()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        const string xml = """
+            <?xml version="1.0" encoding="GBK"?>
+            <rss version="2.0"><channel>
+              <item><guid>gbk-1</guid><title>岳阳新闻标题</title><link>https://example.test/gbk</link><description>中文正文</description></item>
+            </channel></rss>
+            """;
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.GetEncoding("GB18030").GetBytes(xml))
+        };
+        response.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("text/xml");
+        var collector = new RssCollector(new FixedHttpHandler(_ => response));
+
+        var result = await collector.CollectAsync(Source("https://example.test/gbk"));
+
+        Assert.True(result.Succeeded);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("岳阳新闻标题", item.Title);
+        Assert.Equal("中文正文", item.Content);
     }
 
     [Fact]
@@ -182,7 +290,9 @@ public sealed class WebColumnCollectorTests
             new WebPageResult(true, html, "https://example.test/column", ""),
             new Dictionary<string, ArticleFetchResult>
             {
-                ["https://example.test/a"] = new(true, "https://example.test/a", "example.test", "A", "A body", ""),
+                ["https://example.test/a"] = new(
+                    true, "https://example.test/a", "example.test", "A", "A body", "",
+                    MediaList: ["https://cdn.example.test/a.png"]),
                 ["https://example.test/b"] = new(false, "", "", "", "", "详情失败")
             });
         var collector = new WebColumnCollector(fetcher);
@@ -192,7 +302,8 @@ public sealed class WebColumnCollectorTests
             null, DateTimeOffset.Now, DateTimeOffset.Now));
 
         Assert.True(result.Succeeded);
-        Assert.Single(result.Items);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("https://cdn.example.test/a.png", Assert.Single(item.Media));
         Assert.Equal(1, result.FailedCount);
         Assert.Equal(2, fetcher.ArticleRequests.Count);
     }

@@ -64,7 +64,7 @@ Services/Collection/                   新建：采集域服务
 
 | 现有代码 | 复用方式 | 改造范围 |
 | --- | --- | --- |
-| `PublicArticleFetcher` | `SinglePageCollector` 直接调用 `FetchAsync` | 不改源码 |
+| `PublicArticleFetcher` | `SinglePageCollector` 直接调用 `FetchAsync` | 扩展正文媒体 URL 提取：支持相对地址、懒加载属性、`srcset`、`img`/`video`/`source`，并随 `ArticleFetchResult` 返回 |
 | `PublicArticleFetcher` 的公网校验逻辑 | `PublicUrlGuard` 提取为独立方法，供 `RssCollector`/`WebColumnCollector` 复用 | 从现有代码提取，不修改原方法 |
 | `ContentLibraryStore` / `CollectedItems` 表 | 新增 `SourceId`、`OriginalContent`、`CandidateContent`、`DuplicateOfId`、`ParsedBy`、`SourceItemId` 六列；现有四状态兼容；查询增加 `AccountKey` 条件 | `EnsureColumnAsync` 模式追加，不删列不重建 |
 | `TelegramCollectionStore` | `TelegramSourceAdapter` 只读旧表，将 `TelegramCollectionSchedules` 映射为 `CollectionSources` 视图模型；写入仍走旧 Store | 旧表不动、旧调度器不重构 |
@@ -205,7 +205,7 @@ public sealed record CollectionResult(
 ### 4.2 单页采集器（SinglePageCollector）
 
 - 调用 `PublicArticleFetcher.FetchAsync(url, cancellationToken)` 获取 `ArticleFetchResult`。
-- 转换为 `CollectedItemDraft`：Title、Content 写入 `OriginalContent`，`ParsedBy = "rule"`。
+- 转换为 `CollectedItemDraft`：Title、Content 写入 `OriginalContent`，正文媒体 URL 写入 `MediaList`，`ParsedBy = "rule"`。
 - 解析失败且来源 `AiFallbackEnabled = 1` 时，将原始 HTML 传给 `IAiAssistService`。
 
 ### 4.3 RSS/Atom 采集器（RssCollector）
@@ -579,7 +579,7 @@ src/QqChannelDesk/Pages/Collection/RunDetailWindow.xaml(.cs)         批次详�
 tests/QqChannelDesk.Tests/Collection*.cs、MigrationTests.cs、AiAssistTests.cs、TelegramSourceAdapterTests.cs 等
 ```
 
-说明：收件箱三栏未拆分为独立 `InboxView` UserControl，仍内联在 `ContentCollectionPage` 宿主页签中；原文/候选稿双视图、再次解析、标记重复、来源待审计数均已实现在该页签内。TG 定时采集与代理池保留为隐藏页签，经来源管理页"TG定时/代理池"入口展开。
+说明：收件箱已简化为“网址提取 + 搜索 + 草稿列表 + 分页”，仍内联在 `ContentCollectionPage` 宿主页签中。用户输入公开 URL 后自动适配 HTML 采集规则，成功结果在 `DraftEditorWindow` 弹窗确认，弹窗只提供“再次解析”和“保留草稿”两个操作；保留后进入草稿列表，可编辑、入库和删除。TG 定时采集与代理池保留为隐藏页签，经来源管理页"TG定时/代理池"入口展开。
 
 ### 修改
 
@@ -587,6 +587,7 @@ tests/QqChannelDesk.Tests/Collection*.cs、MigrationTests.cs、AiAssistTests.cs�
 src/QqChannelDesk/Services/ContentLibraryStore.cs    CollectedItems 扩展列 + OriginalContent 分批回填（默认 5000 行/次，重启续填）+ 待审统计与时间窗查询
 src/QqChannelDesk/Services/AppDatabaseInitializer.cs 注册新 Store
 src/QqChannelDesk/MainWindow.xaml.cs                 装配新服务；统一采集调度器随账号登录启动、账号切换与退出时停止；RunCompleted 后刷新收件箱/来源/记录
-src/QqChannelDesk/Pages/ContentCollectionPage.xaml(.cs)  三页签宿主 + 收件箱三栏（原文/候选稿双视图、再次解析、标记重复）
+src/QqChannelDesk/Pages/ContentCollectionPage.xaml(.cs)  多页签宿主 + 简化收件箱（网址提取、草稿搜索列表和分页）
+src/QqChannelDesk/Pages/Collection/DraftEditorWindow.xaml(.cs)  采集结果确认、草稿编辑和手动新增弹窗
 src/QqChannelDesk/Services/SystemSettingsStore.cs    AI 配置（BaseUrl、模型名、开关、每日上限、DPAPI 加密 Key）
 ```

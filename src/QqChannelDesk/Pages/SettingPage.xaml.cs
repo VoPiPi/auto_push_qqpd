@@ -9,6 +9,7 @@ namespace QqChannelDesk.Pages;
 
 public partial class SettingPage : UserControl
 {
+    private const double CompactLayoutBreakpoint = 960;
     private readonly SystemSettingsStore _settingsStore;
     private readonly MediaStorageService _mediaStorage;
     private readonly FfmpegManager _ffmpegManager;
@@ -21,6 +22,7 @@ public partial class SettingPage : UserControl
     private CancellationTokenSource? _pageLifetimeCts;
     private bool _aiKeyConfigured;
     private string _machineCode = "";
+    private bool? _isCompactLayout;
 
     public event Action<AppSettings>? SettingsChanged;
     public event EventHandler? UpdateCheckRequested;
@@ -38,6 +40,37 @@ public partial class SettingPage : UserControl
         Loaded += (_, _) => StartPageLifetime();
         Unloaded += (_, _) => EndPageLifetime();
         VersionText.Text = ApplicationVersionInfo.CurrentVersion;
+    }
+
+    private void SettingPage_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateSettingsLayout(e.NewSize.Width);
+
+    internal void UpdateSettingsLayout(double width)
+    {
+        if (double.IsNaN(width)) return;
+
+        var compact = width < CompactLayoutBreakpoint;
+        if (_isCompactLayout == compact) return;
+        _isCompactLayout = compact;
+
+        var columns = compact ? 1 : 2;
+        TopSettingsGrid.Columns = columns;
+        BottomSettingsGrid.Columns = columns;
+        TopContentRow.Height = compact ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+        BottomContentRow.Height = compact ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+
+        StartupSettingsCard.Margin = compact
+            ? new Thickness(0, 0, 0, 12)
+            : new Thickness(0, 0, 8, 0);
+        PublishingSettingsCard.Margin = compact
+            ? new Thickness(0)
+            : new Thickness(8, 0, 0, 0);
+        StorageSettingsCard.Margin = compact
+            ? new Thickness(0, 0, 0, 12)
+            : new Thickness(0, 0, 8, 0);
+        AiSettingsCard.Margin = compact
+            ? new Thickness(0)
+            : new Thickness(8, 0, 0, 0);
     }
 
     private CancellationToken CurrentPageToken =>

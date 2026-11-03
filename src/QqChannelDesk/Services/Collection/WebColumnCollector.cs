@@ -44,7 +44,8 @@ public sealed class WebColumnCollector(IWebColumnPageFetcher fetcher) : ISourceC
                         article.Title,
                         article.Content,
                         article.Url.Length > 0 ? article.Url : url,
-                        UrlNormalizer.Canonicalize(article.Url.Length > 0 ? article.Url : url)));
+                        UrlNormalizer.Canonicalize(article.Url.Length > 0 ? article.Url : url),
+                        MediaList: article.Media));
                 }
                 else
                 {

@@ -19,18 +19,16 @@ public partial class ContentCollectionPage : UserControl
 {
     private const int PageSize = 100;
     private readonly ContentLibraryStore _store;
+    private readonly SystemSettingsStore? _settingsStore;
     private readonly ProxyPoolStore _proxyPoolStore;
     private readonly ProxyPoolService _proxyPoolService;
     private readonly PublicArticleFetcher _fetcher = new();
     private readonly TelegramCollectorService _telegramCollector = new();
     private readonly TelegramMaterializer _telegramMaterializer;
     private readonly ITelegramTransport? _telegramTransport;
-    private readonly List<string> _pendingMedia = [];
-    private CollectedItem? _selectedItem;
     private IReadOnlyList<CollectedItem> _allItems = [];
     private int _itemsPage = 1;
     private int _itemsLoadVersion;
-    private string _parseError = "";
     private readonly ObservableCollection<TelegramTempItem> _tempItems = [];
     private readonly WebProxyProviderRegistry _proxyRegistry = new();
     private string _proxyCookie = "";
@@ -50,7 +48,6 @@ public partial class ContentCollectionPage : UserControl
     private readonly TelegramCollectionStore? _telegramCollectionStore;
     private readonly TelegramCollectionScheduler? _telegramCollectionScheduler;
     private readonly ChannelSyncService? _channelSync;
-    private readonly CollectionSourceStore? _collectionSourceStore;
     private readonly CollectionRunStore? _collectionRunStore;
     private readonly CollectionSchedulerService? _collectionScheduler;
     private readonly TelegramSourceAdapter? _telegramSourceAdapter;
@@ -58,7 +55,6 @@ public partial class ContentCollectionPage : UserControl
     private readonly SourcesView? _sourcesView;
     private readonly RunsView? _runsView;
     private bool _collectionSchedulerEventsSubscribed;
-    private long _sourceFilterId;
     private bool _databaseReady;
     private readonly ObservableCollection<TelegramScheduleRow> _telegramSchedules = [];
     private TelegramCollectionSchedule? _editingTelegramSchedule;
@@ -99,6 +95,7 @@ public partial class ContentCollectionPage : UserControl
     {
         InitializeComponent();
         _store = store ?? new ContentLibraryStore();
+        _settingsStore = settingsStore;
         _proxyPoolStore = proxyPoolStore ?? new ProxyPoolStore();
         _proxyPoolService = new ProxyPoolService(_proxyPoolStore);
         _telegramTransport = telegramTransport;
@@ -106,11 +103,11 @@ public partial class ContentCollectionPage : UserControl
         _telegramCollectionStore = telegramCollectionStore;
         _telegramCollectionScheduler = telegramCollectionScheduler;
         _channelSync = channelSync;
-        _collectionSourceStore = collectionSourceStore;
         _collectionRunStore = collectionRunStore;
         _collectionScheduler = collectionScheduler;
         _telegramSourceAdapter = telegramSourceAdapter;
         _aiAssist = settingsStore is null ? null : new SystemSettingsAiAssistService(settingsStore);
+        AiSystemPromptButton.IsEnabled = settingsStore is not null;
         var sourcesView = collectionSourceStore is null || collectionRunStore is null || collectionScheduler is null
             ? null
             : new SourcesView(collectionSourceStore, collectionRunStore, collectionScheduler, telegramSourceAdapter, _store);
@@ -140,10 +137,6 @@ public partial class ContentCollectionPage : UserControl
         TgScheduleLimitBox.Text = "20";
         ProxyConcurrencyBox.Text = ProxyPoolService.DefaultConcurrency.ToString();
         WorkspaceTabs.SelectionChanged += WorkspaceTabs_SelectionChanged;
-        // 来源筛选列表先放默认项，页面加载后再异步刷新成带待审计数的完整列表。
-        SourceFilterList.ItemsSource = new List<SourceFilterItem> { new(0, "全部来源", 0) };
-        SourceFilterList.SelectedIndex = 0;
-        SourceFilterList.SelectionChanged += SourceFilterList_SelectionChanged;
         Loaded += (_, _) =>
         {
             if (_databaseReady) StartPageLifetime();
@@ -185,7 +178,6 @@ public partial class ContentCollectionPage : UserControl
         UiAsync.Run("内容采集初始化收件箱", () => LoadItemsAsync(token));
         UiAsync.Run("内容采集初始化代理源", () => LoadProxySourcesAsync(token));
         UiAsync.Run("内容采集初始化定时任务", () => LoadTelegramSchedulesAsync(cancellationToken: token));
-        UiAsync.Run("内容采集初始化来源筛选", () => LoadSourceFiltersAsync(token));
     }
 
     private void EndPageLifetime()
@@ -211,16 +203,9 @@ public partial class ContentCollectionPage : UserControl
         var version = ++_itemsLoadVersion;
         try
         {
-            var status = (ItemStatusFilter.SelectedItem as ComboBoxItem)?.Content?.ToString();
-            var items = await _store.GetItemsAsync(
-                ItemSearchBox.Text,
-                status is "全部状态" ? null : status,
-                cancellationToken);
+            var items = await _store.GetItemsAsync(ItemSearchBox.Text, null, cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _itemsLoadVersion) return;
-            var filteredItems = _sourceFilterId == 0
-                ? items
-                : items.Where(item => item.SourceId == _sourceFilterId).ToArray();
-            _allItems = filteredItems;
+            _allItems = items;
             _itemsPage = 1;
             RenderItemsPage();
         }
@@ -231,46 +216,8 @@ public partial class ContentCollectionPage : UserControl
             _allItems = [];
             ItemsGrid.ItemsSource = null;
             UpdateItemsPagination();
-            ItemsStatus.Text = $"未能读取收件箱，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
+            ItemsStatus.Text = $"未能读取草稿列表，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
         }
-    }
-
-    private async Task LoadSourceFiltersAsync(CancellationToken cancellationToken)
-    {
-        if (!IsPageActive(cancellationToken) || _collectionSourceStore is null) return;
-        try
-        {
-            var sources = await _collectionSourceStore.GetSourcesAsync(cancellationToken);
-            if (!IsPageActive(cancellationToken)) return;
-            var pendingCounts = await _store.GetPendingCountsBySourceAsync(cancellationToken);
-            if (!IsPageActive(cancellationToken)) return;
-            var totalPending = pendingCounts.Values.Sum();
-            var items = new List<SourceFilterItem>
-            {
-                new(0, totalPending > 0 ? $"全部来源（待审 {totalPending}）" : "全部来源", 0)
-            };
-            items.AddRange(sources.OrderBy(item => item.Name).Select(source =>
-                new SourceFilterItem(source.Id, source.Name, pendingCounts.GetValueOrDefault(source.Id))));
-            SourceFilterList.SelectionChanged -= SourceFilterList_SelectionChanged;
-            SourceFilterList.ItemsSource = items;
-            var selected = items.FirstOrDefault(item => item.Id == _sourceFilterId) ?? items[0];
-            SourceFilterList.SelectedItem = selected;
-            SourceFilterList.SelectionChanged += SourceFilterList_SelectionChanged;
-            _sourceFilterId = selected.Id;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception)
-        {
-            ItemMessage.Text = $"加载来源筛选失败：{CliDiagnostics.Sanitize(exception.Message)}";
-        }
-    }
-
-    private void SourceFilterList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        _sourceFilterId = (SourceFilterList.SelectedItem as SourceFilterItem)?.Id ?? 0;
-        if (IsLoaded) UiAsync.Observe("筛选来源内容", LoadItemsAsync());
     }
 
     private void SubscribeCollectionSchedulerEvents()
@@ -303,7 +250,6 @@ public partial class ContentCollectionPage : UserControl
         var token = CurrentPageToken;
         if (!IsPageActive(token)) return;
         await LoadItemsAsync(token);
-        await LoadSourceFiltersAsync(token);
         if (_sourcesView is not null) await _sourcesView.RefreshAsync();
         if (_runsView is not null) await _runsView.RefreshAsync();
     }
@@ -391,35 +337,27 @@ public partial class ContentCollectionPage : UserControl
             if (!IsPageActive(pageToken)) return;
             if (existing is not null)
             {
-                var answer = MessageBox.Show(Window.GetWindow(this), $"该链接已在收件箱中：\n{existing.Title}\n\n是否打开已有素材？", "链接已存在", MessageBoxButton.YesNo, MessageBoxImage.Information);
-                if (answer == MessageBoxResult.Yes)
-                {
-                    await LoadItemsAsync(pageToken);
-                    if (!IsPageActive(pageToken)) return;
-                    ItemsGrid.SelectedItem = ((IEnumerable<CollectedItem>)ItemsGrid.ItemsSource!).FirstOrDefault(item => item.Id == existing.Id);
-                }
+                var answer = MessageBox.Show(Window.GetWindow(this), $"该链接已在草稿列表中：\n{existing.Title}\n\n是否打开已有草稿？", "链接已存在", MessageBoxButton.YesNo, MessageBoxImage.Information);
+                if (answer == MessageBoxResult.Yes) OpenDraftEditor(existing);
                 return;
             }
             FetchButtonIsEnabled(false);
-            ItemMessage.Text = "正在读取公开网页…";
+            SetInboxMessage("正在读取公开网页…", null);
             var result = await _fetcher.FetchAsync(normalized.AbsoluteUri, pageToken);
             if (!IsPageActive(pageToken)) return;
-            _parseError = result.Succeeded ? "" : result.Error;
-            UrlBox.Text = result.Url.Length > 0 ? result.Url : normalized.AbsoluteUri;
-            ItemUrlBox.Text = result.Url.Length > 0 ? result.Url : normalized.AbsoluteUri;
-            ItemTitleBox.Text = result.Title;
-            ItemContentBox.Text = result.Content;
-            _selectedItem = null;
-            ItemsGrid.SelectedItem = null;
-            ItemNotesBox.Clear();
-            ItemTagsBox.Clear();
-            _pendingMedia.Clear();
-            ShowMediaInfo();
-            UpdateOriginalContentPanel();
-            ItemMessage.Text = result.Succeeded
-                ? $"已提取自 {result.SourceHost}。请检查并确认内容使用权限后保存。"
-                : $"{result.Error}\n可补全标题和正文后保存。";
-            ItemMessage.Foreground = result.Succeeded ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
+            SetInboxMessage("", null);
+            if (!result.Succeeded)
+            {
+                MessageBox.Show(Window.GetWindow(this), $"未能提取网页内容：\n{result.Error}", "提取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var dialog = new DraftEditorWindow(_store, result, _aiAssist) { Owner = Window.GetWindow(this) };
+            if (dialog.ShowDialog() == true)
+            {
+                UrlBox.Clear();
+                SetInboxMessage("已保留到草稿列表。", true);
+                await LoadItemsAsync(pageToken);
+            }
         }
         finally
         {
@@ -427,256 +365,107 @@ public partial class ContentCollectionPage : UserControl
         }
         });
 
+    private void UrlBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        FetchButton_Click(sender, e);
+    }
+
     private void FetchButtonIsEnabled(bool enabled)
     {
         if (!IsPageActiveForUpdates) return;
         FetchButton.IsEnabled = enabled;
     }
 
-    private void ShowMediaInfo(IReadOnlyList<string>? media = null)
+    private void SetInboxMessage(string message, bool? succeeded)
     {
-        var paths = media ?? _pendingMedia;
-        ItemMediaInfo.Text = paths.Count == 0 ? "" : $"本地媒体 {paths.Count} 个：{string.Join("、", paths.Select(Path.GetFileName))}";
+        if (!IsPageActiveForUpdates) return;
+        InboxMessage.Text = message;
+        InboxMessage.Foreground = succeeded switch
+        {
+            true => UiStatusBrushes.Success,
+            false => UiStatusBrushes.Warning,
+            _ => UiStatusBrushes.Neutral
+        };
     }
 
-    private void NewItemButton_Click(object sender, RoutedEventArgs e)
-    {
-        ItemsGrid.SelectedItem = null;
-        _selectedItem = null;
-        UrlBox.Clear(); ItemUrlBox.Clear(); ItemTitleBox.Clear(); ItemContentBox.Clear(); ItemNotesBox.Clear(); ItemTagsBox.Clear();
-        _pendingMedia.Clear();
-        ShowMediaInfo();
-        ItemMessage.Text = "手动素材不需要来源链接。";
-        _parseError = "";
-        UpdateOriginalContentPanel();
-    }
-
-    private void SaveItemButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("保存采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (!IsPageActive(pageToken)) return;
-        var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem?.Media;
-        if (string.IsNullOrWhiteSpace(ItemTitleBox.Text) && string.IsNullOrWhiteSpace(ItemContentBox.Text) && (media is null || media.Count == 0))
-        {
-            MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        var rawUrl = ItemUrlBox.Text.Trim();
-        var normalizedUrl = "";
-        var host = "手动录入";
-        if (rawUrl.Length > 0)
-        {
-            if (!PublicArticleFetcher.TryNormalizePublicUrl(rawUrl, out var uri, out var error))
-            {
-                MessageBox.Show(Window.GetWindow(this), error, "链接无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-            normalizedUrl = uri.AbsoluteUri;
-            host = uri.DnsSafeHost;
-            var duplicate = await _store.FindByUrlAsync(normalizedUrl, pageToken);
-            if (!IsPageActive(pageToken)) return;
-            if (duplicate is not null && duplicate.Id != _selectedItem?.Id)
-            {
-                var answer = MessageBox.Show(Window.GetWindow(this), $"该链接已存在于收件箱：\n{duplicate.Title}\n\n是否查看已有素材？本次内容不会覆盖或合并到已有条目。", "重复链接", MessageBoxButton.YesNo, MessageBoxImage.Information);
-                if (answer == MessageBoxResult.Yes)
-                {
-                    await LoadItemsAsync(pageToken);
-                    if (!IsPageActive(pageToken)) return;
-                    ItemsGrid.SelectedItem = ((IEnumerable<CollectedItem>)ItemsGrid.ItemsSource!).FirstOrDefault(item => item.Id == duplicate.Id);
-                }
-                return;
-            }
-        }
-        var tags = ItemTagsBox.Text.Split([',', '，', ';', '；'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var status = _selectedItem?.Status ?? "待处理";
-        var model = new CollectedItemDraft(normalizedUrl, host, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _parseError, _selectedItem?.Id, MediaList: media, OriginalContent: ItemOriginalBox.Text);
-        try
-        {
-            if (_selectedItem is null) await _store.SaveItemAsync(model);
-            else await _store.UpdateItemAsync(model);
-            if (!IsPageActive(pageToken)) return;
-            ItemMessage.Text = "素材已保存。";
-            ItemMessage.Foreground = UiStatusBrushes.Success;
-            await LoadItemsAsync(pageToken);
-        }
-        catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
-        {
-            if (IsPageActive(pageToken))
-                MessageBox.Show(Window.GetWindow(this), "该网页链接已存在于收件箱。", "重复链接", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            if (IsPageActive(pageToken))
-                ItemMessage.Text = $"未能保存，请检查内容后重试：{CliDiagnostics.Sanitize(ex.Message)}";
-        }
-        });
-
-    private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        _selectedItem = ItemsGrid.SelectedItem as CollectedItem;
-        if (_selectedItem is null) return;
-        ItemUrlBox.Text = _selectedItem.Url;
-        ItemTitleBox.Text = _selectedItem.Title;
-        ItemContentBox.Text = _selectedItem.Content;
-        ItemNotesBox.Text = _selectedItem.Notes;
-        ItemTagsBox.Text = string.Join(", ", _selectedItem.Tags);
-        ItemMessage.Text = _selectedItem.ParseError;
-        _parseError = _selectedItem.ParseError;
-        _pendingMedia.Clear();
-        ShowMediaInfo(_selectedItem.Media);
-        UpdateOriginalContentPanel();
-    }
-
-    private void UpdateOriginalContentPanel()
-    {
-        var item = _selectedItem;
-        var original = item?.OriginalContent ?? "";
-        var showOriginal = original.Length > 0;
-        ItemOriginalHeader.Visibility = showOriginal ? Visibility.Visible : Visibility.Collapsed;
-        ItemOriginalBox.Visibility = showOriginal ? Visibility.Visible : Visibility.Collapsed;
-        ItemOriginalBox.Text = showOriginal ? original : "";
-        var parsedLabel = ParsedByLabel(item?.ParsedBy ?? "");
-        ItemParsedByText.Text = parsedLabel.Length == 0 ? "" : $"解析方式：{parsedLabel}";
-        ItemParsedByText.Visibility = parsedLabel.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        ReparseItemButton.IsEnabled = item is not null && item.Url.Length > 0;
-        MarkDuplicateButton.IsEnabled = item is not null;
-    }
-
-    private static string ParsedByLabel(string parsedBy) => parsedBy switch
-    {
-        "rule" => "规则解析",
-        "ai-fallback" => "AI 兜底",
-        "ai-only" => "AI 专用",
-        _ => ""
-    };
-
-    private void KeepItemButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("保留采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        await SaveCurrentItemAsync("保留", pageToken);
-        });
-
-    private void IgnoreItemButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("忽略采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        await SaveCurrentItemAsync("忽略", pageToken);
-        });
-
-    private void BatchKeepItemsButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("批量保留采集项", () => BatchSetItemStatusAsync("保留", CurrentPageToken));
-
-    private void BatchIgnoreItemsButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("批量忽略采集项", () => BatchSetItemStatusAsync("忽略", CurrentPageToken));
-
-    private async Task BatchSetItemStatusAsync(string status, CancellationToken cancellationToken)
-    {
-        var items = ItemsGrid.SelectedItems.OfType<CollectedItem>()
-            .Where(item => item.Status != status)
-            .ToArray();
-        if (!IsPageActive(cancellationToken) || items.Length == 0)
-        {
-            ItemMessage.Text = status == "保留" ? "请先选择要保留的采集项。" : "请先选择要忽略的采集项。";
-            ItemMessage.Foreground = UiStatusBrushes.Warning;
-            return;
-        }
-
-        try
-        {
-            foreach (var item in items)
-                await _store.SetItemStatusAsync(item.Id, status, cancellationToken);
-            if (!IsPageActive(cancellationToken)) return;
-            ItemMessage.Text = $"已批量{status} {items.Length} 条采集项。";
-            ItemMessage.Foreground = UiStatusBrushes.Success;
-            await LoadItemsAsync(cancellationToken);
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            ItemMessage.Text = $"批量{status}未完成：{CliDiagnostics.Sanitize(exception.Message)}";
-            ItemMessage.Foreground = UiStatusBrushes.Warning;
-        }
-    }
-
-    private void BatchAddItemsToMaterialsButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("批量加入素材库", async () =>
+    private void AiSystemPromptButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("编辑 AI 系统提示词", async () =>
         {
             var pageToken = CurrentPageToken;
-            if (!IsPageActive(pageToken)) return;
-            var items = ItemsGrid.SelectedItems.OfType<CollectedItem>()
-                .Where(item => item.Status != "已入素材库")
-                .ToArray();
-            if (items.Length == 0)
-            {
-                ItemMessage.Text = "请先选择要加入素材库的采集项。";
-                ItemMessage.Foreground = UiStatusBrushes.Warning;
-                return;
-            }
-
-            if (MessageBox.Show(Window.GetWindow(this), $"将批量创建 {items.Length} 条素材。\n请确认你拥有这些内容的使用授权。是否继续？", "批量入库确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            var created = 0;
+            if (_settingsStore is null || !IsPageActive(pageToken)) return;
             try
             {
-                foreach (var item in items)
-                {
-                    if (string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Content) && item.Media.Count == 0) continue;
-                    var type = MaterialMediaValidator.InferType(item.Media) ?? (item.Media.Count == 0 ? "text" : "");
-                    if (type.Length == 0) continue;
-                    await _store.SaveMaterialAsync(new MaterialDraft(
-                        null,
-                        item.Title,
-                        type,
-                        item.Content,
-                        "", "", "", "", null, "waitsend", "", item.Media,
-                        item.Url.Length > 0 ? "网络采集" : "手工添加",
-                        item.Url), pageToken);
-                    await _store.SetItemStatusAsync(item.Id, "已入素材库", pageToken);
-                    created++;
-                }
-
+                var settings = await _settingsStore.GetAsync(pageToken);
                 if (!IsPageActive(pageToken)) return;
-                ItemMessage.Text = created == items.Length
-                    ? $"已批量加入素材库 {created} 条。"
-                    : $"已加入 {created} 条，跳过 {items.Length - created} 条无标题正文或媒体类型无效的内容。";
-                ItemMessage.Foreground = created == items.Length ? UiStatusBrushes.Success : UiStatusBrushes.Warning;
-                await LoadItemsAsync(pageToken);
+                var dialog = new AiSystemPromptWindow(settings.AiSystemPrompt)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                if (dialog.ShowDialog() != true || !IsPageActive(pageToken)) return;
+                await _settingsStore.SaveAsync(
+                    settings with { AiSystemPrompt = dialog.SystemPrompt },
+                    pageToken);
+                if (IsPageActive(pageToken))
+                    SetInboxMessage("AI 系统提示词已保存。", true);
             }
-            catch (Exception exception) when (!pageToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (pageToken.IsCancellationRequested) { }
+            catch (Exception ex)
             {
-                ItemMessage.Text = $"批量入库在第 {created + 1} 条附近未完成：{CliDiagnostics.Sanitize(exception.Message)}";
-                ItemMessage.Foreground = UiStatusBrushes.Warning;
-                await LoadItemsAsync(pageToken);
+                if (IsPageActive(pageToken))
+                    SetInboxMessage($"系统提示词保存失败：{CliDiagnostics.Sanitize(ex.Message)}", false);
             }
         });
 
-    private async Task SaveCurrentItemAsync(string status, CancellationToken cancellationToken)
+    private void OpenDraftEditor(CollectedItem item)
     {
-        if (_selectedItem is null || !IsPageActive(cancellationToken)) return;
-        var tags = ItemTagsBox.Text.Split([',', '，', ';', '；'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem.Media;
-        await _store.UpdateItemAsync(new CollectedItemDraft(_selectedItem.Url, _selectedItem.SourceHost, ItemTitleBox.Text, ItemContentBox.Text, status, ItemNotesBox.Text, tags, _selectedItem.ParseError, _selectedItem.Id, MediaList: media, OriginalContent: ItemOriginalBox.Text));
-        if (!IsPageActive(cancellationToken)) return;
-        await LoadItemsAsync(cancellationToken);
+        var dialog = new DraftEditorWindow(_store, item, _aiAssist) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true) UiAsync.Observe("刷新草稿列表", ReloadItemsAfterDialogAsync());
     }
 
-    private void AddItemToMaterialsButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("采集项加入素材库", async () =>
-        {
+    private async Task ReloadItemsAfterDialogAsync()
+    {
         var pageToken = CurrentPageToken;
         if (!IsPageActive(pageToken)) return;
-        var media = _pendingMedia.Count > 0 ? _pendingMedia : _selectedItem?.Media;
-        if (string.IsNullOrWhiteSpace(ItemTitleBox.Text) && string.IsNullOrWhiteSpace(ItemContentBox.Text) && (media is null || media.Count == 0))
+        await LoadItemsAsync(pageToken);
+    }
+
+    private void EditDraftButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not CollectedItem item) return;
+        OpenDraftEditor(item);
+    }
+
+    private void DeleteDraftButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("删除草稿", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if ((sender as FrameworkElement)?.DataContext is not CollectedItem item || !IsPageActive(pageToken)) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"删除草稿“{item.Title}”？此操作无法撤销。", "删除草稿", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        await _store.DeleteItemAsync(item.Id, pageToken);
+        if (!IsPageActive(pageToken)) return;
+        SetInboxMessage("草稿已删除。", true);
+        await LoadItemsAsync(pageToken);
+        });
+
+    private void AddDraftToMaterialsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("草稿加入素材库", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if ((sender as FrameworkElement)?.DataContext is not CollectedItem item || !IsPageActive(pageToken)) return;
+        if (item.Status == "已入素材库")
+        {
+            SetInboxMessage("该草稿已在素材库中。", false);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(item.Title) && string.IsNullOrWhiteSpace(item.Content) && item.Media.Count == 0)
         {
             MessageBox.Show(Window.GetWindow(this), "标题、正文和媒体至少填写一项后才能加入素材库。", "内容为空", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        var source = ItemUrlBox.Text.Trim();
-        if (source.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。\n来源地址仅作记录，不会加入帖子正文。继续加入素材库？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        var mediaList = media ?? [];
-        var type = MaterialMediaValidator.InferType(mediaList) ?? (mediaList.Count == 0 ? "text" : "");
+        if (item.Url.Length > 0 && MessageBox.Show(Window.GetWindow(this), "请确认你有权保存、编辑并发布这份内容。\n来源地址仅作记录，不会加入帖子正文。继续加入素材库？", "内容使用提醒", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var type = MaterialMediaValidator.InferType(item.Media) ?? (item.Media.Count == 0 ? "text" : "");
         if (type.Length == 0)
         {
             MessageBox.Show(Window.GetWindow(this), "媒体类型无法识别，请确认图片和视频没有混用，且文件或链接带有正确扩展名。", "媒体无效", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -685,119 +474,28 @@ public partial class ContentCollectionPage : UserControl
         try
         {
             var materialId = await _store.SaveMaterialAsync(new MaterialDraft(
-                null, ItemTitleBox.Text, type, ItemContentBox.Text, "", "", "", "", null, "waitsend", "", mediaList,
-                source.Length > 0 ? "网络采集" : "手工添加", source));
-            if (_selectedItem is not null) await _store.SetItemStatusAsync(_selectedItem.Id, "已入素材库");
+                null, item.Title, type, item.Content, "", "", "", "", null, "waitsend", "", item.Media,
+                item.Url.Length > 0 ? "网络采集" : "手工添加", item.Url), pageToken);
+            await _store.SetItemStatusAsync(item.Id, "已入素材库", pageToken);
             if (!IsPageActive(pageToken)) return;
-            ItemMessage.Text = $"已加入素材库（编号 {materialId}），状态为待发布。";
-            ItemMessage.Foreground = UiStatusBrushes.Success;
+            SetInboxMessage($"已加入素材库（编号 {materialId}），状态为待发布。", true);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!pageToken.IsCancellationRequested)
         {
-            if (IsPageActive(pageToken))
-            {
-                ItemMessage.Text = $"未能加入素材库，请检查媒体后重试：{CliDiagnostics.Sanitize(ex.Message)}";
-                ItemMessage.Foreground = UiStatusBrushes.Warning;
-            }
+            SetInboxMessage($"未能加入素材库，请检查后重试：{CliDiagnostics.Sanitize(ex.Message)}", false);
             return;
         }
         await LoadItemsAsync(pageToken);
-        });
-
-    private void DeleteItemButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("删除采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        if (MessageBox.Show(Window.GetWindow(this), "删除该采集素材？此操作无法撤销。", "删除素材", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await _store.DeleteItemAsync(_selectedItem.Id);
-        if (!IsPageActive(pageToken)) return;
-        _selectedItem = null;
-        await LoadItemsAsync(pageToken);
-        });
-
-    private void MarkDuplicateButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("标记重复采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        await _store.SetItemStatusAsync(_selectedItem.Id, "重复", pageToken);
-        if (!IsPageActive(pageToken)) return;
-        ItemMessage.Text = "已标记为重复。";
-        ItemMessage.Foreground = UiStatusBrushes.Success;
-        await LoadItemsAsync(pageToken);
-        });
-
-    private void ReparseItemButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("再次解析采集项", async () =>
-        {
-        var pageToken = CurrentPageToken;
-        if (_selectedItem is null || !IsPageActive(pageToken)) return;
-        if (!PublicArticleFetcher.TryNormalizePublicUrl(_selectedItem.Url, out var normalized, out var urlError))
-        {
-            ItemMessage.Text = $"无法再次解析：{urlError}";
-            ItemMessage.Foreground = UiStatusBrushes.Warning;
-            return;
-        }
-
-        try
-        {
-            ItemMessage.Text = "正在重新解析…";
-            var result = await _fetcher.FetchAsync(normalized.AbsoluteUri, pageToken);
-            if (!IsPageActive(pageToken)) return;
-            if (result.Succeeded)
-            {
-                ItemTitleBox.Text = result.Title;
-                ItemContentBox.Text = result.Content;
-                ItemOriginalBox.Text = result.Content;
-                ItemOriginalHeader.Visibility = Visibility.Visible;
-                ItemOriginalBox.Visibility = Visibility.Visible;
-                _parseError = "";
-                ItemMessage.Text = "已重新解析，请检查后保存修改。";
-                ItemMessage.Foreground = UiStatusBrushes.Success;
-                return;
-            }
-
-            _parseError = result.Error;
-            if (_aiAssist is not null && result.RawHtml.Length > 0)
-            {
-                var aiResult = await _aiAssist.ExtractAsync(result.RawHtml, "single-page", pageToken);
-                if (!IsPageActive(pageToken)) return;
-                if (aiResult.Succeeded)
-                {
-                    ItemTitleBox.Text = aiResult.Title;
-                    ItemContentBox.Text = aiResult.Content;
-                    ItemMessage.Text = "规则解析失败，已用 AI 兜底生成候选稿，请检查后保存修改。";
-                    ItemMessage.Foreground = UiStatusBrushes.Success;
-                    return;
-                }
-
-                ItemMessage.Text = $"重新解析未成功：{result.Error}{Environment.NewLine}AI 兜底：{aiResult.ErrorSummary}";
-                ItemMessage.Foreground = UiStatusBrushes.Warning;
-                return;
-            }
-
-            ItemMessage.Text = $"重新解析未成功：{result.Error}";
-            ItemMessage.Foreground = UiStatusBrushes.Warning;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            if (!IsPageActive(pageToken)) return;
-            ItemMessage.Text = $"重新解析未成功：{CliDiagnostics.Sanitize(exception.Message)}";
-            ItemMessage.Foreground = UiStatusBrushes.Warning;
-        }
         });
 
     private void SearchItemsButton_Click(object sender, RoutedEventArgs e) =>
-        UiAsync.Run("搜索采集项", LoadItemsAsync);
-    private void ItemStatusFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        UiAsync.Run("筛选采集项", async () => { if (IsLoaded) await LoadItemsAsync(); });
+        UiAsync.Run("搜索草稿", LoadItemsAsync);
+
     private void SearchBox_KeyDown(object sender, KeyEventArgs e) =>
-        UiAsync.Run("采集项搜索快捷键", async () =>
+        UiAsync.Run("草稿搜索快捷键", async () =>
         {
         if (e.Key != Key.Enter) return;
-        if (ReferenceEquals(sender, ItemSearchBox)) await LoadItemsAsync();
-        else await LoadItemsAsync();
+        await LoadItemsAsync();
         });
 
     #region TG采集
@@ -2485,21 +2183,4 @@ public partial class ContentCollectionPage : UserControl
     #endregion
 
     #endregion
-}
-
-/// <summary>收件箱左侧来源筛选行：名称 + 待审角标，Id=0 表示全部来源。</summary>
-public sealed class SourceFilterItem
-{
-    public SourceFilterItem(long id, string name, int pendingCount)
-    {
-        Id = id;
-        Name = name;
-        PendingCount = pendingCount;
-    }
-
-    public long Id { get; }
-    public string Name { get; }
-    public int PendingCount { get; }
-    public string PendingLabel => $"待审 {PendingCount}";
-    public Visibility PendingVisibility => PendingCount > 0 ? Visibility.Visible : Visibility.Collapsed;
 }

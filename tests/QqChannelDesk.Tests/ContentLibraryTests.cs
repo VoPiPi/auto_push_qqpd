@@ -132,6 +132,69 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public void ParseHtmlWithRule_ReportsMatchedSelector()
+    {
+        var result = PublicArticleFetcher.ParseHtmlWithRule("""
+            <html><head><title>规则标记</title></head>
+            <body><article><p>规则解析正文第一段，长度足够。</p><p>规则解析正文第二段。</p></article></body></html>
+            """);
+
+        Assert.Equal("//article", result.Rule);
+        Assert.Contains("规则解析正文第一段", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtmlWithRule_ExcludedRuleFallsToNextSelector()
+    {
+        // “换一种规则重新解析”：排除已命中的 //article 后，应改由 class=article-content 容器命中。
+        const string html = """
+            <html><head><title>换规则</title></head>
+            <body>
+              <article><p>第一规则命中的正文内容，长度足够。</p><p>第一规则第二段内容。</p></article>
+              <div class="article-content"><p>第二规则命中的正文内容，长度足够。</p><p>第二规则第二段内容。</p></div>
+            </body></html>
+            """;
+
+        var first = PublicArticleFetcher.ParseHtmlWithRule(html);
+        Assert.Equal("//article", first.Rule);
+        Assert.Contains("第一规则命中", first.Content);
+        Assert.DoesNotContain("第二规则命中", first.Content);
+
+        var second = PublicArticleFetcher.ParseHtmlWithRule(html,
+            excludeSelectors: new HashSet<string>(StringComparer.Ordinal) { first.Rule });
+        Assert.NotEqual("//article", second.Rule);
+        Assert.Contains("第二规则命中", second.Content);
+        Assert.DoesNotContain("第一规则命中", second.Content);
+    }
+
+    [Fact]
+    public void ParseHtmlWithRule_AllRulesExcludedReturnsEmpty()
+    {
+        // 持续排除命中的规则直到用尽：最后一次返回空结果，Rule 为空，由调用方兜底。
+        const string html = """
+            <html><head><title>穷尽</title></head>
+            <body><article><p>唯一正文段落内容，长度足够测试。</p><p>第二段内容。</p></article></body></html>
+            """;
+        var excluded = new HashSet<string>(StringComparer.Ordinal);
+        var rules = new List<string>();
+        while (true)
+        {
+            var result = PublicArticleFetcher.ParseHtmlWithRule(html, excludeSelectors: excluded);
+            if (result.Rule.Length == 0)
+            {
+                Assert.Equal("", result.Title);
+                Assert.Equal("", result.Content);
+                break;
+            }
+            rules.Add(result.Rule);
+            excluded.Add(result.Rule);
+            Assert.True(rules.Count <= 40, "规则排除未收敛，可能存在重复命中。");
+        }
+        Assert.Equal("//article", rules[0]);
+        Assert.Contains("//body", rules);
+    }
+
+    [Fact]
     public async Task Store_AllowsMultipleManualItemsAndDeletesOneItem()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
@@ -251,6 +314,25 @@ public sealed class ContentLibraryTests
         Assert.Contains(active, material => material.Title == "待发布素材");
         Assert.Contains(active, material => material.Title == "排队素材");
         Assert.DoesNotContain(active, material => material.Title is "已发布素材" or "已删除素材");
+    }
+
+    [Fact]
+    public async Task CollectionArchiveStatus_IsReleasedWhenMaterialDeleted()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-archive-release-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var url = "https://blog.example/post/1";
+        await store.SaveItemAsync(new CollectedItemDraft(url, "blog.example", "采集文章", "正文", MediaList: ["https://example.com/a.jpg"]));
+        var materialId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "采集文章", "image", "正文", "", "", "", "", null, "waitsend", "",
+            ["https://example.com/a.jpg"], "网络采集", url));
+
+        await store.UpdateMaterialStatusAsync(materialId, "delete");
+        Assert.Equal("待处理", (await store.GetItemAsync(Assert.Single(await store.GetItemsAsync()).Id))!.Status);
+
+        await store.SaveItemAsync(new CollectedItemDraft(
+            "https://blog.example/post/2", "blog.example", "历史异常", "正文", Status: "已入素材库"));
+        Assert.Equal("待处理", Assert.Single(await store.GetItemsAsync("历史异常")).Status);
     }
 
     [Fact]

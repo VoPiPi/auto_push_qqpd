@@ -31,6 +31,7 @@ public sealed class SystemSettingsAiTests : IDisposable
         Assert.Equal("", defaults.AiModelName);
         Assert.Equal("", defaults.AiApiKeyCipher);
         Assert.Equal(100, defaults.AiDailyCallLimit);
+        Assert.Equal("", defaults.AiSystemPrompt);
         Assert.Equal("", await store.GetAiApiKeyAsync());
 
         await store.SaveAsync(new AppSettings(
@@ -45,12 +46,15 @@ public sealed class SystemSettingsAiTests : IDisposable
         Assert.Equal("https://ai.example.test/v1", persisted.AiBaseUrl);
         Assert.Equal("test-model", persisted.AiModelName);
         Assert.Equal(20, persisted.AiDailyCallLimit);
+        Assert.Equal("", persisted.AiSystemPrompt);
         Assert.NotEqual("secret-key-value", persisted.AiApiKeyCipher);
         Assert.DoesNotContain("secret-key-value", persisted.AiApiKeyCipher);
         Assert.Equal("secret-key-value", await store.GetAiApiKeyAsync());
 
-        await store.SaveAsync(new AppSettings(AiAssistEnabled: false));
+        await store.SaveAsync(new AppSettings(AiAssistEnabled: false, AiSystemPrompt: "只提取标题和正文。"));
         Assert.Equal("secret-key-value", await new SystemSettingsStore(_databasePath).GetAiApiKeyAsync());
+
+        Assert.Equal("只提取标题和正文。", (await new SystemSettingsStore(_databasePath).GetAsync()).AiSystemPrompt);
     }
 
     [Fact]
@@ -103,14 +107,49 @@ public sealed class OpenAiCompatibleAiClientTests
         Assert.Equal("Bearer secret-key-value", handler.Authorization);
         Assert.Contains("test-model", handler.RequestBody);
         using var requestBody = JsonDocument.Parse(handler.RequestBody!);
-        var userContent = requestBody.RootElement
-            .GetProperty("messages")
-            .EnumerateArray()
+        var messages = requestBody.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        var systemPrompt = messages
+            .First()
+            .GetProperty("content")
+            .GetString();
+        var userContent = messages
             .Last()
             .GetProperty("content")
             .GetString();
+        Assert.Equal(AiSystemPrompts.DefaultArticle, systemPrompt);
         Assert.Equal("QQ_AI_CONNECT_TOKEN=[已隐藏] 原始内容", userContent);
         Assert.DoesNotContain("secret", handler.RequestBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DefaultArticlePrompt_ProvidesEditableExtractionContract()
+    {
+        Assert.Contains("QQ 频道文章采集助手", AiSystemPrompts.DefaultArticle);
+        Assert.Contains("\"title\"", AiSystemPrompts.DefaultArticle);
+        Assert.Contains("\"content\"", AiSystemPrompts.DefaultArticle);
+        Assert.Contains("不编造", AiSystemPrompts.DefaultArticle);
+    }
+
+    [Fact]
+    public async Task UsesConfiguredSystemPromptForExtract()
+    {
+        var handler = new FakeAiHttpHandler(HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { message = new { content = JsonSerializer.Serialize(new { title = "标题", content = "正文" }) } } }
+        }));
+        var client = new OpenAiCompatibleAiClient(Options() with { SystemPrompt = "自定义提示词" }, handler);
+
+        var result = await client.ExtractAsync("内容", "single-page");
+
+        Assert.True(result.Succeeded);
+        using var requestBody = JsonDocument.Parse(handler.RequestBody!);
+        var systemPrompt = requestBody.RootElement
+            .GetProperty("messages")
+            .EnumerateArray()
+            .First()
+            .GetProperty("content")
+            .GetString();
+        Assert.Equal("自定义提示词", systemPrompt);
     }
 
     [Fact]

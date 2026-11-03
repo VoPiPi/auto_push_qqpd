@@ -70,6 +70,40 @@ public sealed class CollectionSchedulerServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecollectionRepairsPreviouslyGarbledSourceItem()
+    {
+        var sourceStore = new CollectionSourceStore(_databasePath, _context);
+        var runStore = new CollectionRunStore(_databasePath, _context);
+        var library = new ContentLibraryStore(_databasePath, _context);
+        var sourceId = await sourceStore.CreateSourceAsync(new CollectionSourceDraft(
+            "编码修复来源", "rss", "https://example.test/rss", AuthConfirmed: true));
+        var brokenScheduler = new CollectionSchedulerService(
+            sourceStore, runStore, library,
+            new Dictionary<string, ISourceCollector>
+            {
+                ["rss"] = new ListSourceCollector([
+                    new("\uFFFD\uFFFD\uFFFD", "\uFFFD\uFFFD", "https://example.test/fix", "same")
+                ])
+            });
+        await brokenScheduler.RunSourceAsync(sourceId);
+
+        var fixedScheduler = new CollectionSchedulerService(
+            sourceStore, runStore, library,
+            new Dictionary<string, ISourceCollector>
+            {
+                ["rss"] = new ListSourceCollector([
+                    new("正确标题", "正确正文", "https://example.test/fix", "same")
+                ])
+            });
+        await fixedScheduler.RunSourceAsync(sourceId);
+
+        var item = Assert.Single(await library.GetItemsAsync());
+        Assert.Equal("正确标题", item.Title);
+        Assert.Equal("正确正文", item.Content);
+        Assert.Equal("正确正文", item.OriginalContent);
+    }
+
+    [Fact]
     public async Task ThreeConsecutiveFailuresPauseAutomaticScheduling()
     {
         var sourceStore = new CollectionSourceStore(_databasePath, _context);

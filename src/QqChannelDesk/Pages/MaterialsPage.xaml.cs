@@ -54,6 +54,7 @@ public partial class MaterialsPage : UserControl
             _allMaterials = await _store.GetMaterialsAsync(MaterialSearchBox.Text, filter?.Tag?.ToString());
             _currentPage = 1;
             RenderCurrentPage();
+            MaterialsLastRefreshText.Text = $"刷新于 {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
         }
         catch (Exception ex)
         {
@@ -62,6 +63,7 @@ public partial class MaterialsPage : UserControl
             UpdatePagination();
             UpdateSelectionCount();
             MaterialsStatus.Text = $"未能读取素材库，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
+            MaterialsLastRefreshText.Text = "刷新未完成";
         }
         finally { _loading = false; }
     }
