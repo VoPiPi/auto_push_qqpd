@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using QqChannelDesk.Services;
 using Xunit;
 
@@ -28,7 +29,7 @@ public sealed class TelegramCollectionTests : IDisposable
 
         Assert.Equal(id, saved.Id);
         Assert.Equal(24, saved.IntervalHours);
-        Assert.Equal(500, saved.MessageLimit);
+        Assert.Equal(20, saved.MessageLimit);
         Assert.Equal("keyword", saved.Keyword);
         Assert.Equal("每天一次", saved.FrequencyDisplay);
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(draft));
@@ -37,6 +38,95 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Empty(await store.GetAsync());
         await store.SaveAsync(draft);
         Assert.Single(await store.GetAsync());
+    }
+
+    [Fact]
+    public async Task CollectionStore_PersistsIncludeAndExcludeKeywordsSeparatelyAndTrimsThem()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var draft = new TelegramCollectionScheduleDraft(
+            null,
+            "https://t.me/s/keywords",
+            "keywords",
+            24,
+            true,
+            WebProxySelection.Automatic,
+            20,
+            "  广告 | 旧闻  ",
+            IncludeKeyword: "  新闻 | 公告  ");
+
+        var id = await store.SaveAsync(draft);
+        var saved = Assert.Single(await store.GetAsync());
+
+        Assert.Equal(id, saved.Id);
+        Assert.Equal("广告 | 旧闻", saved.Keyword);
+        Assert.Equal("新闻 | 公告", saved.IncludeKeyword);
+    }
+
+    [Fact]
+    public async Task CollectionStore_PersistsTenMinutePollingCronExpression()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var draft = new TelegramCollectionScheduleDraft(
+            null,
+            "https://t.me/s/polling",
+            "polling",
+            24,
+            true,
+            WebProxySelection.Automatic,
+            20,
+            "",
+            CronExpression: "*/10 * * * *");
+
+        var id = await store.SaveAsync(draft);
+        var saved = Assert.Single(await store.GetAsync());
+
+        Assert.Equal(id, saved.Id);
+        Assert.Equal("*/10 * * * *", saved.CronExpression);
+        Assert.Equal("*/10 * * * *", saved.CronDisplay);
+    }
+
+    [Fact]
+    public async Task CollectionStore_MigratesLegacyScheduleWithoutIncludeKeywordColumn()
+    {
+        Directory.CreateDirectory(_directory);
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE TelegramCollectionSchedules (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ChannelUrl TEXT NOT NULL,
+                    ChannelName TEXT NOT NULL DEFAULT '',
+                    IntervalHours INTEGER NOT NULL DEFAULT 24,
+                    Enabled INTEGER NOT NULL DEFAULT 1,
+                    ProxySelection TEXT NOT NULL DEFAULT 'auto',
+                    MessageLimit INTEGER NOT NULL DEFAULT 20,
+                    Keyword TEXT NOT NULL DEFAULT '',
+                    LastCollectedAt TEXT NULL,
+                    LastSuccessAt TEXT NULL,
+                    LastStatus TEXT NOT NULL DEFAULT '从未采集',
+                    LastError TEXT NOT NULL DEFAULT '',
+                    LastAddedCount INTEGER NOT NULL DEFAULT 0,
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL,
+                    AccountKey TEXT NULL
+                );
+                INSERT INTO TelegramCollectionSchedules
+                    (ChannelUrl, ChannelName, CreatedAt, UpdatedAt, Keyword, AccountKey)
+                VALUES
+                    ('https://t.me/s/legacy', 'legacy', '2026-10-11T00:00:00+08:00',
+                     '2026-10-11T00:00:00+08:00', '旧排除词', NULL);
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = new TelegramCollectionStore(_databasePath);
+        var saved = Assert.Single(await store.GetAsync());
+
+        Assert.Equal("旧排除词", saved.Keyword);
+        Assert.Equal("", saved.IncludeKeyword);
     }
 
     [Fact]
@@ -110,15 +200,137 @@ public sealed class TelegramCollectionTests : IDisposable
         var id = await SaveScheduleAsync(store, "cancelled");
         var lastSuccess = new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.FromHours(8));
         await store.UpdateResultAsync(id, lastSuccess, true, 3, "上次成功");
+        await store.UpdateFailureAsync(id, lastSuccess.AddMinutes(1), 3, "模拟失败");
 
         var cancelledAt = lastSuccess.AddMinutes(10);
-        await store.UpdateResultAsync(id, cancelledAt, false, 1, "已新增 1 条，已跳过 0 条", "已取消");
+        await store.UpdateCancelledAsync(id, cancelledAt, 1, "已新增 1 条，已跳过 0 条");
 
         var saved = Assert.Single(await store.GetAsync());
         Assert.Equal("已取消", saved.LastStatus);
-        Assert.Equal(cancelledAt, saved.LastCollectedAt);
+        Assert.Equal(lastSuccess, saved.LastCollectedAt);
+        Assert.Equal(cancelledAt, saved.LastAttemptAt);
         Assert.Equal(lastSuccess, saved.LastSuccessAt);
         Assert.Equal(1, saved.LastAddedCount);
+        Assert.Null(saved.NextRetryAt);
+        Assert.Equal(0, saved.RetryAttempt);
+    }
+
+    [Fact]
+    public async Task CollectionStore_RetriesWithGrowingBackoffAndResetsAfterSuccess()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var id = await SaveScheduleAsync(store, "retry");
+        var attemptedAt = new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.FromHours(8));
+        var expectedDelays = new int?[] { 5, 15, 30, 60, 60, 60, 60, null };
+
+        for (var attempt = 0; attempt < expectedDelays.Length; attempt++)
+        {
+            var currentAttempt = attemptedAt.AddHours(attempt);
+            await store.UpdateFailureAsync(id, currentAttempt, attempt, $"第 {attempt + 1} 次失败");
+
+            var saved = Assert.Single(await store.GetAsync());
+            Assert.Equal(attempt + 1, saved.RetryAttempt);
+            Assert.Equal(
+                expectedDelays[attempt] is { } delay ? currentAttempt.AddMinutes(delay) : null,
+                saved.NextRetryAt);
+            Assert.Equal(
+                expectedDelays[attempt] is null
+                    ? TelegramCollectionStore.AutomaticRetryStoppedStatus
+                    : "失败",
+                saved.LastStatus);
+            Assert.Equal(attempt, saved.LastAddedCount);
+        }
+
+        var exhausted = Assert.Single(await store.GetAsync());
+        Assert.False(TelegramCollectionStore.IsDue(exhausted, attemptedAt.AddDays(2)));
+
+        await store.UpdateFailureAsync(
+            id,
+            attemptedAt.AddHours(9),
+            0,
+            "手动失败",
+            automaticRetry: false);
+        var afterManualFailure = Assert.Single(await store.GetAsync());
+        Assert.Equal(TelegramCollectionStore.MaxAutomaticRetryAttempts, afterManualFailure.RetryAttempt);
+        Assert.Null(afterManualFailure.NextRetryAt);
+        Assert.Equal(TelegramCollectionStore.AutomaticRetryStoppedStatus, afterManualFailure.LastStatus);
+
+        var successAt = attemptedAt.AddHours(5);
+        await store.UpdateSuccessAsync(id, successAt, 2, "成功", "120");
+
+        var completed = Assert.Single(await store.GetAsync());
+        Assert.Equal(0, completed.RetryAttempt);
+        Assert.Null(completed.NextRetryAt);
+        Assert.Equal(successAt, completed.LastSuccessAt);
+        Assert.Equal(120, completed.LastMessageId);
+    }
+
+    [Fact]
+    public async Task CollectionStore_SanitizesPersistedErrors()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var id = await SaveScheduleAsync(store, "redaction");
+        var attemptedAt = new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.FromHours(8));
+
+        await store.UpdateFailureAsync(
+            id,
+            attemptedAt,
+            0,
+            "QQ_AI_CONNECT_TOKEN=bot:v1_secret123 authorization=Bearer-secret");
+
+        var failed = Assert.Single(await store.GetAsync());
+        Assert.DoesNotContain("secret123", failed.LastError, StringComparison.Ordinal);
+        Assert.DoesNotContain("Bearer-secret", failed.LastError, StringComparison.Ordinal);
+        Assert.Contains("已隐藏", failed.LastError, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret123", failed.ResultDisplay, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CollectionStore_PersistsFirstRunModeAndResetsWatermarkWhenItChanges()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var draft = new TelegramCollectionScheduleDraft(
+            null, "https://t.me/s/watermark", "watermark", 24, true,
+            WebProxySelection.Automatic, 20, "", FirstRunMode: "new-only");
+        var id = await store.SaveAsync(draft);
+        var attemptedAt = new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.FromHours(8));
+        await store.UpdateSuccessAsync(id, attemptedAt, 0, "成功", "120");
+
+        var saved = Assert.Single(await store.GetAsync());
+        Assert.Equal("new-only", saved.FirstRunMode);
+        Assert.Equal(120, saved.LastMessageId);
+
+        await store.SaveAsync(draft with { Id = id, MessageLimit = 30 });
+        saved = Assert.Single(await store.GetAsync());
+        Assert.Equal(20, saved.MessageLimit);
+        Assert.Equal(120, saved.LastMessageId);
+
+        await store.SaveAsync(draft with { Id = id, FirstRunMode = "backfill" });
+        saved = Assert.Single(await store.GetAsync());
+        Assert.Equal("backfill", saved.FirstRunMode);
+        Assert.Equal(0, saved.LastMessageId);
+    }
+
+    [Fact]
+    public async Task CollectionStore_SaveWithRulesRollsBackScheduleWhenRuleIsInvalid()
+    {
+        var store = new TelegramCollectionStore(_databasePath);
+        var id = await SaveScheduleAsync(store, "transaction");
+        await store.ReplaceRulesAsync(id, [Rule("text")]);
+        var original = Assert.Single(await store.GetAsync());
+
+        var changed = new TelegramCollectionScheduleDraft(
+            id, original.ChannelUrl, original.ChannelName, original.IntervalHours, original.Enabled,
+            original.ProxySelection, 77, original.Keyword, original.FrequencyType, original.FrequencyValue,
+            original.Weekday, original.TriggerTime, original.CronExpression, original.AutoScheduleEnabled,
+            original.AutoScheduleDelayMinutes, original.AutoScheduleMaxPerRun, original.FirstRunMode);
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.SaveWithRulesAsync(changed, [Rule("invalid")]));
+
+        var saved = Assert.Single(await store.GetAsync());
+        Assert.Equal(20, saved.MessageLimit);
+        var rule = Assert.Single(await store.GetRulesAsync(id));
+        Assert.Equal("text", rule.MessageType);
     }
 
     [Theory]
@@ -168,11 +380,57 @@ public sealed class TelegramCollectionTests : IDisposable
     }
 
     [Fact]
+    public void TelegramCronPresetCatalog_EveryPresetParses()
+    {
+        var presets = TelegramCronPresetCatalog.Options
+            .Where(preset => preset.Name != TelegramCronPresetCatalog.CustomName)
+            .ToArray();
+
+        Assert.NotEmpty(presets);
+        Assert.All(presets, preset =>
+        {
+            Assert.True(
+                TelegramCronSchedule.TryParse(preset.Expression, out _, out var error),
+                $"{preset.Name} 的 Cron 表达式无效：{error}");
+        });
+    }
+
+    [Fact]
+    public void TelegramCronPresetCatalog_OffersTenThirtyAndSixtyMinutePolling()
+    {
+        Assert.Contains(
+            TelegramCronPresetCatalog.Options,
+            preset => preset.Name == "每 10 分钟" && preset.Expression == "*/10 * * * *");
+        Assert.Contains(
+            TelegramCronPresetCatalog.Options,
+            preset => preset.Name == "每 30 分钟" && preset.Expression == "*/30 * * * *");
+        Assert.Contains(
+            TelegramCronPresetCatalog.Options,
+            preset => preset.Name == "每 60 分钟" && preset.Expression == "0 * * * *");
+    }
+
+    [Theory]
+    [InlineData("*/10 * * * *", "每 10 分钟")]
+    [InlineData("*/30 * * * *", "每 30 分钟")]
+    [InlineData("0 * * * *", "每 60 分钟")]
+    public void TelegramCronPresetCatalog_SelectsPollingPresetFromExpression(
+        string expression,
+        string expectedName)
+    {
+        Assert.Equal(expectedName, TelegramCronPresetCatalog.Find(expression).Name);
+    }
+
+    [Fact]
     public void CronSchedule_ComputesNextOccurrenceAndTreatsZeroAndSevenAsSunday()
     {
         var monday = new DateTime(2026, 10, 12, 8, 30, 0, DateTimeKind.Unspecified);
         var weekday = TelegramCronSchedule.Parse("*/15 9-10 * * 1-5");
         Assert.Equal(new DateTime(2026, 10, 12, 9, 0, 0), weekday.GetNextOccurrence(monday));
+
+        var everyTenMinutes = TelegramCronSchedule.Parse("*/10 * * * *");
+        Assert.Equal(
+            new DateTime(2026, 10, 12, 9, 10, 0),
+            everyTenMinutes.GetNextOccurrence(new DateTime(2026, 10, 12, 9, 0, 0)));
 
         var sundayFromZero = TelegramCronSchedule.Parse("0 9 * * 0");
         var sundayFromSeven = TelegramCronSchedule.Parse("0 9 * * 7");
@@ -216,6 +474,26 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.True(schedule.IsDue(lastRun, lastRun.AddDays(1)));
     }
 
+    [Theory]
+    [InlineData("*/10 * * * *", 10)]
+    [InlineData("*/30 * * * *", 30)]
+    public void CollectionStore_PollingCronRunsAtIntervalWithoutRepeatingSameMinute(
+        string expression,
+        int intervalMinutes)
+    {
+        var lastRun = new DateTimeOffset(2026, 10, 17, 10, 0, 0, TimeSpan.FromHours(8));
+        var dueAt = lastRun.AddMinutes(intervalMinutes);
+        var schedule = Schedule("daily") with
+        {
+            CronExpression = expression,
+            LastCollectedAt = lastRun
+        };
+
+        Assert.False(TelegramCollectionStore.IsDue(schedule, dueAt.AddMinutes(-1)));
+        Assert.True(TelegramCollectionStore.IsDue(schedule, dueAt));
+        Assert.False(TelegramCollectionStore.IsDue(schedule with { LastCollectedAt = dueAt }, dueAt));
+    }
+
     [Fact]
     public void TelegramDistributionRules_MatchKeywordsAndUseFirstMatchingRule()
     {
@@ -244,8 +522,125 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Same(imageRule, TelegramDistributionRuleMatcher.Match(image, [videoRule, imageRule]));
     }
 
+    [Theory]
+    [InlineData("https://t.me/channel/123", true, 123L)]
+    [InlineData("https://t.me/channel/123/", true, 123L)]
+    [InlineData("https://t.me/channel/0", false, 0L)]
+    [InlineData("https://t.me/channel/-2", false, 0L)]
+    [InlineData("https://t.me/s/channel", false, 0L)]
+    [InlineData("not-a-url", false, 0L)]
+    public void TelegramCollector_ReadsOnlyPositiveNumericMessageNumbers(
+        string url,
+        bool expectedValid,
+        long expectedNumber)
+    {
+        var valid = TelegramCollectorService.TryReadMessageNumber(url, out var number);
+
+        Assert.Equal(expectedValid, valid);
+        Assert.Equal(expectedNumber, number);
+    }
+
+    [Fact]
+    public void PrepareScheduledMessages_FiltersWatermarkExclusionsSortsAndLimits()
+    {
+        var firstPublishedAt = new DateTimeOffset(2026, 10, 11, 7, 0, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/channel/7", "", "普通 7", publishedAt: firstPublishedAt.AddMinutes(7)),
+            Message("https://t.me/channel/1", "", "旧 1", publishedAt: firstPublishedAt.AddMinutes(1)),
+            Message("https://t.me/channel/5", "广告 5", "正文", publishedAt: firstPublishedAt.AddMinutes(5)),
+            Message("https://t.me/channel/3", "", "普通 3", publishedAt: firstPublishedAt.AddMinutes(3)),
+            Message("https://t.me/channel/2", "", "旧 2", publishedAt: firstPublishedAt.AddMinutes(2)),
+            Message("https://t.me/channel/6", "", "普通 6", publishedAt: firstPublishedAt.AddMinutes(6)),
+            Message("https://t.me/channel/4", "广告 4", "正文", publishedAt: firstPublishedAt.AddMinutes(4))
+        };
+
+        var prepared = TelegramCollectionScheduler.PrepareScheduledMessages(
+            messages,
+            lastMessageId: 2,
+            limit: 2,
+            inclusionKeywords: "",
+            exclusionKeywords: "广告",
+            watermarkCandidate: out var watermark);
+
+        Assert.Equal(
+            ["https://t.me/channel/7", "https://t.me/channel/6"],
+            prepared.Select(message => message.Url));
+        Assert.Equal(7, watermark);
+    }
+
+    [Fact]
+    public void PrepareScheduledMessages_DoesNotReadPastNewestLimitToFillExcludedMessages()
+    {
+        var firstPublishedAt = new DateTimeOffset(2026, 10, 11, 7, 0, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/channel/7", "", "普通 7", publishedAt: firstPublishedAt.AddMinutes(7)),
+            Message("https://t.me/channel/6", "广告 6", "正文", publishedAt: firstPublishedAt.AddMinutes(6)),
+            Message("https://t.me/channel/5", "", "普通 5", publishedAt: firstPublishedAt.AddMinutes(5))
+        };
+
+        var prepared = TelegramCollectionScheduler.PrepareScheduledMessages(
+            messages,
+            lastMessageId: 0,
+            limit: 2,
+            inclusionKeywords: "",
+            exclusionKeywords: "广告",
+            watermarkCandidate: out var watermark);
+
+        Assert.Equal(["https://t.me/channel/7"], prepared.Select(message => message.Url));
+        Assert.Equal(7, watermark);
+    }
+
+    [Fact]
+    public void PrepareScheduledMessages_AppliesInclusionBeforeExclusionAndExclusionWins()
+    {
+        var firstPublishedAt = new DateTimeOffset(2026, 10, 11, 7, 0, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/channel/4", "新闻 4", "普通更新", publishedAt: firstPublishedAt.AddMinutes(4)),
+            Message("https://t.me/channel/3", "新闻 3", "广告合作", publishedAt: firstPublishedAt.AddMinutes(3)),
+            Message("https://t.me/channel/2", "其他 2", "广告", publishedAt: firstPublishedAt.AddMinutes(2)),
+            Message("https://t.me/channel/1", "其他 1", "普通内容", publishedAt: firstPublishedAt.AddMinutes(1))
+        };
+
+        var prepared = TelegramCollectionScheduler.PrepareScheduledMessages(
+            messages,
+            lastMessageId: 0,
+            limit: 20,
+            inclusionKeywords: "新闻",
+            exclusionKeywords: "广告",
+            watermarkCandidate: out var watermark);
+
+        Assert.Equal(["https://t.me/channel/4"], prepared.Select(message => message.Url));
+        Assert.Equal(4, watermark);
+    }
+
+    [Fact]
+    public void PrepareScheduledMessages_DoesNotBackfillInclusionMatchOutsideNewestLimit()
+    {
+        var firstPublishedAt = new DateTimeOffset(2026, 10, 11, 7, 0, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/channel/3", "普通 3", "正文", publishedAt: firstPublishedAt.AddMinutes(3)),
+            Message("https://t.me/channel/2", "普通 2", "正文", publishedAt: firstPublishedAt.AddMinutes(2)),
+            Message("https://t.me/channel/1", "新闻 1", "较早的包含词命中", publishedAt: firstPublishedAt.AddMinutes(1))
+        };
+
+        var prepared = TelegramCollectionScheduler.PrepareScheduledMessages(
+            messages,
+            lastMessageId: 0,
+            limit: 2,
+            inclusionKeywords: "新闻",
+            exclusionKeywords: "",
+            watermarkCandidate: out var watermark);
+
+        Assert.Empty(prepared);
+        Assert.Equal(3, watermark);
+    }
+
     private static TelegramCollectionSchedule Schedule(string type, int frequencyValue = 1, int weekday = 1, string triggerTime = "00:00") =>
-        new(1, "https://t.me/s/channel", "channel", 24, true, "auto", 50, "", null, null, "从未采集", "", 0,
+        new(1, "https://t.me/s/channel", "channel", 24, true, "auto", 20, "", null, null, "从未采集", "", 0,
             DateTimeOffset.Now, DateTimeOffset.Now, type, frequencyValue, weekday, triggerTime);
 
     private static Task<long> SaveScheduleAsync(TelegramCollectionStore store, string name) =>
@@ -299,24 +694,130 @@ public sealed class TelegramCollectionTests : IDisposable
     }
 
     [Fact]
-    public async Task Materializer_DoesNotSaveMaterialWhenAnyMediaDownloadFails()
+    public async Task Materializer_KeepsSuccessfulMediaWhenSomeDownloadsFail()
     {
         var library = new ContentLibraryStore(_databasePath);
+        var mediaRoot = Path.Combine(_directory, "partial-media");
+        var settings = new SystemSettingsStore(_databasePath);
+        await settings.SaveAsync(new AppSettings(MaterialStoragePath: mediaRoot));
+        var mediaStorage = new MediaStorageService(settings);
+        var channelDirectory = Path.Combine(_directory, "temp", "telegram", "20261013", "partial");
+        Directory.CreateDirectory(channelDirectory);
+        var stagedImage = Path.Combine(channelDirectory, "image.jpg");
+        File.WriteAllBytes(stagedImage, [3, 3, 3]);
         var message = Message("https://t.me/channel/44", "", "需要保留正文,但媒体必须完整");
-        var materializer = new TelegramMaterializer(new TelegramCollectorService(), library, (_, _, _) =>
-            Task.FromResult(new TelegramDraftResult(
-                Path.Combine(_directory, "temp"),
-                [Path.Combine(_directory, "temp", "image.jpg")],
-                1)));
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            (_, _, _) => Task.FromResult(new TelegramDraftResult(
+                channelDirectory, [stagedImage], 1,
+                [new TelegramMediaRef("https://example.com/missing.jpg", "https://example.com/missing.jpg", "image")])),
+            mediaStorage,
+            (paths, _) =>
+            {
+                foreach (var path in paths)
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+                return Task.CompletedTask;
+            });
 
         var result = await materializer.MaterializeAsync(message, "");
 
-        Assert.False(result.Succeeded);
+        Assert.True(result.Succeeded);
         Assert.False(result.SkippedEmpty);
-        Assert.Null(result.MaterialId);
+        Assert.NotNull(result.MaterialId);
         Assert.Equal(1, result.FailedMediaCount);
-        Assert.Contains("未创建素材", result.Error);
-        Assert.Empty(await library.GetMaterialsAsync());
+        Assert.Contains("不自动排期", result.Error);
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(message.Text, material.Content);
+        var storedMedia = Assert.Single(material.MediaLinks);
+        Assert.True(File.Exists(storedMedia));
+        Assert.False(File.Exists(stagedImage));
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/missing.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+    }
+
+    [Fact]
+    public async Task Materializer_RetriesFailedMediaOnNextCollectionAndFillsMissingMedia()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new FlakyMediaTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+        var message = new TelegramChannelMessage(
+            "https://t.me/channel/103",
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "补齐媒体",
+            [
+                new TelegramMediaRef("https://example.com/one.jpg", "https://example.com/one.jpg", "image"),
+                new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image")
+            ],
+            "");
+
+        var first = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(first.Succeeded);
+        Assert.Equal(1, first.FailedMediaCount);
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/two.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+
+        var second = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(second.Succeeded);
+        Assert.Equal(0, second.FailedMediaCount);
+        material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg", "https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Empty(material.FailedMedia);
+        Assert.Equal(["one", "two", "two", "two"], transport.Attempts);
+    }
+
+    [Fact]
+    public async Task Materializer_ReturnsFailureWhenRetryOfFailedMediaStillFails()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new PartialMediaFallbackTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+        var message = new TelegramChannelMessage(
+            "https://t.me/channel/104",
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "媒体缺失",
+            [
+                new TelegramMediaRef("https://example.com/one.jpg", "https://example.com/one.jpg", "image"),
+                new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image")
+            ],
+            "");
+
+        var first = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.True(first.Succeeded);
+        Assert.Equal(1, first.FailedMediaCount);
+
+        var second = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        Assert.False(second.Succeeded);
+        Assert.Equal(1, second.FailedMediaCount);
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/one.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+        Assert.Equal(["one", "one", "two", "one", "one"], transport.Attempts);
     }
 
     [Fact]
@@ -345,7 +846,7 @@ public sealed class TelegramCollectionTests : IDisposable
         var library = new ContentLibraryStore(_databasePath);
         var channelDirectory = Path.Combine(_directory, "temp", "telegram", "20261013", "channel");
         Directory.CreateDirectory(channelDirectory);
-        var stagedVideo = Path.Combine(channelDirectory, "video.mp4");
+        var stagedVideo = Path.Combine(channelDirectory, "video.bin");
         File.WriteAllBytes(stagedVideo, [7, 7, 7]);
         var cleaned = new List<string>();
         var materializer = new TelegramMaterializer(
@@ -357,7 +858,7 @@ public sealed class TelegramCollectionTests : IDisposable
                 cleaned.AddRange(paths);
                 return Task.CompletedTask;
             });
-        var message = Message("https://t.me/channel/45", "", "正文");
+        var message = Message("https://t.me/channel/45", "", "");
 
         var result = await materializer.MaterializeAsync(message, "");
 
@@ -366,8 +867,219 @@ public sealed class TelegramCollectionTests : IDisposable
         Assert.Equal([stagedVideo], cleaned);
         Assert.Empty(await library.GetMaterialsAsync());
     }
-    private static TelegramChannelMessage Message(string url, string title, string text) =>
-        new(url, "t.me", DateTimeOffset.Now, title, text, [], "");
+
+    [Theory]
+    [InlineData("image", ".jpg")]
+    [InlineData("video", ".mp4")]
+    public async Task Materializer_PromotesDownloadedMediaToLibraryAndRemovesStaging(string type, string extension)
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var mediaRoot = Path.Combine(_directory, "media");
+        var settings = new SystemSettingsStore(_databasePath);
+        await settings.SaveAsync(new AppSettings(MaterialStoragePath: mediaRoot));
+        var mediaStorage = new MediaStorageService(settings);
+        var channelDirectory = Path.Combine(_directory, "temp", "telegram", "20261013", "channel");
+        Directory.CreateDirectory(channelDirectory);
+        var stagedMedia = Path.Combine(channelDirectory, $"media{extension}");
+        File.WriteAllBytes(stagedMedia, [5, 5, 5]);
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            (_, _, _) => Task.FromResult(new TelegramDraftResult(channelDirectory, [stagedMedia], 0)),
+            mediaStorage,
+            (paths, _) =>
+            {
+                foreach (var path in paths)
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+                return Task.CompletedTask;
+            });
+        var message = Message($"https://t.me/channel/4{extension.Length}", "", "");
+
+        var result = await materializer.MaterializeAsync(message, "");
+
+        Assert.True(result.Succeeded);
+        Assert.False(File.Exists(stagedMedia));
+        var material = Assert.Single(await library.GetMaterialsAsync());
+        var storedMedia = Assert.Single(material.MediaLinks);
+        Assert.Equal(type, material.Type);
+        Assert.Equal(Path.Combine(mediaRoot, "library"), Path.GetDirectoryName(storedMedia));
+        Assert.True(File.Exists(storedMedia));
+        Assert.Equal(storedMedia, Assert.Single(result.MediaPaths));
+    }
+
+    [Fact]
+    public async Task Materializer_UsesMediaFallbackOnlyForAutomaticContext()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new MediaFallbackTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+
+        var automatic = await materializer.MaterializeAsync(
+            MessageWithMedia("https://t.me/channel/100"),
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+        var explicitSelection = await materializer.MaterializeAsync(
+            MessageWithMedia("https://t.me/channel/101"),
+            TelegramTransportContext.Direct());
+
+        Assert.True(automatic.Succeeded);
+        Assert.True(explicitSelection.Succeeded);
+        Assert.Equal(1, transport.FallbackCalls);
+        Assert.Equal(1, transport.DirectCalls);
+    }
+
+    [Fact]
+    public async Task Materializer_DoesNotRunASecondPassToFillMissingMedia()
+    {
+        var library = new ContentLibraryStore(_databasePath);
+        var transport = new PartialMediaFallbackTransport();
+        var materializer = new TelegramMaterializer(
+            new TelegramCollectorService(),
+            library,
+            transport: transport);
+        var message = new TelegramChannelMessage(
+            "https://t.me/channel/102",
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "多个媒体",
+            [
+                new TelegramMediaRef("https://example.com/one.jpg", "https://example.com/one.jpg", "image"),
+                new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image")
+            ],
+            "");
+
+        var result = await materializer.MaterializeAsync(
+            message,
+            TelegramTransportContext.Direct() with { AllowFallback = true });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, result.FailedMediaCount);
+        Assert.Equal(["one", "one", "two"], transport.Attempts);
+    }
+
+    private static TelegramChannelMessage Message(
+        string url,
+        string title,
+        string text,
+        DateTimeOffset? publishedAt = null) =>
+        new(url, "t.me", publishedAt ?? DateTimeOffset.Now, title, text, [], "");
+
+    private static TelegramChannelMessage MessageWithMedia(string url) =>
+        new(
+            url,
+            "t.me",
+            DateTimeOffset.Now,
+            "",
+            "带媒体",
+            [new TelegramMediaRef(
+                "https://example.com/fallback.jpg",
+                "https://example.com/fallback.jpg",
+                "image")],
+            "");
+
+    private sealed class FlakyMediaTransport : ITelegramTransport, ITelegramMediaFallbackTransport
+    {
+        public List<string> Attempts { get; } = [];
+        private int _twoCalls;
+
+        public Task<TelegramTransportPreview> FetchChannelAsync(
+            string channelUrl,
+            TelegramTransportSelection selection,
+            Action<string>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaWithFallbackAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default)
+        {
+            var name = media.OriginalUrl.Contains("two", StringComparison.Ordinal) ? "two" : "one";
+            Attempts.Add(name);
+            if (name == "two" && Interlocked.Increment(ref _twoCalls) <= 2)
+                return Task.FromException<string>(new IOException("two failed"));
+            return Task.FromResult(media.OriginalUrl);
+        }
+    }
+
+    private sealed class MediaFallbackTransport : ITelegramTransport, ITelegramMediaFallbackTransport
+    {
+        public int FallbackCalls { get; private set; }
+
+        public int DirectCalls { get; private set; }
+
+        public Task<TelegramTransportPreview> FetchChannelAsync(
+            string channelUrl,
+            TelegramTransportSelection selection,
+            Action<string>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default)
+        {
+            DirectCalls++;
+            return Task.FromResult(media.OriginalUrl);
+        }
+
+        public Task<string> DownloadMediaWithFallbackAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default)
+        {
+            FallbackCalls++;
+            return Task.FromResult(media.OriginalUrl);
+        }
+    }
+
+    private sealed class PartialMediaFallbackTransport : ITelegramTransport, ITelegramMediaFallbackTransport
+    {
+        public List<string> Attempts { get; } = [];
+
+        public Task<TelegramTransportPreview> FetchChannelAsync(
+            string channelUrl,
+            TelegramTransportSelection selection,
+            Action<string>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadMediaWithFallbackAsync(
+            TelegramMediaRef media,
+            TelegramTransportContext context,
+            string? targetDirectory = null,
+            CancellationToken cancellationToken = default)
+        {
+            var name = media.OriginalUrl.Contains("one", StringComparison.Ordinal) ? "one" : "two";
+            Attempts.Add(name);
+            return name == "one"
+                ? Task.FromException<string>(new IOException("one failed"))
+                : Task.FromResult(media.OriginalUrl);
+        }
+    }
 
     public void Dispose()
     {

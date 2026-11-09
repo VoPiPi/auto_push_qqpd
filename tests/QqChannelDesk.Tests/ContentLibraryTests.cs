@@ -43,6 +43,158 @@ public sealed class ContentLibraryTests
     }
 
     [Fact]
+    public void ParseHtml_ExtractsFromDivContentContainer()
+    {
+        // 常见新闻站点：正文在 div.article-content 中，且不在 article/main 标签内。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><meta property="og:title" content="科技新闻标题"/></head>
+            <body>
+              <div class="header">站点头部</div>
+              <div class="article-content">
+                <p>这是新闻正文的第一段，包含足够长度的内容。</p>
+                <p>这是新闻正文的第二段，介绍更多细节。</p>
+              </div>
+              <div class="footer">版权所有</div>
+            </body></html>
+            """);
+
+        Assert.Equal("科技新闻标题", result.Title);
+        Assert.Contains("这是新闻正文的第一段", result.Content);
+        Assert.Contains("这是新闻正文的第二段", result.Content);
+        Assert.DoesNotContain("站点头部", result.Content);
+        Assert.DoesNotContain("版权所有", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_ExtractsFromJsonLd()
+    {
+        // 使用 JSON-LD 提供结构化文章数据的新闻站点。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head>
+              <script type="application/ld+json">
+                {"@type":"NewsArticle","headline":"JSON-LD 标题","articleBody":"JSON-LD 正文第一段。JSON-LD 正文第二段。"}
+              </script>
+            </head>
+            <body><div class="content"><p>普通正文段。</p></div></body></html>
+            """);
+
+        Assert.Equal("JSON-LD 标题", result.Title);
+        Assert.Contains("JSON-LD 正文", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_FallsBackToMetaDescription()
+    {
+        // 页面没有 article/main 容器时，用 meta description 兜底。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head>
+              <meta property="og:title" content="只有摘要的页面"/>
+              <meta property="og:description" content="这是页面摘要，作为正文兜底内容使用，长度足够。" />
+            </head>
+            <body><div class="banner">广告横幅</div></body></html>
+            """);
+
+        Assert.Equal("只有摘要的页面", result.Title);
+        Assert.Contains("这是页面摘要", result.Content);
+        Assert.DoesNotContain("广告横幅", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_SupportsCustomContentSelector()
+    {
+        // 用户配置 contentSelector 时优先使用自定义容器。
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><title>自定义选择器</title></head>
+            <body>
+              <div class="main-content"><p>其他正文。</p></div>
+              <div id="my-article"><p>自定义容器正文内容，足够长。</p><p>第二段内容。</p></div>
+            </body></html>
+            """, "#my-article");
+
+        Assert.Equal("自定义选择器", result.Title);
+        Assert.Contains("自定义容器正文内容", result.Content);
+        Assert.DoesNotContain("其他正文", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtml_RemovesFooterNoise()
+    {
+        var result = PublicArticleFetcher.ParseHtml("""
+            <html><head><title>页面</title></head>
+            <body>
+              <article><p>正文第一段内容，足够长。</p><p>正文第二段内容。</p></article>
+              <footer><p>版权声明：所有内容转载需授权。</p></footer>
+            </body></html>
+            """);
+
+        Assert.DoesNotContain("版权声明", result.Content);
+        Assert.Contains("正文第一段内容", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtmlWithRule_ReportsMatchedSelector()
+    {
+        var result = PublicArticleFetcher.ParseHtmlWithRule("""
+            <html><head><title>规则标记</title></head>
+            <body><article><p>规则解析正文第一段，长度足够。</p><p>规则解析正文第二段。</p></article></body></html>
+            """);
+
+        Assert.Equal("//article", result.Rule);
+        Assert.Contains("规则解析正文第一段", result.Content);
+    }
+
+    [Fact]
+    public void ParseHtmlWithRule_ExcludedRuleFallsToNextSelector()
+    {
+        // “换一种规则重新解析”：排除已命中的 //article 后，应改由 class=article-content 容器命中。
+        const string html = """
+            <html><head><title>换规则</title></head>
+            <body>
+              <article><p>第一规则命中的正文内容，长度足够。</p><p>第一规则第二段内容。</p></article>
+              <div class="article-content"><p>第二规则命中的正文内容，长度足够。</p><p>第二规则第二段内容。</p></div>
+            </body></html>
+            """;
+
+        var first = PublicArticleFetcher.ParseHtmlWithRule(html);
+        Assert.Equal("//article", first.Rule);
+        Assert.Contains("第一规则命中", first.Content);
+        Assert.DoesNotContain("第二规则命中", first.Content);
+
+        var second = PublicArticleFetcher.ParseHtmlWithRule(html,
+            excludeSelectors: new HashSet<string>(StringComparer.Ordinal) { first.Rule });
+        Assert.NotEqual("//article", second.Rule);
+        Assert.Contains("第二规则命中", second.Content);
+        Assert.DoesNotContain("第一规则命中", second.Content);
+    }
+
+    [Fact]
+    public void ParseHtmlWithRule_AllRulesExcludedReturnsEmpty()
+    {
+        // 持续排除命中的规则直到用尽：最后一次返回空结果，Rule 为空，由调用方兜底。
+        const string html = """
+            <html><head><title>穷尽</title></head>
+            <body><article><p>唯一正文段落内容，长度足够测试。</p><p>第二段内容。</p></article></body></html>
+            """;
+        var excluded = new HashSet<string>(StringComparer.Ordinal);
+        var rules = new List<string>();
+        while (true)
+        {
+            var result = PublicArticleFetcher.ParseHtmlWithRule(html, excludeSelectors: excluded);
+            if (result.Rule.Length == 0)
+            {
+                Assert.Equal("", result.Title);
+                Assert.Equal("", result.Content);
+                break;
+            }
+            rules.Add(result.Rule);
+            excluded.Add(result.Rule);
+            Assert.True(rules.Count <= 40, "规则排除未收敛，可能存在重复命中。");
+        }
+        Assert.Equal("//article", rules[0]);
+        Assert.Contains("//body", rules);
+    }
+
+    [Fact]
     public async Task Store_AllowsMultipleManualItemsAndDeletesOneItem()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-content-{Guid.NewGuid():N}.db");
@@ -74,6 +226,39 @@ public sealed class ContentLibraryTests
         Assert.NotNull(remaining);
         Assert.Equal("更新标题", remaining.Title);
         Assert.Equal(3, (await store.GetItemsAsync()).Count);
+    }
+
+    [Fact]
+    public async Task Store_ReportsPendingCountsBySourceAndTodayWindow()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-stats-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new ContentLibraryStore(databasePath);
+            await store.SaveItemAsync(new CollectedItemDraft("https://a1.example", "a.example", "A1", "正文 A", SourceId: 1));
+            await store.SaveItemAsync(new CollectedItemDraft("https://a2.example", "a.example", "A2", "正文 A", SourceId: 1));
+            var keptId = await store.SaveItemAsync(new CollectedItemDraft("https://b1.example", "b.example", "B1", "正文 B", SourceId: 2));
+            await store.SetItemStatusAsync(keptId, "保留");
+            var duplicateId = await store.SaveItemAsync(new CollectedItemDraft("https://a3.example", "a.example", "A3", "正文 A", SourceId: 1));
+            await store.SetItemStatusAsync(duplicateId, "重复");
+
+            var counts = await store.GetPendingCountsBySourceAsync();
+            Assert.Equal(2, counts.GetValueOrDefault(1));
+            Assert.False(counts.ContainsKey(2));
+
+            var todayStart = new DateTimeOffset(DateTime.Now.Date);
+            Assert.Equal(2, await store.GetTodayPendingCountAsync(todayStart));
+            Assert.Equal(0, await store.GetTodayPendingCountAsync(DateTimeOffset.Now.AddMinutes(5)));
+
+            var window = await store.GetItemsBySourceWindowAsync(1, todayStart, DateTimeOffset.Now.AddMinutes(1));
+            Assert.Equal(3, window.Count);
+            Assert.Empty(await store.GetItemsBySourceWindowAsync(2, todayStart.AddMinutes(1), todayStart.AddMinutes(2)));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
     }
 
     [Fact]
@@ -129,6 +314,25 @@ public sealed class ContentLibraryTests
         Assert.Contains(active, material => material.Title == "待发布素材");
         Assert.Contains(active, material => material.Title == "排队素材");
         Assert.DoesNotContain(active, material => material.Title is "已发布素材" or "已删除素材");
+    }
+
+    [Fact]
+    public async Task CollectionArchiveStatus_IsReleasedWhenMaterialDeleted()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-archive-release-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var url = "https://blog.example/post/1";
+        await store.SaveItemAsync(new CollectedItemDraft(url, "blog.example", "采集文章", "正文", MediaList: ["https://example.com/a.jpg"]));
+        var materialId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "采集文章", "image", "正文", "", "", "", "", null, "waitsend", "",
+            ["https://example.com/a.jpg"], "网络采集", url));
+
+        await store.UpdateMaterialStatusAsync(materialId, "delete");
+        Assert.Equal("待处理", (await store.GetItemAsync(Assert.Single(await store.GetItemsAsync()).Id))!.Status);
+
+        await store.SaveItemAsync(new CollectedItemDraft(
+            "https://blog.example/post/2", "blog.example", "历史异常", "正文", Status: "已入素材库"));
+        Assert.Equal("待处理", Assert.Single(await store.GetItemsAsync("历史异常")).Status);
     }
 
     [Fact]
@@ -200,6 +404,31 @@ public sealed class ContentLibraryTests
         Assert.True(reclaimed.Created);
         Assert.NotEqual(first.MaterialId, reclaimed.MaterialId);
         Assert.Equal("重新采集", Assert.Single(await store.GetMaterialsAsync()).Title);
+    }
+
+    [Fact]
+    public async Task MaterialStore_PersistsFailedMediaAndUpdatesMediaOnCompletion()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-failed-media-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var failedRef = new TelegramMediaRef("https://example.com/two.jpg", "https://example.com/two.jpg", "image");
+        var id = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "", "image", "正文", "", "", "", "", null, "waitsend", "",
+            ["https://example.com/one.jpg"], "TG采集", "https://t.me/channel/200", [failedRef]));
+
+        var material = Assert.Single(await store.GetMaterialsAsync());
+        Assert.NotNull(material.FailedMedia);
+        Assert.Equal("https://example.com/two.jpg", Assert.Single(material.FailedMedia).OriginalUrl);
+
+        await store.UpdateMaterialMediaAsync(
+            id,
+            ["https://example.com/one.jpg", "https://example.com/two.jpg"],
+            [], "image", CancellationToken.None);
+
+        material = Assert.Single(await store.GetMaterialsAsync());
+        Assert.Equal(["https://example.com/one.jpg", "https://example.com/two.jpg"], material.MediaLinks);
+        Assert.NotNull(material.FailedMedia);
+        Assert.Empty(material.FailedMedia);
     }
 
     [Fact]
@@ -367,11 +596,34 @@ public sealed class ContentLibraryTests
         var cancelled = await store.GetMaterialAsync(earlierId);
         Assert.NotNull(cancelled);
         Assert.Equal("waitsend", cancelled.Status);
-        Assert.Null(cancelled.PublishAt);
+        Assert.Equal(earlier.ToString("O"), cancelled.PublishAt!.Value.ToString("O"));
         Assert.Equal(new[] { "https://example.com/photo.jpg" }, cancelled.MediaLinks);
         Assert.False(await store.CancelMaterialScheduleAsync(earlierId));
         Assert.False(await store.CancelMaterialScheduleAsync(noScheduleId));
         Assert.DoesNotContain(await store.GetScheduledMaterialsAsync(), item => item.Id == earlierId);
+    }
+
+    [Fact]
+    public async Task ManualPublish_ClearsScheduledTime()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"qq-channel-manual-publish-{Guid.NewGuid():N}.db");
+        var store = new ContentLibraryStore(databasePath);
+        var scheduledAt = DateTimeOffset.Now.AddHours(1);
+        var materialId = await store.SaveMaterialAsync(new MaterialDraft(
+            null, "手工发布", "text", "正文", "guild", "频道", "channel", "版块",
+            scheduledAt, "queue", "", []));
+
+        var scheduled = await store.GetMaterialAsync(materialId);
+        Assert.NotNull(scheduled);
+        Assert.Equal(scheduledAt.ToString("O"), scheduled!.PublishAt!.Value.ToString("O"));
+
+        await store.UpdateMaterialStatusAsync(materialId, "published", "https://pd.qq.com/s/manual", clearPublishAt: true);
+
+        var published = await store.GetMaterialAsync(materialId);
+        Assert.NotNull(published);
+        Assert.Equal("published", published!.Status);
+        Assert.Null(published.PublishAt);
+        Assert.Equal("https://pd.qq.com/s/manual", published.Link);
     }
 
     [Fact]
@@ -407,7 +659,7 @@ public sealed class ContentLibraryTests
         Assert.NotNull(material);
         Assert.Equal("published", material!.Status);
         Assert.Equal("https://pd.qq.com/s/test", material.Link);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
     }
 
     [Fact]
@@ -481,7 +733,7 @@ public sealed class ContentLibraryTests
         var material = await store.GetMaterialAsync(materialId);
         Assert.NotNull(material);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
     }
 
     [Fact]
@@ -504,7 +756,7 @@ public sealed class ContentLibraryTests
         var material = await store.GetMaterialAsync(materialId);
         Assert.NotNull(material);
         Assert.Equal("waitsend", material!.Status);
-        Assert.Null(material.PublishAt);
+        Assert.Equal(scheduledAt.ToString("O"), material.PublishAt!.Value.ToString("O"));
 
         Assert.False(await store.CompleteScheduleExecutionAsync(claimed!.Id, null,
             new PublishResult(true, PublishErrorCategory.None, "迟到成功", "https://example.test/post", null)));
@@ -626,6 +878,7 @@ public sealed class ContentLibraryTests
         Assert.Equal("waitsend", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(-1), null, now));
         Assert.Equal("queue", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(1), null, now));
         Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(null, "published", now));
+        Assert.Equal("published", MaterialEditorWindow.ResolveMaterialStatus(now.AddMinutes(-1), "published", now));
     }
 
     [Fact]

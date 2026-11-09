@@ -1,0 +1,29 @@
+<Window x:Class="QqChannelDesk.AiSystemPromptWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI 系统提示词" Width="720" Height="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        ShowInTaskbar="False" Background="{StaticResource Canvas}">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="AI 兜底系统提示词" Style="{StaticResource SectionTitle}" />
+            <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       Text="已填入默认文章采集提示词，可直接修改。留空或勾选下方选项会恢复内置默认值。" />
+        </StackPanel>
+        <TextBox x:Name="PromptBox" Grid.Row="1" Margin="0,16,0,0" AcceptsReturn="True"
+                 TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Disabled" FontSize="13" />
+        <CheckBox x:Name="RestoreDefaultCheckBox" Grid.Row="2" Content="保存时恢复内置默认提示词"
+                  Margin="0,12,0,0" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="取消" Style="{StaticResource QuietButton}" Click="CancelButton_Click" />
+            <Button Content="保存提示词" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="SaveButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

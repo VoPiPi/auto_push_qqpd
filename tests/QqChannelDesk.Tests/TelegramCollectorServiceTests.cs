@@ -53,7 +53,7 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 2, "");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/4", "https://t.me/c/3" }, filtered.Select(item => item.Url));
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, "city");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/2", "https://t.me/c/1" }, filtered.Select(item => item.Url));
     }
 
     [Fact]
@@ -92,16 +92,111 @@ public sealed class TelegramCollectorServiceTests
 
         var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, " AI | 新闻 || ");
 
-        Assert.Equal(new[] { "https://t.me/c/1", "https://t.me/c/2" }, filtered.Select(item => item.Url));
+        Assert.Equal(new[] { "https://t.me/c/2", "https://t.me/c/1" }, filtered.Select(item => item.Url));
         Assert.Equal(new[] { "AI", "新闻" }, TelegramCollectorService.SplitKeywords(" AI | 新闻 || "));
+    }
+
+    [Fact]
+    public void ApplyPreviewFilters_ExcludeModeSkipsMatchesAndCollectsOtherMessages()
+    {
+        var messages = new[]
+        {
+            Message("https://t.me/c/1", title: "公告：今天暂停更新"),
+            Message("https://t.me/c/2", text: "新闻摘要"),
+            Message("https://t.me/c/3", title: "其他消息", text: "没有过滤词")
+        };
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(messages, 0, "公告 | 新闻", excludeMatches: true);
+
+        Assert.Equal(new[] { "https://t.me/c/3" }, filtered.Select(item => item.Url));
+    }
+
+    [Fact]
+    public void ApplyPreviewFilters_IncludeAndExcludeApplyInOrderAndExclusionWins()
+    {
+        var messages = new[]
+        {
+            Message("https://t.me/c/1", title: "新闻：普通更新"),
+            Message("https://t.me/c/2", title: "新闻：广告合作"),
+            Message("https://t.me/c/3", title: "其他消息", text: "广告")
+        };
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            0,
+            includeKeywords: "新闻",
+            exclusionKeywords: "广告");
+
+        Assert.Equal(new[] { "https://t.me/c/1" }, filtered.Select(item => item.Url));
     }
 
     [Fact]
     public void ApplyPreviewFilters_CapsLimitAtTemporaryListLimit()
     {
-        var messages = Enumerable.Range(1, 10).Select(index => Message($"https://t.me/c/{index}")).ToArray();
+        var messages = Enumerable.Range(1, 25).Select(index => Message($"https://t.me/c/{index}")).ToArray();
 
-        Assert.Equal(10, TelegramCollectorService.ApplyPreviewFilters(messages, TelegramCollectorService.TempListLimit + 5, "").Count);
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            TelegramCollectorService.TempListLimit + 5,
+            "");
+
+        Assert.Equal(20, filtered.Count);
+        Assert.Equal("https://t.me/c/25", filtered[0].Url);
+        Assert.Equal("https://t.me/c/6", filtered[^1].Url);
+    }
+
+    [Fact]
+    public void ApplyPreviewFilters_DoesNotBackfillInclusionMatchOutsideNewestLimit()
+    {
+        var messages = Enumerable.Range(1, 21)
+            .Select(index => Message(
+                $"https://t.me/c/{index}",
+                title: index == 1 ? "命中关键词" : $"消息 {index}"))
+            .ToArray();
+
+        var filtered = TelegramCollectorService.ApplyPreviewFilters(
+            messages,
+            TelegramCollectorService.TempListLimit,
+            "命中");
+
+        Assert.Empty(filtered);
+    }
+
+    [Theory]
+    [InlineData(-1, 20)]
+    [InlineData(0, 20)]
+    [InlineData(1, 1)]
+    [InlineData(20, 20)]
+    [InlineData(21, 20)]
+    [InlineData(999, 20)]
+    public void NormalizeMessageLimit_UsesAtMostTwentyMessages(int input, int expected)
+    {
+        Assert.Equal(expected, TelegramCollectorService.NormalizeMessageLimit(input));
+    }
+
+    [Fact]
+    public void OrderByLatest_UsesPublishedTimeThenMessageNumberAndPutsMissingTimesLast()
+    {
+        var sameTime = new DateTimeOffset(2026, 10, 11, 7, 30, 0, TimeSpan.Zero);
+        var messages = new[]
+        {
+            Message("https://t.me/c/2", publishedAt: sameTime),
+            Message("https://t.me/channel/10", publishedAt: sameTime.AddMinutes(1)),
+            new TelegramChannelMessage("https://t.me/c/9", "t.me", null, "标题", "正文", [], ""),
+            Message("https://t.me/c/7", publishedAt: sameTime)
+        };
+
+        var ordered = TelegramCollectorService.OrderByLatest(messages, message => message);
+
+        Assert.Equal(
+            new[]
+            {
+                "https://t.me/channel/10",
+                "https://t.me/c/7",
+                "https://t.me/c/2",
+                "https://t.me/c/9"
+            },
+            ordered.Select(message => message.Url));
     }
 
     [Fact]
@@ -180,34 +275,14 @@ public sealed class TelegramCollectorServiceTests
     }
 
     [Fact]
-    public void CustomProxyTextOverridesStaleAutomaticSelection()
+    public void CustomProxyAddressesAreRejectedAfterFeatureRemoval()
     {
         var registry = new WebProxyProviderRegistry(Array.Empty<IWebProxyProvider>());
 
-        var selection = registry.ParseSelection("https://custom.example/proxy", WebProxySelection.Automatic);
+        var error = Assert.Throws<InvalidOperationException>(
+            () => registry.Resolve(new WebProxySelection("https://custom.example/proxy")));
 
-        Assert.Equal("https://custom.example/proxy", selection.Value);
-        Assert.False(selection.IsAutomatic);
-    }
-
-    [Theory]
-    [InlineData("http://127.0.0.1:8080")]
-    [InlineData("https://localhost/proxy")]
-    [InlineData("ftp://proxy.example")]
-    [InlineData("https://user:password@proxy.example")]
-    public void CustomProxyRejectsUnsafeOrUnsupportedAddresses(string input)
-    {
-        Assert.False(DirectUrlWebProxyProvider.TryNormalizeBaseUrl(input, out _, out _));
-    }
-
-    [Fact]
-    public void CustomProxyNormalizesTrailingSlashAndAppendsTarget()
-    {
-        Assert.True(DirectUrlWebProxyProvider.TryNormalizeBaseUrl("https://custom.example/proxy///", out var baseUrl, out var error), error);
-        var provider = new DirectUrlWebProxyProvider(baseUrl);
-
-        Assert.Equal("https://custom.example/proxy/https://t.me/s/channel", provider.BuildTargetUrl("https://t.me/s/channel"));
-        Assert.False(provider.SupportsSimulation);
+        Assert.Contains("自定义网页代理已下线", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -302,23 +377,6 @@ public sealed class TelegramCollectorServiceTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => service.PreviewChannelAsync(
             "https://t.me/s/channel", cancellationToken: cancellation.Token));
         Assert.Equal(new[] { "first" }, attempts);
-    }
-
-    [Fact]
-    public async Task PreviewChannel_CustomProxyFailureDoesNotFallbackToSystemProviders()
-    {
-        var attempts = new List<string>();
-        var registry = new WebProxyProviderRegistry(new IWebProxyProvider[]
-        {
-            new FakeProxyProvider("first", "First", _ => new ProxyPageResult(ChannelHtml("first"), "https://first.example", "", "first", "First"), attempts)
-        });
-        var service = new TelegramCollectorService(registry);
-
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.PreviewChannelAsync(
-            "https://t.me/s/channel", proxySelection: new WebProxySelection("https://127.0.0.1:8080")));
-
-        Assert.Empty(attempts);
-        Assert.Contains("有效的自定义网页代理地址", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

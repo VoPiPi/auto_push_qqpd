@@ -78,18 +78,18 @@ public sealed class MaterialTemplateTests : IDisposable
         }
 
         MaterialTemplateTarget[] currentTargets = [
-            new MaterialTemplateTarget("guild-1", "频道一", "成员", [
-                new MaterialTemplateChannel("channel-1", "板块一"),
-                new MaterialTemplateChannel("channel-2", "板块二")
+            new MaterialTemplateTarget("1001", "频道一", "成员", [
+                new MaterialTemplateChannel("2001", "板块一"),
+                new MaterialTemplateChannel("2002", "板块二")
             ]),
-            new MaterialTemplateTarget("guild-2", "频道二", "成员", [new MaterialTemplateChannel("channel-3", "板块三")])
+            new MaterialTemplateTarget("1002", "频道二", "成员", [new MaterialTemplateChannel("2003", "板块三")])
         ];
         var result = MaterialTemplateService.ParseWorkbook(path, currentTargets, DateTimeOffset.Now);
 
         Assert.True(result.IsValid, string.Join("；", result.Errors.Concat(result.Rows.Select(row => row.Error))));
         var row = Assert.Single(result.Rows);
-        Assert.Equal("guild-1", row.GuildId);
-        Assert.Equal("channel-1", row.ChannelId);
+        Assert.Equal("1001", row.GuildId);
+        Assert.Equal("2001", row.ChannelId);
         Assert.Equal("queue", row.Status);
     }
 
@@ -114,7 +114,7 @@ public sealed class MaterialTemplateTests : IDisposable
 
         Assert.True(result.IsValid, string.Join("；", result.Errors.Concat(result.Rows.Select(row => row.Error))));
         var row = Assert.Single(result.Rows);
-        Assert.Equal("channel-1", row.ChannelId);
+        Assert.Equal("2001", row.ChannelId);
         Assert.Equal("板块一", row.ChannelName);
     }
 
@@ -158,9 +158,9 @@ public sealed class MaterialTemplateTests : IDisposable
 
         Assert.Equal("text", result.Rows.Single(row => row.RowNumber == 2).Type);
         Assert.Equal("image", result.Rows.Single(row => row.RowNumber == 3).Type);
-        Assert.Contains("无法根据媒体", result.Rows.Single(row => row.RowNumber == 4).Error);
-        Assert.Contains("无法根据媒体", result.Rows.Single(row => row.RowNumber == 5).Error);
-        Assert.Contains("混合", result.Rows.Single(row => row.RowNumber == 6).Error);
+        Assert.Contains("无法判断媒体类型", result.Rows.Single(row => row.RowNumber == 4).Error);
+        Assert.Contains("无法判断媒体类型", result.Rows.Single(row => row.RowNumber == 5).Error);
+        Assert.Contains("不能同时包含图片和视频", result.Rows.Single(row => row.RowNumber == 6).Error);
     }
 
     [Fact]
@@ -184,8 +184,8 @@ public sealed class MaterialTemplateTests : IDisposable
         }
 
         MaterialTemplateTarget[] currentTargets = [
-            new MaterialTemplateTarget("guild-a", "频道一", "成员", [new MaterialTemplateChannel("channel-a", "板块一")]),
-            new MaterialTemplateTarget("guild-b", "频道一", "成员", [new MaterialTemplateChannel("channel-b", "板块一")])
+            new MaterialTemplateTarget("1001", "频道一", "成员", [new MaterialTemplateChannel("2001", "板块一")]),
+            new MaterialTemplateTarget("1002", "频道一", "成员", [new MaterialTemplateChannel("2002", "板块一")])
         ];
         var result = MaterialTemplateService.ParseWorkbook(path, currentTargets, DateTimeOffset.Now);
 
@@ -225,8 +225,7 @@ public sealed class MaterialTemplateTests : IDisposable
         using (var workbook = new XLWorkbook(path))
         {
             var sheet = workbook.Worksheet("素材导入");
-            sheet.Cell(2, 5).Value = "频道一";
-            sheet.Cell(2, 6).Value = "板块一";
+            sheet.Cell(2, 1).Value = "缺频道和版块";
             sheet.Cell(3, 1).Value = "重复标题";
             sheet.Cell(3, 2).Value = "重复正文";
             sheet.Cell(3, 5).Value = "频道一";
@@ -243,9 +242,12 @@ public sealed class MaterialTemplateTests : IDisposable
         Assert.False(result.IsValid);
         var emptyFieldError = result.Rows.Single(row => row.RowNumber == 2).Error;
         Assert.Contains("第 2 行", emptyFieldError);
+        Assert.Contains("B 列正文", emptyFieldError);
+        Assert.Contains("E 列频道名称", emptyFieldError);
+        Assert.Contains("F 列版块名称", emptyFieldError);
         Assert.Contains("请填写正文，或添加图片或视频", emptyFieldError);
-        Assert.Contains("第 4 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 3).Error);
-        Assert.Contains("第 3 行存在相同标题和正文", result.Rows.Single(row => row.RowNumber == 4).Error);
+        Assert.Contains("A/B/C 列内容与第 4 行重复", result.Rows.Single(row => row.RowNumber == 3).Error);
+        Assert.Contains("A/B/C 列内容与第 3 行重复", result.Rows.Single(row => row.RowNumber == 4).Error);
     }
 
     [Fact]
@@ -273,7 +275,7 @@ public sealed class MaterialTemplateTests : IDisposable
     }
 
     [Fact]
-    public async Task ParseWorkbook_RejectsChangedTemplateAndExportsVisibleErrors()
+    public async Task ParseWorkbook_WarnsForChangedTemplateAndStillValidatesRows()
     {
         var path = Path.Combine(_directory, "expired.xlsx");
         var errorPath = Path.Combine(_directory, "errors.xlsx");
@@ -287,17 +289,233 @@ public sealed class MaterialTemplateTests : IDisposable
             sheet.Cell(2, 2).Value = "正文";
             sheet.Cell(2, 5).Value = "频道一";
             sheet.Cell(2, 6).Value = "板块一";
+            sheet.Cell(3, 1).Value = "缺版块";
+            sheet.Cell(3, 2).Value = "正文";
+            sheet.Cell(3, 5).Value = "频道一";
             workbook.SaveAs(path);
         }
 
         var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
-        Assert.True(result.TemplateExpired);
+        Assert.True(result.TemplateChanged);
         Assert.False(result.IsValid);
-        await File.WriteAllBytesAsync(errorPath, MaterialTemplateService.CreateErrorWorkbook(result.Rows, CreateTargets()));
+        Assert.Contains(result.Errors, error => error.Contains("按当前频道数据继续检查"));
+        Assert.True(result.Rows.Single(row => row.RowNumber == 2).IsValid);
+        Assert.Contains("F 列版块名称", result.Rows.Single(row => row.RowNumber == 3).Error);
+        await File.WriteAllBytesAsync(
+            errorPath,
+            MaterialTemplateService.CreateErrorWorkbook(result.Rows.Where(row => !row.IsValid).ToArray(), CreateTargets()));
         using var errorWorkbook = new XLWorkbook(errorPath);
         var errorSheet = errorWorkbook.Worksheet("素材导入");
-        Assert.Equal("错误原因", errorSheet.Cell(1, 10).GetString());
-        Assert.Contains("第 2 行", errorSheet.Cell(2, 10).GetString());
+        Assert.Equal("待修正原因", errorSheet.Cell(1, 10).GetString());
+        Assert.Empty(errorSheet.Cell(2, 10).GetString());
+        Assert.Contains("第 3 行", errorSheet.Cell(3, 10).GetString());
+        Assert.Contains("F 列版块名称", errorSheet.Cell(3, 10).GetString());
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_ReportsAllRowIssuesWithExcelColumnNames()
+    {
+        var path = Path.Combine(_directory, "all-issues.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            sheet.Cell(2, 2).Value = new string('x', 1001);
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(0, result.ValidRowCount);
+        Assert.Equal(1, result.InvalidRowCount);
+        Assert.Contains(row.Issues, issue => issue.StartsWith("B 列正文", StringComparison.Ordinal));
+        Assert.Contains(row.Issues, issue => issue.StartsWith("E 列频道名称", StringComparison.Ordinal));
+        Assert.Contains(row.Issues, issue => issue.StartsWith("F 列版块名称", StringComparison.Ordinal));
+        Assert.Contains("1000", row.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_AlignsContentAndMediaRulesWithPublishValidation()
+    {
+        var path = Path.Combine(_directory, "publish-limits.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+
+            SetImportRow(sheet, 2, content: new string('x', 1001));
+
+            SetImportRow(sheet, 3, title: "长贴", content: new string('x', 10001));
+
+            SetImportRow(
+                sheet,
+                4,
+                content: "正文",
+                media: string.Join("|", Enumerable.Range(1, 19).Select(index => $"https://example.com/{index}.jpg")));
+
+            SetImportRow(
+                sheet,
+                5,
+                title: "图片长贴",
+                content: "正文",
+                media: string.Join("|", Enumerable.Range(1, 51).Select(index => $"https://example.com/{index}.jpg")));
+
+            SetImportRow(
+                sheet,
+                6,
+                title: "视频",
+                content: "正文",
+                media: "https://example.com/a.mp4|https://example.com/b.mp4");
+
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        Assert.Contains("1000", RowAt(result, 2).Error, StringComparison.Ordinal);
+        Assert.Contains("10000", RowAt(result, 3).Error, StringComparison.Ordinal);
+        Assert.Contains("18", RowAt(result, 4).Error, StringComparison.Ordinal);
+        Assert.Contains("50", RowAt(result, 5).Error, StringComparison.Ordinal);
+        Assert.Contains("一个有效视频", RowAt(result, 6).Error, StringComparison.Ordinal);
+        Assert.All(result.Rows, row => Assert.False(row.IsValid));
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_ReportsMixedValidAndInvalidRows()
+    {
+        var path = Path.Combine(_directory, "mixed-result.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            SetImportRow(sheet, 2, title: "可导入", content: "正文");
+            sheet.Cell(3, 1).Value = "缺频道";
+            sheet.Cell(3, 2).Value = "正文";
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        Assert.Equal(1, result.ValidRowCount);
+        Assert.Equal(1, result.InvalidRowCount);
+        Assert.True(RowAt(result, 2).IsValid);
+        Assert.Contains("E 列频道名称", RowAt(result, 3).Error);
+        Assert.Contains("F 列版块名称", RowAt(result, 3).Error);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_RequiresNumericTargetIds()
+    {
+        var path = Path.Combine(_directory, "numeric-ids.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            SetImportRow(sheet, 2, title: "标题", content: "正文");
+            workbook.SaveAs(path);
+        }
+
+        MaterialTemplateTarget[] targets = [
+            new MaterialTemplateTarget(
+                "guild-a",
+                "频道一",
+                "成员",
+                [new MaterialTemplateChannel("channel-a", "板块一")])
+        ];
+        var result = MaterialTemplateService.ParseWorkbook(path, targets, DateTimeOffset.Now);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Contains(row.Issues, issue => issue.StartsWith("E 列频道名称", StringComparison.Ordinal));
+        Assert.Contains(row.Issues, issue => issue.StartsWith("F 列版块名称", StringComparison.Ordinal));
+        Assert.Contains("频道 ID 必须为数字", row.Error, StringComparison.Ordinal);
+        Assert.Contains("版块 ID 必须为数字", row.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_DuplicateKeyIncludesTargetAndMediaCombination()
+    {
+        var path = Path.Combine(_directory, "duplicate-key.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            SetImportRow(sheet, 2, title: "相同", content: "正文", channel: "板块一");
+            SetImportRow(sheet, 3, title: "相同", content: "正文", channel: "板块二");
+            SetImportRow(sheet, 4, title: "相同", content: "正文", channel: "板块一", media: "https://example.com/a.jpg");
+            SetImportRow(sheet, 5, title: "相同", content: "正文", channel: "板块一", media: "https://example.com/a.jpg");
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), DateTimeOffset.Now);
+
+        Assert.True(RowAt(result, 2).IsValid);
+        Assert.True(RowAt(result, 3).IsValid);
+        Assert.Contains("与第 5 行重复", RowAt(result, 4).Error, StringComparison.Ordinal);
+        Assert.Contains("与第 4 行重复", RowAt(result, 5).Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApplyDuplicateErrors_RecomputesMarkersAfterTargetChange()
+    {
+        var path = Path.Combine(_directory, "duplicate-recheck.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            SetImportRow(sheet, 2, title: "相同", content: "正文", channel: "板块一");
+            SetImportRow(sheet, 3, title: "相同", content: "正文", channel: "板块二");
+            workbook.SaveAs(path);
+        }
+
+        var now = DateTimeOffset.Now;
+        var result = MaterialTemplateService.ParseWorkbook(path, CreateTargets(), now);
+        Assert.True(RowAt(result, 2).IsValid);
+        Assert.True(RowAt(result, 3).IsValid);
+
+        var conflicting = result.Rows
+            .Select(row => row.RowNumber == 3 ? row with { ChannelName = "板块一" } : row)
+            .ToArray();
+        var conflictingResult = MaterialTemplateService.ApplyDuplicateErrors(conflicting, CreateTargets(), now);
+        Assert.Contains("与第 3 行重复", RowAt(new MaterialTemplateParseResult(conflictingResult, []), 2).Error);
+        Assert.Contains("与第 2 行重复", RowAt(new MaterialTemplateParseResult(conflictingResult, []), 3).Error);
+
+        var corrected = conflictingResult
+            .Select(row => row.RowNumber == 3 ? row with { ChannelName = "板块二" } : row)
+            .ToArray();
+        var correctedResult = MaterialTemplateService.ApplyDuplicateErrors(corrected, CreateTargets(), now);
+        Assert.True(RowAt(new MaterialTemplateParseResult(correctedResult, []), 2).IsValid);
+        Assert.True(RowAt(new MaterialTemplateParseResult(correctedResult, []), 3).IsValid);
+    }
+
+    [Fact]
+    public async Task ParseWorkbook_AcceptsMinutePrecisionPublishTime()
+    {
+        var path = Path.Combine(_directory, "minute-time.xlsx");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllBytesAsync(path, MaterialTemplateService.CreateWorkbook(CreateTargets()));
+        using (var workbook = new XLWorkbook(path))
+        {
+            var sheet = workbook.Worksheet("素材导入");
+            SetImportRow(sheet, 2, title: "定时", content: "正文");
+            sheet.Cell(2, 4).SetValue("2026-10-22 02:20");
+            workbook.SaveAs(path);
+        }
+
+        var result = MaterialTemplateService.ParseWorkbook(
+            path,
+            CreateTargets(),
+            new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.FromHours(8)));
+
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsValid, row.Error);
+        Assert.NotNull(row.PublishAt);
     }
 
     [Fact]
@@ -348,14 +566,33 @@ public sealed class MaterialTemplateTests : IDisposable
 
     private static MaterialTemplateTarget[] CreateTargets() =>
     [
-        new MaterialTemplateTarget("guild-1", "频道一", "管理员", [
-            new MaterialTemplateChannel("channel-1", "板块一"),
-            new MaterialTemplateChannel("channel-2", "板块二")
+        new MaterialTemplateTarget("1001", "频道一", "管理员", [
+            new MaterialTemplateChannel("2001", "板块一"),
+            new MaterialTemplateChannel("2002", "板块二")
         ]),
-        new MaterialTemplateTarget("guild-2", "频道二", "成员", [
-            new MaterialTemplateChannel("channel-3", "板块三")
+        new MaterialTemplateTarget("1002", "频道二", "成员", [
+            new MaterialTemplateChannel("2003", "板块三")
         ])
     ];
+
+    private static MaterialTemplateImportRow RowAt(MaterialTemplateParseResult result, int rowNumber) =>
+        result.Rows.Single(row => row.RowNumber == rowNumber);
+
+    private static void SetImportRow(
+        IXLWorksheet sheet,
+        int rowNumber,
+        string title = "",
+        string content = "",
+        string guild = "频道一",
+        string channel = "板块一",
+        string media = "")
+    {
+        sheet.Cell(rowNumber, 1).Value = title;
+        sheet.Cell(rowNumber, 2).Value = content;
+        sheet.Cell(rowNumber, 3).Value = media;
+        sheet.Cell(rowNumber, 5).Value = guild;
+        sheet.Cell(rowNumber, 6).Value = channel;
+    }
 
     public void Dispose()
     {
@@ -372,6 +609,13 @@ public sealed class MaterialTemplateTests : IDisposable
         var typesPath = Path.Combine(_directory, "types.xlsx");
         var mediaOnlyPath = Path.Combine(_directory, "media-only.xlsx");
         var legacyHeaderPath = Path.Combine(_directory, "legacy-header.xlsx");
+        var allIssuesPath = Path.Combine(_directory, "all-issues.xlsx");
+        var publishLimitsPath = Path.Combine(_directory, "publish-limits.xlsx");
+        var numericIdsPath = Path.Combine(_directory, "numeric-ids.xlsx");
+        var duplicateKeyPath = Path.Combine(_directory, "duplicate-key.xlsx");
+        var duplicateRecheckPath = Path.Combine(_directory, "duplicate-recheck.xlsx");
+        var mixedResultPath = Path.Combine(_directory, "mixed-result.xlsx");
+        var minuteTimePath = Path.Combine(_directory, "minute-time.xlsx");
         if (File.Exists(templatePath)) File.Delete(templatePath);
         if (File.Exists(importPath)) File.Delete(importPath);
         if (File.Exists(invalidPath)) File.Delete(invalidPath);
@@ -384,6 +628,13 @@ public sealed class MaterialTemplateTests : IDisposable
         if (File.Exists(typesPath)) File.Delete(typesPath);
         if (File.Exists(mediaOnlyPath)) File.Delete(mediaOnlyPath);
         if (File.Exists(legacyHeaderPath)) File.Delete(legacyHeaderPath);
+        if (File.Exists(allIssuesPath)) File.Delete(allIssuesPath);
+        if (File.Exists(publishLimitsPath)) File.Delete(publishLimitsPath);
+        if (File.Exists(numericIdsPath)) File.Delete(numericIdsPath);
+        if (File.Exists(duplicateKeyPath)) File.Delete(duplicateKeyPath);
+        if (File.Exists(duplicateRecheckPath)) File.Delete(duplicateRecheckPath);
+        if (File.Exists(mixedResultPath)) File.Delete(mixedResultPath);
+        if (File.Exists(minuteTimePath)) File.Delete(minuteTimePath);
         if (Directory.Exists(_directory)) Directory.Delete(_directory, false);
     }
 }

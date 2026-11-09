@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Security;
+using QqChannelDesk.Pages;
 using QqChannelDesk.Services;
 using Xunit;
 
@@ -113,6 +114,42 @@ public sealed class ProxyPoolServiceTests
     }
 
     [Fact]
+    public void ProxyNodeRow_InvalidForBatchDelete_WhenHealthCheckFailed()
+    {
+        var node = CreateNode("http", 8080) with
+        {
+            IsAlive = false,
+            LastCheckedAt = DateTimeOffset.UtcNow,
+            LastCheckError = "测活失败"
+        };
+
+        Assert.True(new ProxyNodeRow(node).IsInvalidForBatchDelete);
+    }
+
+    [Fact]
+    public void ProxyNodeRow_InvalidForBatchDelete_WhenTelegramCheckFailed()
+    {
+        var node = CreateNode("http", 8080) with
+        {
+            IsAlive = true,
+            LastCheckedAt = DateTimeOffset.UtcNow,
+            TgAccessible = false,
+            LastTgCheckedAt = DateTimeOffset.UtcNow,
+            LastTgCheckError = "TG 验证失败"
+        };
+
+        Assert.True(new ProxyNodeRow(node).IsInvalidForBatchDelete);
+    }
+
+    [Fact]
+    public void ProxyNodeRow_InvalidForBatchDelete_IgnoresUntestedNodes()
+    {
+        var node = CreateNode("http", 8080);
+
+        Assert.False(new ProxyNodeRow(node).IsInvalidForBatchDelete);
+    }
+
+    [Fact]
     public async Task FetchSourceAsync_FiltersUnsupportedProtocolsBeforePersistence()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), "QqChannelDeskTests", $"proxy-pool-{Guid.NewGuid():N}.db");
@@ -143,6 +180,118 @@ public sealed class ProxyPoolServiceTests
         Assert.DoesNotContain(nodes, node => node.RawValue.StartsWith("vmess://", StringComparison.OrdinalIgnoreCase));
 
         DisposeStore(store, databasePath);
+    }
+
+    [Fact]
+    public void TelegramProbeUrl_UsesPublicPreviewPage()
+    {
+        Assert.Equal("https://t.me/s/telegram", ProxyPoolService.TelegramProbeUrl);
+    }
+
+    [Fact]
+    public async Task CheckTelegramBatchAsync_HonorsConcurrencyAndContinuesAfterNodeFailure()
+    {
+        var databasePath = CreateDatabasePath("proxy-tg-batch");
+        var store = new ProxyPoolStore(databasePath);
+        var source = Assert.Single(await store.GetSourcesAsync(), item => item.SourceKey == ProxyPoolStore.CbSourceKey);
+        await store.ApplyFetchedNodesAsync(source, Enumerable.Range(1, 4)
+            .Select(index => new ProxyNodeCandidate(
+                $"http://192.0.2.{100 + index}:8080",
+                "http",
+                $"192.0.2.{100 + index}",
+                8080,
+                ""))
+            .ToArray());
+        var nodes = await store.GetNodesAsync(source.Id);
+        var failedNodeId = nodes[0].Id;
+        var concurrent = 0;
+        var maxConcurrent = 0;
+        var firstPairEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new ProxyPoolService(
+            store,
+            sourceClient: null,
+            healthProbe: (_, _) => Task.FromResult(new ProxyHealthProbeResult(true, "198.51.100.1", "", "未知", "")),
+            telegramProbe: async (node, cancellationToken) =>
+            {
+                if (node.Id == failedNodeId) throw new InvalidOperationException("fake TG probe failure");
+
+                var current = Interlocked.Increment(ref concurrent);
+                UpdateMaximum(ref maxConcurrent, current);
+                try
+                {
+                    if (current >= 2) firstPairEntered.TrySetResult();
+                    await firstPairEntered.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken);
+                    return new ProxyTelegramCheckResult(true, 0, "");
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref concurrent);
+                }
+            });
+
+        var result = await service.CheckTelegramBatchAsync(nodes, concurrency: 2);
+
+        Assert.Equal(3, result.SuccessCount);
+        Assert.Equal(1, result.FailedCount);
+        Assert.Equal(0, result.SkippedCount);
+        Assert.True(maxConcurrent <= 2, $"预期最大并发不超过 2，实际为 {maxConcurrent}。");
+        Assert.True(maxConcurrent >= 2, $"预期至少出现 2 个并发任务，实际为 {maxConcurrent}。");
+
+        var refreshed = await store.GetNodesAsync(source.Id);
+        var failed = Assert.Single(refreshed, node => node.Id == failedNodeId);
+        Assert.False(failed.TgAccessible);
+        Assert.Contains("fake TG probe failure", failed.LastTgCheckError);
+        Assert.Contains("fake TG probe failure", new ProxyNodeRow(failed).LastResult);
+        Assert.All(refreshed.Where(node => node.Id != failedNodeId), node => Assert.True(node.TgAccessible));
+        Assert.Contains(
+            "TG 验证成功",
+            new ProxyNodeRow(refreshed.First(node => node.Id != failedNodeId)).LastResult);
+
+        DisposeStore(store, databasePath);
+    }
+
+    [Fact]
+    public async Task TestHealthBatchAsync_ContinuesAfterNodeProbeFailure()
+    {
+        var databasePath = CreateDatabasePath("proxy-health-batch");
+        var store = new ProxyPoolStore(databasePath);
+        var source = Assert.Single(await store.GetSourcesAsync(), item => item.SourceKey == ProxyPoolStore.XiaoSourceKey);
+        await store.ApplyFetchedNodesAsync(source, [
+            new ProxyNodeCandidate("http://192.0.2.201:8080", "http", "192.0.2.201", 8080, ""),
+            new ProxyNodeCandidate("http://192.0.2.202:8080", "http", "192.0.2.202", 8080, "")
+        ]);
+        var nodes = await store.GetNodesAsync(source.Id);
+        var failedNodeId = nodes[0].Id;
+        var service = new ProxyPoolService(
+            store,
+            sourceClient: null,
+            healthProbe: (node, _) => node.Id == failedNodeId
+                ? Task.FromException<ProxyHealthProbeResult>(new InvalidOperationException("fake health probe failure"))
+                : Task.FromResult(new ProxyHealthProbeResult(true, "198.51.100.2", "US", "United States", "")),
+            telegramProbe: (_, _) => Task.FromResult(new ProxyTelegramCheckResult(true, 0, "")));
+
+        var result = await service.TestHealthAsync(nodes, concurrency: 2);
+
+        Assert.Equal(1, result.SuccessCount);
+        Assert.Equal(1, result.FailedCount);
+        Assert.Equal(0, result.SkippedCount);
+        var refreshed = await store.GetNodesAsync(source.Id);
+        Assert.Contains("fake health probe failure", Assert.Single(refreshed, node => node.Id == failedNodeId).LastCheckError);
+        Assert.True(Assert.Single(refreshed, node => node.Id != failedNodeId).IsAlive);
+
+        DisposeStore(store, databasePath);
+    }
+
+    private static string CreateDatabasePath(string prefix) =>
+        Path.Combine(Path.GetTempPath(), "QqChannelDeskTests", $"{prefix}-{Guid.NewGuid():N}.db");
+
+    private static void UpdateMaximum(ref int maximum, int value)
+    {
+        while (true)
+        {
+            var observed = Volatile.Read(ref maximum);
+            if (value <= observed || Interlocked.CompareExchange(ref maximum, value, observed) == observed) return;
+        }
     }
 
     private static void DisposeStore(ProxyPoolStore store, string databasePath)

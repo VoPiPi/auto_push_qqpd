@@ -1,5 +1,8 @@
 using Microsoft.Data.Sqlite;
+using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QqChannelDesk.Services;
 
@@ -12,9 +15,19 @@ public sealed class SystemSettingsStore
     private const string MaterialRetentionPolicyKey = "material_retention_policy";
     private const string AutoExecuteSchedulesKey = "auto_execute_schedules";
     private const string TelegramCollectionSchedulerEnabledKey = "telegram_collection_scheduler_enabled";
+    private const string NotifyTelegramCollectionFailureKey = "notify_telegram_collection_failure";
+    private const string TelegramCollectionConcurrencyKey = "telegram_collection_concurrency";
     private const string MaxScheduleConcurrencyKey = "max_schedule_concurrency";
     private const string StartWithWindowsKey = "start_with_windows";
     private const string CloseWindowBehaviorKey = "close_window_behavior";
+    private const string LastUpdateCheckAtKey = "last_update_check_at";
+    private const string SkippedUpdateVersionKey = "skipped_update_version";
+    private const string AiAssistEnabledKey = "ai_assist_enabled";
+    private const string AiBaseUrlKey = "ai_base_url";
+    private const string AiModelNameKey = "ai_model_name";
+    private const string AiApiKeyCipherKey = "ai_api_key_cipher";
+    private const string AiDailyCallLimitKey = "ai_daily_call_limit";
+    private const string AiSystemPromptKey = "ai_system_prompt";
     private readonly string _databasePath;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -53,9 +66,19 @@ public sealed class SystemSettingsStore
                 [MaterialRetentionPolicyKey] = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish.ToString(),
                 [AutoExecuteSchedulesKey] = "true",
                 [TelegramCollectionSchedulerEnabledKey] = "true",
+                [NotifyTelegramCollectionFailureKey] = "true",
+                [TelegramCollectionConcurrencyKey] = "1",
                 [MaxScheduleConcurrencyKey] = "1",
                 [StartWithWindowsKey] = "false",
-                [CloseWindowBehaviorKey] = CloseWindowBehavior.ExitApplication.ToString()
+                [CloseWindowBehaviorKey] = CloseWindowBehavior.ExitApplication.ToString(),
+                [LastUpdateCheckAtKey] = string.Empty,
+                [SkippedUpdateVersionKey] = string.Empty,
+                [AiAssistEnabledKey] = "false",
+                [AiBaseUrlKey] = string.Empty,
+                [AiModelNameKey] = string.Empty,
+                [AiApiKeyCipherKey] = string.Empty,
+                [AiDailyCallLimitKey] = "100",
+                [AiSystemPromptKey] = string.Empty
             };
 
             foreach (var pair in defaults)
@@ -88,10 +111,18 @@ public sealed class SystemSettingsStore
             MaterialRetentionPolicy: ReadRetentionPolicy(values, MaterialRetentionPolicyKey),
             AutoExecuteSchedules: ReadBoolean(values, AutoExecuteSchedulesKey),
             TelegramCollectionSchedulerEnabled: ReadBoolean(values, TelegramCollectionSchedulerEnabledKey),
+            NotifyTelegramCollectionFailure: ReadBoolean(values, NotifyTelegramCollectionFailureKey),
+            TelegramCollectionConcurrency: ReadTelegramCollectionConcurrency(values, TelegramCollectionConcurrencyKey),
             MaxScheduleConcurrency: ReadConcurrency(values, MaxScheduleConcurrencyKey),
             StartWithWindows: ReadBoolean(values, StartWithWindowsKey),
             CloseWindowBehavior: ReadCloseWindowBehavior(values, CloseWindowBehaviorKey),
-            FfmpegPath: ReadString(values, FfmpegPathKey));
+            FfmpegPath: ReadString(values, FfmpegPathKey),
+            AiAssistEnabled: ReadBoolean(values, AiAssistEnabledKey),
+            AiBaseUrl: ReadString(values, AiBaseUrlKey) ?? "",
+            AiModelName: ReadString(values, AiModelNameKey) ?? "",
+            AiApiKeyCipher: ReadString(values, AiApiKeyCipherKey) ?? "",
+            AiDailyCallLimit: ReadAiDailyCallLimit(values, AiDailyCallLimitKey),
+            AiSystemPrompt: ReadString(values, AiSystemPromptKey) ?? "");
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
@@ -113,11 +144,116 @@ public sealed class SystemSettingsStore
             await UpsertAsync(connection, transaction, AutoExecuteSchedulesKey, settings.AutoExecuteSchedules, cancellationToken);
             await UpsertAsync(connection, transaction, TelegramCollectionSchedulerEnabledKey,
                 settings.TelegramCollectionSchedulerEnabled, cancellationToken);
+            await UpsertAsync(connection, transaction, NotifyTelegramCollectionFailureKey,
+                settings.NotifyTelegramCollectionFailure, cancellationToken);
+            await UpsertAsync(connection, transaction, TelegramCollectionConcurrencyKey,
+                NormalizeTelegramCollectionConcurrency(settings.TelegramCollectionConcurrency).ToString(), cancellationToken);
             await UpsertAsync(connection, transaction, MaxScheduleConcurrencyKey,
                 NormalizeConcurrency(settings.MaxScheduleConcurrency).ToString(), cancellationToken);
             await UpsertAsync(connection, transaction, StartWithWindowsKey, settings.StartWithWindows, cancellationToken);
             await UpsertAsync(connection, transaction, CloseWindowBehaviorKey,
                 NormalizeCloseWindowBehavior(settings.CloseWindowBehavior).ToString(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiAssistEnabledKey, settings.AiAssistEnabled, cancellationToken);
+            await UpsertAsync(connection, transaction, AiBaseUrlKey, settings.AiBaseUrl.Trim(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiModelNameKey, settings.AiModelName.Trim(), cancellationToken);
+            await UpsertAsync(connection, transaction, AiDailyCallLimitKey,
+                NormalizeAiDailyCallLimit(settings.AiDailyCallLimit).ToString(CultureInfo.InvariantCulture), cancellationToken);
+            await UpsertAsync(connection, transaction, AiSystemPromptKey, settings.AiSystemPrompt.Trim(), cancellationToken);
+            // API Key only changes through SaveAiApiKeyAsync so ordinary settings saves cannot overwrite it.
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async Task SaveAiApiKeyAsync(string? apiKey, CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            var encrypted = string.IsNullOrWhiteSpace(apiKey) ? "" : ProtectSecret(apiKey.Trim());
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var transaction = connection.BeginTransaction();
+            await UpsertAsync(connection, transaction, AiApiKeyCipherKey, encrypted, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async Task<string> GetAiApiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureDefaultsAsync(cancellationToken);
+        var encrypted = (await GetAsync(cancellationToken)).AiApiKeyCipher;
+        return encrypted.Length == 0 ? "" : UnprotectSecret(encrypted);
+    }
+
+    public async Task<UpdatePreferences> GetUpdatePreferencesAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureDefaultsAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Key, Value
+            FROM AppSettings
+            WHERE Key IN ($lastCheckKey, $skippedVersionKey);
+            """;
+        command.Parameters.AddWithValue("$lastCheckKey", LastUpdateCheckAtKey);
+        command.Parameters.AddWithValue("$skippedVersionKey", SkippedUpdateVersionKey);
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values[reader.GetString(0)] = reader.GetString(1);
+
+        var lastCheckValue = ReadString(values, LastUpdateCheckAtKey);
+        var lastCheckAt = DateTimeOffset.TryParse(
+            lastCheckValue,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind,
+            out var parsed)
+                ? parsed
+                : (DateTimeOffset?)null;
+        return new UpdatePreferences(lastCheckAt, ReadString(values, SkippedUpdateVersionKey));
+    }
+
+    public async Task SaveLastUpdateCheckAsync(
+        DateTimeOffset checkedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await SaveUpdatePreferenceAsync(
+            LastUpdateCheckAtKey,
+            checkedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+            cancellationToken);
+    }
+
+    public async Task SaveSkippedUpdateVersionAsync(
+        string? releaseTag,
+        CancellationToken cancellationToken = default)
+    {
+        await SaveUpdatePreferenceAsync(
+            SkippedUpdateVersionKey,
+            string.IsNullOrWhiteSpace(releaseTag) ? string.Empty : releaseTag.Trim(),
+            cancellationToken);
+    }
+
+    private async Task SaveUpdatePreferenceAsync(
+        string key,
+        string value,
+        CancellationToken cancellationToken)
+    {
+        await InitializeAsync(cancellationToken);
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var transaction = connection.BeginTransaction();
+            await UpsertAsync(connection, transaction, key, value, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         finally
@@ -232,12 +368,47 @@ public sealed class SystemSettingsStore
             ? NormalizeConcurrency(concurrency)
             : 1;
 
+    private static int ReadTelegramCollectionConcurrency(IReadOnlyDictionary<string, string> values, string key) =>
+        values.TryGetValue(key, out var value) && int.TryParse(value, out var concurrency)
+            ? NormalizeTelegramCollectionConcurrency(concurrency)
+            : 1;
+
+    private static int ReadAiDailyCallLimit(IReadOnlyDictionary<string, string> values, string key) =>
+        values.TryGetValue(key, out var value) && int.TryParse(value, CultureInfo.InvariantCulture, out var limit)
+            ? NormalizeAiDailyCallLimit(limit)
+            : 100;
+
+    public static int NormalizeAiDailyCallLimit(int limit) =>
+        limit is >= 1 and <= 10_000 ? limit : 100;
+
+    private static string ProtectSecret(string value)
+    {
+        var cipher = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), optionalEntropy: null, DataProtectionScope.CurrentUser);
+        return Convert.ToBase64String(cipher);
+    }
+
+    private static string UnprotectSecret(string value)
+    {
+        try
+        {
+            var plain = ProtectedData.Unprotect(Convert.FromBase64String(value), optionalEntropy: null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(plain);
+        }
+        catch (Exception exception) when (exception is CryptographicException or FormatException)
+        {
+            return "";
+        }
+    }
+
     private static CloseWindowBehavior ReadCloseWindowBehavior(IReadOnlyDictionary<string, string> values, string key) =>
         values.TryGetValue(key, out var value) && Enum.TryParse<CloseWindowBehavior>(value, true, out var behavior)
             ? NormalizeCloseWindowBehavior(behavior)
             : CloseWindowBehavior.ExitApplication;
 
     public static int NormalizeConcurrency(int concurrency) => concurrency is 1 or 2 or 3 ? concurrency : 1;
+
+    public static int NormalizeTelegramCollectionConcurrency(int concurrency) =>
+        concurrency is 1 or 2 ? concurrency : 1;
 
     public static CloseWindowBehavior NormalizeCloseWindowBehavior(CloseWindowBehavior behavior) =>
         Enum.IsDefined(behavior) ? behavior : CloseWindowBehavior.ExitApplication;
@@ -249,18 +420,30 @@ public sealed record AppSettings(
     string? MaterialStoragePath = null,
     MaterialRetentionPolicy MaterialRetentionPolicy = MaterialRetentionPolicy.DeleteAfterSuccessfulPublish,
     bool AutoExecuteSchedules = true,
-    /// <summary>发布计划的发帖并发数；TG 定时采集不读取该值，始终按单任务串行执行。</summary>
+    /// <summary>发布计划的发帖并发数；TG 定时采集使用独立的 TelegramCollectionConcurrency。</summary>
     int MaxScheduleConcurrency = 1,
     bool StartWithWindows = false,
     CloseWindowBehavior CloseWindowBehavior = CloseWindowBehavior.ExitApplication,
     string? FfmpegPath = null,
-    bool TelegramCollectionSchedulerEnabled = true)
+    bool TelegramCollectionSchedulerEnabled = true,
+    bool NotifyTelegramCollectionFailure = true,
+    int TelegramCollectionConcurrency = 1,
+    bool AiAssistEnabled = false,
+    string AiBaseUrl = "",
+    string AiModelName = "",
+    string AiApiKeyCipher = "",
+    int AiDailyCallLimit = 100,
+    string AiSystemPrompt = "")
 {
     public string EffectiveMaterialStoragePath =>
         Path.GetFullPath(string.IsNullOrWhiteSpace(MaterialStoragePath)
             ? Path.Combine(AppContext.BaseDirectory, "temp")
             : MaterialStoragePath);
 }
+
+public sealed record UpdatePreferences(
+    DateTimeOffset? LastCheckedAt = null,
+    string? SkippedVersionTag = null);
 
 public enum MaterialRetentionPolicy
 {

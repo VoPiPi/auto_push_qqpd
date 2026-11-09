@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace QqChannelDesk.Services;
 
-public sealed class CliWorkflow
+public sealed class CliWorkflow : IPublishWorkflow
 {
     private readonly AppLogger _logger;
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromSeconds(30);

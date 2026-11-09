@@ -15,8 +15,16 @@ public sealed class TelegramTempItem : INotifyPropertyChanged
     private string _materialDirectory = "";
 
     public TelegramTempItem(TelegramChannelMessage message)
+        : this(message, null)
+    {
+    }
+
+    public TelegramTempItem(
+        TelegramChannelMessage message,
+        TelegramTransportContext? transportContext)
     {
         Message = message;
+        TransportContext = transportContext;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -24,6 +32,9 @@ public sealed class TelegramTempItem : INotifyPropertyChanged
     private int _displayIndex;
 
     public TelegramChannelMessage Message { get; }
+
+    /// <summary>这条消息采集时实际使用的传输通道，后续媒体下载必须沿用同一上下文。</summary>
+    public TelegramTransportContext? TransportContext { get; }
 
     /// <summary>表格里的展示序号，随列表排序重新编号。</summary>
     public int DisplayIndex

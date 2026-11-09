@@ -4,8 +4,9 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
-             d:DesignHeight="450" d:DesignWidth="800">
-    <Grid Margin="28,24,28,22">
+             d:DesignHeight="450" d:DesignWidth="800"
+             SizeChanged="SettingPage_SizeChanged">
+    <Grid Margin="28,20,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -14,189 +15,244 @@
 
         <StackPanel>
             <TextBlock Text="系统设置" Style="{StaticResource PageTitle}" />
-            <TextBlock Text="设备信息、版本提示和启动行为" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
+            <TextBlock Text="启动运行、发布采集与存储偏好" Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
         </StackPanel>
 
-        <Grid Grid.Row="1" Margin="0,22,0,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <!-- 宽屏时上下两组卡片按可用高度等高伸展；窄屏时改为单列并按内容高度排列。 -->
+        <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" Margin="0,16,0,0"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      VerticalContentAlignment="Stretch">
+            <Grid x:Name="SettingsContentGrid"
+                  MinHeight="{Binding ViewportHeight, ElementName=SettingsScrollViewer}">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="TopContentRow" Height="*" />
+                    <RowDefinition Height="12" />
+                    <RowDefinition x:Name="BottomContentRow" Height="*" />
+                    <RowDefinition Height="12" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="18,16">
-                <StackPanel>
-                    <TextBlock Text="设备信息" Style="{StaticResource SectionTitle}" />
-                    <TextBlock Text="本机机器码" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,5" />
+                <UniformGrid x:Name="TopSettingsGrid" Grid.Row="0" Columns="2">
+                    <Border x:Name="StartupSettingsCard" Style="{StaticResource Card}" Padding="16,14" Margin="0,0,8,0">
+                        <StackPanel>
+                            <TextBlock Text="启动与运行" Style="{StaticResource SectionTitle}" />
+                            <CheckBox x:Name="StartWithWindowsCheckBox" Content="电脑开机后自动启动程序" Margin="0,12,0,0"
+                                      Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                            <TextBlock Text="只负责打开本程序，不会自动开启发帖计划。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+                            <CheckBox x:Name="RunTasksOnStartupCheckBox" Content="启动程序时自动运行发帖任务" Margin="0,12,0,0"
+                                      Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                            <TextBlock Text="只处理已逾期计划；关闭后，逾期任务会保留等待处理。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+                            <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Content="自动执行发布计划" Margin="0,12,0,0"
+                                      Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                            <TextBlock Text="程序运行期间按计划时间执行到期任务。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="关闭程序操作" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CloseWindowBehaviorCombo" Grid.Column="1" SelectionChanged="CloseWindowBehaviorCombo_SelectionChanged">
+                                    <ComboBoxItem Content="最小化界面到系统托盘" Tag="MinimizeToTray" />
+                                    <ComboBoxItem Content="退出程序" Tag="ExitApplication" />
+                                </ComboBox>
+                            </Grid>
+                            <TextBlock Text="托盘模式下点击关闭只隐藏窗口，可从托盘菜单退出。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="PublishingSettingsCard" Style="{StaticResource Card}" Padding="16,14" Margin="8,0,0,0">
+                        <StackPanel>
+                            <TextBlock Text="发布与采集" Style="{StaticResource SectionTitle}" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="发帖最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <ComboBox x:Name="ScheduleConcurrencyCombo" Grid.Column="1" SelectionChanged="ScheduleConcurrencyCombo_SelectionChanged">
+                                    <ComboBoxItem Content="1 个任务" Tag="1" />
+                                    <ComboBoxItem Content="2 个任务" Tag="2" />
+                                    <ComboBoxItem Content="3 个任务" Tag="3" />
+                                </ComboBox>
+                            </Grid>
+                            <TextBlock Text="仅作用于发布计划；建议保持默认值 1，避免同时发帖请求过多。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
+
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="TG 采集并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <ComboBox x:Name="TelegramCollectionConcurrencyCombo" Grid.Column="1"
+                                          SelectionChanged="TelegramCollectionConcurrencyCombo_SelectionChanged">
+                                    <ComboBoxItem Content="1 个任务" Tag="1" />
+                                    <ComboBoxItem Content="2 个任务" Tag="2" />
+                                </ComboBox>
+                            </Grid>
+                            <TextBlock Text="独立于发帖并发，只影响 TG 定时采集；已有任务不会被中断。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
+
+                            <CheckBox x:Name="NotifyTelegramCollectionFailureCheckBox" Content="TG 定时采集失败时发送通知"
+                                      Margin="0,12,0,0" Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
+                            <TextBlock Text="仅提醒定时或自动重试的失败，手工采集和部分成功不弹通知。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+
+                <UniformGrid x:Name="BottomSettingsGrid" Grid.Row="2" Columns="2">
+                    <Border x:Name="StorageSettingsCard" Style="{StaticResource Card}" Padding="16,14" Margin="0,0,8,0">
+                        <StackPanel>
+                            <TextBlock Text="素材与媒体" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="新导入和新下载的媒体会使用此目录。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,6,0,0" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="存储路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <Grid Grid.Column="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="StoragePathBox" IsReadOnly="True" TextWrapping="NoWrap"
+                                             ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                    <Button Grid.Column="1" Content="更改路径" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ChangeStoragePathButton_Click" />
+                                </Grid>
+                            </Grid>
+                            <TextBlock x:Name="StorageStatus" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="112,8,0,0" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="文件保留期限" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <ComboBox x:Name="RetentionPolicyCombo" Grid.Column="1" SelectionChanged="RetentionPolicyCombo_SelectionChanged">
+                                    <ComboBoxItem Content="完成任务删除文件" Tag="DeleteAfterSuccessfulPublish" />
+                                    <ComboBoxItem Content="保留 7 天" Tag="KeepSevenDays" />
+                                    <ComboBoxItem Content="永久保留" Tag="KeepForever" />
+                                </ComboBox>
+                            </Grid>
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="112" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="FFmpeg 路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                <Grid Grid.Column="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                <TextBox x:Name="FfmpegPathBox" IsReadOnly="True" TextWrapping="NoWrap"
+                                         ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                    <Button Grid.Column="1" Content="更改路径" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ChangeFfmpegPathButton_Click" />
+                                    <Button Grid.Column="2" Content="自动选择" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ResetFfmpegPathButton_Click" />
+                                </Grid>
+                            </Grid>
+                            <TextBlock x:Name="FfmpegPathStatus" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="112,8,0,0" />
+                            <TextBlock Text="原件保留；失败任务副本便于排查。更换目录不会迁移已有文件。优先使用指定 FFmpeg。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="AiSettingsCard" Style="{StaticResource Card}" Padding="16,14" Margin="8,0,0,0">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="AI 辅助" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                                <Border Grid.Column="1" Style="{StaticResource StatusPill}" Background="{StaticResource NeutralSoft}" VerticalAlignment="Center">
+                                    <TextBlock x:Name="AiKeyStatusText" Text="未配置 Key" Style="{StaticResource StatusPillText}" Foreground="{StaticResource Neutral}" />
+                                </Border>
+                                <CheckBox x:Name="AiAssistEnabledCheckBox" Grid.Column="2" Content="在线大模型兜底"
+                                          VerticalAlignment="Center" Margin="12,0,0,0" ToolTip="规则解析失败时允许在线大模型兜底" />
+                            </Grid>
+                            <TextBlock Text="服务地址（公网 HTTPS）" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,14,0,5" />
+                            <TextBox x:Name="AiBaseUrlBox" Tag="https://api.example.com/v1"
+                                     ToolTip="仅支持公网 HTTPS 的 OpenAI 兼容服务地址" />
+                            <TextBlock Text="API Key" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,12,0,5" />
+                            <PasswordBox x:Name="AiApiKeyBox" Tag="留空表示保持现有 Key 不变"
+                                         ToolTip="留空表示保持现有 Key 不变" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="132" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="模型名称" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,0,0,5" />
+                                    <TextBox x:Name="AiModelNameBox" Tag="例：gpt-4o-mini" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="每日调用上限" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,0,0,5" />
+                                    <TextBox x:Name="AiDailyLimitBox" Text="100" />
+                                </StackPanel>
+                                <Button x:Name="SaveAiSettingsButton" Grid.Column="4" Content="保存 AI 配置" Style="{StaticResource PrimaryButton}"
+                                        VerticalAlignment="Bottom" Click="SaveAiSettingsButton_Click" />
+                            </Grid>
+                            <TextBlock Text="仅使用公网 HTTPS 在线服务；Key 使用 Windows DPAPI 加密保存，不会写入日志或发布记录。AI 结果只进入候选稿，仍需人工审核。"
+                                       Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+
+                <Border Grid.Row="4" Style="{StaticResource Card}" Padding="16,10">
                     <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="MachineCodeBox" IsReadOnly="True" FontFamily="Consolas" />
-                        <Button Grid.Column="1" Content="复制" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="CopyMachineCodeButton_Click" />
-                    </Grid>
-                    <TextBlock Text="机器码仅用于本机标识展示，当前版本不会上传或用于登录。"
-                               Foreground="{StaticResource Muted}" FontSize="11" Margin="0,8,0,0" />
-                </StackPanel>
-            </Border>
-
-            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="18,16">
-                <StackPanel>
-                    <TextBlock Text="应用版本" Style="{StaticResource SectionTitle}" />
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="92" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="当前版本" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                        <TextBlock x:Name="VersionText" Grid.Column="1" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    </Grid>
-                    <TextBlock x:Name="UpdateStatusText" Text="尚未检查版本。"
-                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
-                    <Grid Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <CheckBox x:Name="NotifyUpgradeCheckBox" Content="启动时提示版本升级" VerticalAlignment="Center"
+                        <TextBlock Text="关于" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
+                            <TextBlock Text="当前版本" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="VersionText" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock x:Name="UpdateStatusText" Grid.Column="2" Text="尚未检查版本。"
+                                   Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"
+                                   Margin="18,0,0,0" TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <CheckBox x:Name="NotifyUpgradeCheckBox" Grid.Column="3" Content="启动时自动检查更新" VerticalAlignment="Center"
                                   Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                        <Button x:Name="CheckUpdateButton" Grid.Column="1" Content="检查更新" Style="{StaticResource TableLinkButton}" Margin="8,0,0,0"
+                        <Button x:Name="CheckUpdateButton" Grid.Column="4" Content="检查更新" Style="{StaticResource TableLinkButton}" Margin="14,0,0,0"
                                 Click="CheckUpdateButton_Click" />
-                        <Button Grid.Column="2" Content="前往 Gitee 下载" Style="{StaticResource TableLinkButton}" Margin="12,0,0,0"
+                        <Button Grid.Column="5" Content="前往 Gitee 下载" Style="{StaticResource TableLinkButton}" Margin="10,0,0,0"
                                 Click="OpenReleasesButton_Click" />
                     </Grid>
-                </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
+        </ScrollViewer>
 
-            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="18,16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="素材文件" Style="{StaticResource SectionTitle}" />
-                    <TextBlock Grid.Row="1" Text="新导入和新下载的媒体会使用此目录。" Foreground="{StaticResource Muted}" FontSize="11" />
-                    <Grid Grid.Row="2" Margin="0,14,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="112" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="存储路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                        <Grid Grid.Column="1">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="StoragePathBox" IsReadOnly="True" TextWrapping="NoWrap"
-                                     ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <Button Grid.Column="1" Content="更改路径" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ChangeStoragePathButton_Click" />
-                        </Grid>
-                        <TextBlock Grid.Row="1" Text="文件保留期限" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,12,0,0" />
-                        <ComboBox x:Name="RetentionPolicyCombo" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" SelectionChanged="RetentionPolicyCombo_SelectionChanged">
-                            <ComboBoxItem Content="完成任务删除文件" Tag="DeleteAfterSuccessfulPublish" />
-                            <ComboBoxItem Content="保留 7 天" Tag="KeepSevenDays" />
-                            <ComboBoxItem Content="永久保留" Tag="KeepForever" />
-                        </ComboBox>
-                        <TextBlock x:Name="StorageStatus" Grid.Row="2" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
-                        <TextBlock Grid.Row="3" Text="FFmpeg 路径" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,12,0,0" />
-                        <Grid Grid.Row="3" Grid.Column="1" Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="FfmpegPathBox" IsReadOnly="True" TextWrapping="NoWrap"
-                                     ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <Button Grid.Column="1" Content="更改路径" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ChangeFfmpegPathButton_Click" />
-                            <Button Grid.Column="2" Content="自动选择" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ResetFfmpegPathButton_Click" />
-                        </Grid>
-                        <TextBlock x:Name="FfmpegPathStatus" Grid.Row="4" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
-                    </Grid>
-                    <TextBlock Grid.Row="3" Text="原件保留；失败任务副本便于排查。更换目录不会迁移已有文件。优先使用指定 FFmpeg。"
-                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,12,0,0" />
-                </Grid>
-            </Border>
-
-            <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="18,16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="启动与计划" Style="{StaticResource SectionTitle}" />
-
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid Grid.Row="1" Margin="0,10,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="112" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="发帖最大并发数" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                            <ComboBox x:Name="ScheduleConcurrencyCombo" Grid.Column="1" SelectionChanged="ScheduleConcurrencyCombo_SelectionChanged">
-                                <ComboBoxItem Content="1 个任务" Tag="1" />
-                                <ComboBoxItem Content="2 个任务" Tag="2" />
-                                <ComboBoxItem Content="3 个任务" Tag="3" />
-                            </ComboBox>
-                        </Grid>
-                        <TextBlock Grid.Row="2" Text="仅作用于发布计划，TG 定时采集固定串行执行；建议保持默认值 1，避免同时发帖请求过多。"
-                                   Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" TextWrapping="Wrap" />
-
-                        <CheckBox x:Name="AutoExecuteSchedulesCheckBox" Grid.Row="3" Content="自动执行发布计划" Margin="0,-10,0,0"
-                                  Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                        <TextBlock Grid.Row="4" Text="程序运行期间按计划时间执行到期任务。" Foreground="{StaticResource Muted}" FontSize="11" Margin="24,34,0,0" />
-                    </Grid>
-                    <CheckBox x:Name="RunTasksOnStartupCheckBox" Grid.Row="2" Content="启动程序时自动运行发帖任务" Margin="0,12,0,0"
-                              Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                    <TextBlock Grid.Row="3" Text="只处理已逾期计划；关闭后，逾期任务会保留等待处理。"
-                               Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
-
-                    <CheckBox x:Name="StartWithWindowsCheckBox" Grid.Row="4" Content="电脑开机后自动启动程序" Margin="0,12,0,0"
-                              Checked="SettingCheckBox_Changed" Unchecked="SettingCheckBox_Changed" />
-                    <TextBlock Grid.Row="5" Text="只负责打开本程序，不会自动开启发帖计划。" Foreground="{StaticResource Muted}" FontSize="11" Margin="24,4,0,0" />
-
-                    <Grid Grid.Row="6" Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="112" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="关闭程序操作" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-                        <ComboBox x:Name="CloseWindowBehaviorCombo" Grid.Column="1" SelectionChanged="CloseWindowBehaviorCombo_SelectionChanged">
-                            <ComboBoxItem Content="最小化界面到系统托盘" Tag="MinimizeToTray" />
-                            <ComboBoxItem Content="退出程序" Tag="ExitApplication" />
-                        </ComboBox>
-                    </Grid>
-                    <TextBlock Grid.Row="7" Text="托盘模式下点击关闭只隐藏窗口，可从托盘菜单退出。" Foreground="{StaticResource Muted}" FontSize="11" Margin="112,4,0,0" />
-                </Grid>
-            </Border>
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="机器码" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                <TextBlock x:Name="MachineCodeText" Text="正在生成…" FontFamily="Consolas" Margin="8,0,0,0" VerticalAlignment="Center" />
+                <TextBlock Margin="8,0,0,0" VerticalAlignment="Center">
+                    <Hyperlink Click="CopyMachineCodeButton_Click" ToolTip="复制机器码到剪贴板">复制</Hyperlink>
+                </TextBlock>
+            </StackPanel>
+            <TextBlock x:Name="SettingsStatus" Grid.Column="1" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center"
+                       Margin="16,0,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
         </Grid>
-
-        <TextBlock x:Name="SettingsStatus" Grid.Row="2" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,12,0,0" />
     </Grid>
 </UserControl>

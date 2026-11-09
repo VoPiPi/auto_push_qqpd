@@ -12,7 +12,7 @@
           <TextBlock Text="源别名" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,12"/>
           <TextBox x:Name="NameBox" Grid.Column="1" Margin="0,0,0,12"/>
           <TextBlock Text="源地址" Grid.Row="1" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,12"/>
-          <TextBox x:Name="UrlBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,12" ToolTip="支持修改系统源和自定义源，必须是公开的 HTTP/HTTPS 地址"/>
+          <TextBox x:Name="UrlBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,12" Tag="支持修改系统源和自定义源，必须是公开的 HTTP/HTTPS 地址" ToolTip="支持修改系统源和自定义源，必须是公开的 HTTP/HTTPS 地址"/>
           <CheckBox x:Name="EnabledBox" Grid.Row="2" Grid.ColumnSpan="2" Content="启用此代理源" IsChecked="True" Margin="0,0,0,18"/>
           <Button x:Name="DeleteSourceButton" Grid.Row="3" Grid.Column="0" Content="删除源" Style="{StaticResource TableLinkButton}" Visibility="Collapsed" Click="DeleteSourceButton_Click" HorizontalAlignment="Left"/>
           <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">

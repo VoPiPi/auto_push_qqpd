@@ -25,7 +25,7 @@
           <ComboBox x:Name="GuildCombo" DisplayMemberPath="DisplayName" IsEditable="True" IsReadOnly="True" Text="-" SelectionChanged="GuildCombo_SelectionChanged"/>
           <ComboBox x:Name="ChannelCombo" Grid.Column="2" DisplayMemberPath="DisplayName" IsEditable="True" IsReadOnly="True" Text="-"/>
         </Grid>
-        <CheckBox x:Name="ScheduleEnabledCheckBox" Content="设置发布时间" Margin="0,14,0,6" Checked="ScheduleEnabledCheckBox_Changed" Unchecked="ScheduleEnabledCheckBox_Changed"/>
+        <CheckBox x:Name="ScheduleEnabledCheckBox" Content="设置定时时间" Margin="0,14,0,6" Checked="ScheduleEnabledCheckBox_Changed" Unchecked="ScheduleEnabledCheckBox_Changed"/>
         <Grid x:Name="ScheduleControls" Visibility="Collapsed">
           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
           <DatePicker x:Name="PublishDatePicker"/>

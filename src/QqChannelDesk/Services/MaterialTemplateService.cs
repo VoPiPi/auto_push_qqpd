@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace QqChannelDesk.Services;
 
@@ -154,28 +155,25 @@ public static class MaterialTemplateService
                     string.Equals(actual, LegacyChannelHeader, StringComparison.Ordinal))
                     continue;
 
-                headerErrors.Add("请检查模板，需包含“版块名称”列。");
+                headerErrors.Add("F 列版块名称：模板缺少数列，应包含“版块名称”。");
                 continue;
             }
 
             if (!string.Equals(actual, Headers[index], StringComparison.Ordinal))
-                headerErrors.Add($"第 1 行第 {index + 1} 列应为“{Headers[index]}”。");
+                headerErrors.Add($"{GetColumnLetter(index + 1)} 列 {Headers[index]}：第 1 行缺少或名称不正确。");
         }
         if (headerErrors.Count > 0) return new([], headerErrors);
 
-        var templateErrors = new List<string>();
         var dropdownSource = workbook.Worksheets.FirstOrDefault(item =>
             string.Equals(item.Name, DropdownSourceSheetName, StringComparison.OrdinalIgnoreCase));
         var storedSignature = dropdownSource?.Cell(2, 1).GetString().Trim() ?? "";
-        if (storedSignature.Length == 0
-            || !string.Equals(storedSignature, ComputeTargetSignature(currentTargets), StringComparison.OrdinalIgnoreCase))
-        {
-            templateErrors.Add("模板已过期：频道或版块数据已变化，请重新下载模板。");
-        }
+        var templateChanged = storedSignature.Length == 0
+            || !string.Equals(storedSignature, ComputeTargetSignature(currentTargets), StringComparison.OrdinalIgnoreCase);
+        const string templateWarning = "模板中的频道/版块快照与当前账号不一致，将按当前频道数据继续检查。请在导入前确认频道和版块。";
 
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 1;
         if (lastRow > MaximumImportRows + 1)
-            return new([], [.. templateErrors, $"模板最多支持 {MaximumImportRows} 条导入记录。"], templateErrors.Count > 0);
+            return new([], [$"模板最多支持 {MaximumImportRows} 条导入记录。"], templateChanged);
 
         var rows = new List<MaterialTemplateImportRow>();
         for (var rowNumber = 2; rowNumber <= lastRow; rowNumber++)
@@ -214,11 +212,36 @@ public static class MaterialTemplateService
             rows.Add(parsedRow);
         }
 
-        if (rows.Count == 0) return new([], [.. templateErrors, "模板中没有可导入的数据行。"], templateErrors.Count > 0);
+        if (rows.Count == 0) return new([], ["模板中没有可导入的数据行。"], templateChanged);
 
-        var duplicateGroups = rows
-            .Where(row => row.Content.Length > 0)
-            .GroupBy(row => $"{row.Title}\n{row.Content}", StringComparer.Ordinal)
+        rows = ApplyDuplicateErrors(rows, currentTargets, now).ToList();
+
+        return new(rows, templateChanged ? [templateWarning] : [], templateChanged);
+    }
+
+    /// <summary>
+    /// Revalidates rows and recalculates duplicate markers after the user
+    /// changes a target in the import preview.
+    /// </summary>
+    public static IReadOnlyList<MaterialTemplateImportRow> ApplyDuplicateErrors(
+        IReadOnlyList<MaterialTemplateImportRow> rows,
+        IReadOnlyList<MaterialTemplateTarget> currentTargets,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(currentTargets);
+
+        var normalizedRows = rows
+            .Select(row => ValidateImportRow(
+                row with { DuplicateError = "" },
+                currentTargets,
+                now,
+                row.PublishAtInvalid))
+            .ToList();
+
+        var duplicateGroups = normalizedRows
+            .Where(row => !string.IsNullOrWhiteSpace(row.GuildId) && !string.IsNullOrWhiteSpace(row.ChannelId))
+            .GroupBy(CreateDuplicateKey, StringComparer.Ordinal)
             .Where(group => group.Count() > 1);
         foreach (var group in duplicateGroups)
         {
@@ -229,26 +252,15 @@ public static class MaterialTemplateService
                     .Where(other => other.RowNumber != row.RowNumber)
                     .Select(other => other.RowNumber)
                     .ToArray();
-                var duplicateError = $"与第 {string.Join("、", otherRows)} 行存在相同标题和正文";
+                var duplicateError =
+                    $"A/B/C 列内容与第 {string.Join("、", otherRows)} 行重复（同一发布目标、标题、正文和媒体组合）。";
                 var updated = row with { DuplicateError = duplicateError, Error = "" };
-                rows[rows.IndexOf(row)] = ValidateImportRow(updated, currentTargets, now);
+                normalizedRows[normalizedRows.FindIndex(candidate => candidate.RowNumber == row.RowNumber)] =
+                    ValidateImportRow(updated, currentTargets, now, row.PublishAtInvalid);
             }
         }
 
-        if (templateErrors.Count > 0)
-        {
-            var templateErrorText = string.Join("；", templateErrors);
-            rows = rows
-                .Select(row => row with
-                {
-                    Error = string.IsNullOrWhiteSpace(row.Error)
-                        ? FormatErrors(row.RowNumber, templateErrors)
-                        : $"{row.Error}；{templateErrorText}"
-                })
-                .ToList();
-        }
-
-        return new(rows, templateErrors, templateErrors.Count > 0);
+        return normalizedRows;
     }
 
     public static MaterialTemplateImportRow ValidateImportRow(
@@ -264,13 +276,32 @@ public static class MaterialTemplateService
         var type = ResolveImportType(detectedType, media, errors);
 
         var target = ResolveTarget(currentTargets, row.GuildName.Trim(), row.ChannelName.Trim(), errors);
+        if (target is not null)
+        {
+            if (!Regex.IsMatch(target.GuildId.Trim(), @"^\d+$"))
+                errors.Add("E 列频道名称：对应的频道 ID 必须为数字，请重新同步频道数据。");
+            if (target.Channels.SingleOrDefault() is { } targetChannel &&
+                !Regex.IsMatch(targetChannel.ChannelId.Trim(), @"^\d+$"))
+            {
+                errors.Add("F 列版块名称：对应的版块 ID 必须为数字，请重新同步频道数据。");
+            }
+        }
+
         if (type is ("text" or "image" or "video"))
         {
             var mediaError = MaterialMediaValidator.ValidatePost(type, row.Title.Trim(), row.Content, media);
-            if (mediaError.Length > 0) errors.Add(mediaError);
+            if (mediaError.Length > 0 && !string.Equals(mediaError, "请填写正文，或添加图片或视频。", StringComparison.Ordinal))
+                errors.Add($"C 列媒体文件或链接：{mediaError}");
+            var contentError = ValidateContentLength(row.Title.Trim(), row.Content.Trim());
+            if (contentError.Length > 0) errors.Add($"B 列正文：{contentError}");
+            if (string.IsNullOrWhiteSpace(row.Content) && media.Length == 0)
+                errors.Add("B 列正文：请填写正文，或添加图片或视频。");
         }
 
-        if (invalidPublishAt || row.PublishAtInvalid) errors.Add("发布时间格式应为 yyyy-MM-dd HH:mm:ss");
+        if (invalidPublishAt || row.PublishAtInvalid)
+            errors.Add("D 列发布时间：格式应为 yyyy-MM-dd HH:mm:ss");
+        var duplicateErrors = string.IsNullOrWhiteSpace(row.DuplicateError) ? [] : new[] { row.DuplicateError };
+        var allErrors = errors.Concat(duplicateErrors).ToArray();
         var publishAt = row.PublishAt;
         var status = publishAt is { } scheduled && scheduled > now ? "queue" : "waitsend";
         var validated = row with
@@ -284,8 +315,8 @@ public static class MaterialTemplateService
             GuildId = target?.GuildId ?? "",
             ChannelId = target?.Channels.SingleOrDefault()?.ChannelId ?? "",
             Status = status,
-            Error = FormatErrors(row.RowNumber, errors.Concat(
-                string.IsNullOrWhiteSpace(row.DuplicateError) ? [] : [row.DuplicateError]))
+            Error = FormatErrors(row.RowNumber, allErrors),
+            Issues = allErrors
         };
         return validated;
     }
@@ -299,12 +330,12 @@ public static class MaterialTemplateService
 
         if (MaterialMediaValidator.IsMixedMedia(media))
         {
-            errors.Add("媒体文件或链接同时包含图片和视频，不能混合为一种素材类型");
+            errors.Add("C 列媒体文件或链接：不能同时包含图片和视频，请拆分为不同素材。");
             return null;
         }
 
         if (detectedType is "image" or "video") return detectedType;
-        errors.Add("无法根据媒体文件或链接自动判断类型；请使用带图片或视频扩展名的文件或链接");
+        errors.Add("C 列媒体文件或链接：无法判断媒体类型，请使用带图片或视频扩展名的文件或公开 HTTP/HTTPS 链接。");
         return null;
     }
 
@@ -328,7 +359,7 @@ public static class MaterialTemplateService
             .DefaultIfEmpty()
             .Max();
         var errorColumn = 8 + maximumChannelCount;
-        sheet.Cell(1, errorColumn).Value = "错误原因";
+        sheet.Cell(1, errorColumn).Value = "待修正原因";
         sheet.Cell(1, errorColumn).Style.Font.Bold = true;
         sheet.Cell(1, errorColumn).Style.Fill.BackgroundColor = XLColor.FromHtml("#FCECEC");
         sheet.Column(errorColumn).Width = 48;
@@ -439,24 +470,23 @@ public static class MaterialTemplateService
     {
         if (guildName.Length == 0)
         {
-            errors.Add("频道名称不能为空");
-            return null;
+            errors.Add("E 列频道名称：不能为空；可从当前频道列表中补填。");
         }
         if (channelName.Length == 0)
         {
-            errors.Add("版块名称不能为空");
-            return null;
+            errors.Add("F 列版块名称：不能为空；选择频道后可从当前版块列表中补填。");
         }
+        if (guildName.Length == 0 || channelName.Length == 0) return null;
 
         var guilds = targets.Where(item => string.Equals(item.GuildName, guildName, StringComparison.Ordinal)).ToArray();
         if (guilds.Length == 0)
         {
-            errors.Add($"找不到频道“{guildName}”，请重新同步频道数据");
+            errors.Add($"E 列频道名称：找不到频道“{guildName}”，请重新同步频道数据或重新选择。");
             return null;
         }
         if (guilds.Length > 1)
         {
-            errors.Add($"频道“{guildName}”名称不唯一");
+            errors.Add($"E 列频道名称：“{guildName}”名称不唯一，请重新同步频道数据。");
             return null;
         }
 
@@ -465,15 +495,41 @@ public static class MaterialTemplateService
             .ToArray();
         if (channels.Length == 0)
         {
-            errors.Add($"频道“{guildName}”中找不到版块“{channelName}”");
+            errors.Add($"F 列版块名称：“{guildName}”中找不到版块“{channelName}”，请重新选择。");
             return null;
         }
         if (channels.Length > 1)
         {
-            errors.Add($"版块“{channelName}”名称不唯一");
+            errors.Add($"F 列版块名称：“{channelName}”名称不唯一，请重新同步频道数据。");
             return null;
         }
         return guilds[0] with { Channels = [channels[0]] };
+    }
+
+    private static string ValidateContentLength(string title, string content)
+    {
+        var hasTitle = !string.IsNullOrWhiteSpace(title);
+        var limit = hasTitle ? 10_000 : 1_000;
+        if (content.Length <= limit) return "";
+        return hasTitle
+            ? "带标题的正文不能超过 10000 个字符。"
+            : "未填写标题时正文不能超过 1000 个字符。";
+    }
+
+    private static string CreateDuplicateKey(MaterialTemplateImportRow row)
+    {
+        var media = string.Join(
+            "\u001f",
+            row.MediaLinks
+                .Select(item => item.Trim())
+                .OrderBy(item => item, StringComparer.OrdinalIgnoreCase));
+        return string.Join(
+            "\u001e",
+            row.GuildId.Trim(),
+            row.ChannelId.Trim(),
+            row.Title.Trim(),
+            row.Content.Trim(),
+            media);
     }
 
     private static string GetColumnLetter(int column)
@@ -510,8 +566,11 @@ public static class MaterialTemplateService
                 var formats = new[]
                 {
                     "yyyy-MM-dd HH:mm:ss",
+                    "yyyy-MM-dd HH:mm",
                     "yyyy-M-d H:mm:ss",
+                    "yyyy-M-d H:mm",
                     "yyyy/M/d H:mm:ss",
+                    "yyyy/M/d H:mm",
                     "yyyy/M/d HH:mm:ss"
                 };
                 if (!DateTime.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
@@ -557,6 +616,7 @@ public sealed record MaterialTemplateImportRow(
 {
     public string DuplicateError { get; init; } = "";
     public bool PublishAtInvalid { get; init; }
+    public IReadOnlyList<string> Issues { get; init; } = [];
     public bool IsValid => string.IsNullOrWhiteSpace(Error);
     public string PublishAtDisplay => PublishAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "立即";
     public string TargetDisplay => string.IsNullOrWhiteSpace(GuildName) || string.IsNullOrWhiteSpace(ChannelName)
@@ -568,9 +628,9 @@ public sealed record MaterialTemplateImportRow(
 public sealed record MaterialTemplateParseResult(
     IReadOnlyList<MaterialTemplateImportRow> Rows,
     IReadOnlyList<string> Errors,
-    bool TemplateExpired = false)
+    bool TemplateChanged = false)
 {
-    public bool IsValid => !TemplateExpired && Errors.Count == 0 && Rows.Count > 0 && Rows.All(row => row.IsValid);
+    public bool IsValid => Errors.Count == 0 && Rows.Count > 0 && Rows.All(row => row.IsValid);
     public int ValidRowCount => Rows.Count(row => row.IsValid);
     public int InvalidRowCount => Rows.Count(row => !row.IsValid);
 }

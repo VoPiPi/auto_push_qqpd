@@ -1,10 +1,24 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace QqChannelDesk.Services;
+
+public sealed record ReleaseAssetInfo(
+    string Name,
+    long? SizeBytes,
+    string DownloadUrl);
+
+public enum PackageChecksumStatus
+{
+    NotProvided,
+    Available,
+    ReadFailed
+}
 
 public sealed record ReleaseUpdateInfo(
     string Version,
@@ -12,7 +26,11 @@ public sealed record ReleaseUpdateInfo(
     string Notes,
     string ReleaseUrl,
     DateTimeOffset? PublishedAt,
-    bool IsPrerelease);
+    bool IsPrerelease,
+    ReleaseAssetInfo? WindowsPackage = null,
+    ReleaseAssetInfo? ChecksumAsset = null,
+    string? PackageSha256 = null,
+    PackageChecksumStatus ChecksumStatus = PackageChecksumStatus.NotProvided);
 
 public sealed record UpdateCheckResult(
     bool Succeeded,
@@ -27,9 +45,17 @@ public sealed record UpdateCheckResult(
 public sealed class UpdateCheckService
 {
     public const string RepositoryReleaseUrl = "https://gitee.com/vopipi/auto_push_qqpd/releases";
-    public const string LatestReleaseApiUrl = "https://gitee.com/api/v5/repos/vopipi/auto_push_qqpd/releases/latest";
+    public const string ReleasesApiUrl = "https://gitee.com/api/v5/repos/vopipi/auto_push_qqpd/releases";
+
+    // Gitee 按页返回 release；只取第 1 页会漏掉第 11 个及以后的版本，必须翻页找最新。
+    private const int ReleasesPerPage = 20;
+    private const int MaxReleasePages = 5;
 
     private const int MaxResponseBytes = 512 * 1024;
+    private const int MaxChecksumBytes = 4 * 1024;
+    private static readonly Regex WindowsPackagePattern = new(
+        @"^QqChannelDesk-\d+\.\d+\.\d+(?:\.\d+)?-win-x64\.zip$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private readonly HttpClient _httpClient;
 
     public UpdateCheckService(HttpClient? httpClient = null)
@@ -49,25 +75,43 @@ public sealed class UpdateCheckService
 
         try
         {
-            using var response = await _httpClient.GetAsync(LatestReleaseApiUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-                return new(true, false, "Gitee 目前没有可用的正式发布版本。");
+            var releases = new List<ReleaseUpdateInfo>();
+            for (var page = 1; page <= MaxReleasePages; page++)
+            {
+                using var response = await _httpClient.GetAsync(
+                    BuildReleasesPageUrl(page),
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (page > 1) break;
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                        return new(true, false, "Gitee 暂无正式发布版本。");
+                    return new(false, false, $"Gitee 版本检查未完成，请稍后重试或打开 Gitee Releases 查看。HTTP {(int)response.StatusCode}");
+                }
 
-            if (!response.IsSuccessStatusCode)
-                return new(false, false, $"Gitee 版本检查未完成，请稍后重试或打开 Gitee Releases 查看。HTTP {(int)response.StatusCode}");
+                var payload = await ReadLimitedResponseAsync(response, MaxResponseBytes, timeout.Token);
+                var pageReleases = ParseReleases(payload);
+                releases.AddRange(pageReleases);
+                if (pageReleases.Count < ReleasesPerPage) break;
+                // direction=desc 时后续页只会更旧；本页已出现正式版本，无需继续翻页。
+                if (pageReleases.Any(release => !release.IsPrerelease)) break;
+            }
 
-            var payload = await ReadLimitedResponseAsync(response, timeout.Token);
-            var release = ParseRelease(payload);
+            var release = SelectLatestStableRelease(releases);
             if (release is null)
-                return new(false, false, "无法读取 Gitee 版本信息，请稍后重试或打开 Gitee Releases 查看。");
+                return new(true, false, "Gitee 暂无正式发布版本。");
 
             if (!ApplicationVersionInfo.TryParseVersion(release.Version, out var latest))
                 return new(false, false, $"无法识别 Gitee 新版本号，请打开 Gitee Releases 查看：{release.Version}");
 
             var hasUpdate = latest > current;
+            if (hasUpdate && release.WindowsPackage is not null && release.ChecksumAsset is not null)
+                release = await ReadReleaseChecksumAsync(release, cancellationToken);
+
             var message = hasUpdate
                 ? $"发现新版本 {release.Version}，当前版本为 {currentVersion}。"
-                : $"当前已是最新版本（{currentVersion}）。";
+                : $"当前已是最新正式版本（{currentVersion}）。";
             return new(true, hasUpdate, message, release);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -88,51 +132,28 @@ public sealed class UpdateCheckService
         }
     }
 
+    public static IReadOnlyList<ReleaseUpdateInfo> ParseReleases(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            return Array.Empty<ReleaseUpdateInfo>();
+
+        var releases = new List<ReleaseUpdateInfo>();
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            var release = ParseReleaseElement(item);
+            if (release is not null) releases.Add(release);
+        }
+
+        return releases;
+    }
+
     public static ReleaseUpdateInfo? ParseRelease(string json)
     {
         using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object) return null;
-
-        var tag = GetString(root, "tag_name");
-        if (string.IsNullOrWhiteSpace(tag)) return null;
-
-        var url = GetString(root, "html_url");
-        var safeUrl = IsAllowedReleaseUrl(url) ? url! : RepositoryReleaseUrl;
-        var publishedAt = GetDateTimeOffset(root, "published_at");
-        return new ReleaseUpdateInfo(
-            tag.Trim(),
-            GetString(root, "name")?.Trim() ?? tag.Trim(),
-            GetString(root, "body")?.Trim() ?? string.Empty,
-            safeUrl,
-            publishedAt,
-            root.TryGetProperty("prerelease", out var prerelease) && prerelease.ValueKind == JsonValueKind.True);
-    }
-
-    public static string BuildReleasePrompt(string currentVersion, UpdateCheckResult result)
-    {
-        if (result.LatestRelease is not { } release)
-            return result.Message;
-
-        var notes = string.IsNullOrWhiteSpace(release.Notes) ? "暂无更新说明。" : release.Notes.Trim();
-        var shortNotes = notes.Length > 1800
-            ? notes[..1800] + "\n…（完整说明请查看 Gitee Release 页面）"
-            : notes;
-        var publishedAt = release.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "未知";
-        var releaseType = release.IsPrerelease ? "预发布版本" : "正式版本";
-        var updateHint = result.HasUpdate
-            ? "发现新版本，可以从 Gitee 下载更新包。"
-            : "当前已是最新版本，以下是 Gitee 当前 Release 的说明。";
-
-        return $"{updateHint}\n\n" +
-            $"当前版本：{currentVersion}\n" +
-            $"Gitee 最新版本：{release.Version}\n" +
-            $"Release 标题：{release.Title}\n" +
-            $"发布时间：{publishedAt}\n" +
-            $"版本类型：{releaseType}\n\n" +
-            $"更新说明：\n{shortNotes}\n\n" +
-            "程序不会自动下载或覆盖文件。请关闭程序后，将 Gitee 更新包手动覆盖到原程序目录；已有数据库、日志、素材和本地工具不会由更新包处理。\n\n" +
-            "现在打开 Gitee Releases 页面吗？";
+        return document.RootElement.ValueKind == JsonValueKind.Object
+            ? ParseReleaseElement(document.RootElement)
+            : null;
     }
 
     public static bool IsAllowedReleaseUrl(string? url)
@@ -140,9 +161,151 @@ public sealed class UpdateCheckService
         return Uri.TryCreate(url, UriKind.Absolute, out var parsed)
             && parsed.Scheme == Uri.UriSchemeHttps
             && string.Equals(parsed.Host, "gitee.com", StringComparison.OrdinalIgnoreCase)
+            && parsed.IsDefaultPort
             && string.IsNullOrEmpty(parsed.UserInfo)
+            && string.IsNullOrEmpty(parsed.Query)
+            && string.IsNullOrEmpty(parsed.Fragment)
             && (string.Equals(parsed.AbsolutePath, "/vopipi/auto_push_qqpd/releases", StringComparison.OrdinalIgnoreCase)
                 || parsed.AbsolutePath.StartsWith("/vopipi/auto_push_qqpd/releases/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool IsAllowedAssetUrl(string? url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out var parsed)
+            && parsed.Scheme == Uri.UriSchemeHttps
+            && string.Equals(parsed.Host, "gitee.com", StringComparison.OrdinalIgnoreCase)
+            && parsed.IsDefaultPort
+            && string.IsNullOrEmpty(parsed.UserInfo)
+            && string.IsNullOrEmpty(parsed.Query)
+            && string.IsNullOrEmpty(parsed.Fragment)
+            && parsed.AbsolutePath.StartsWith(
+                "/vopipi/auto_push_qqpd/releases/download/",
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static ReleaseUpdateInfo? ParseReleaseElement(JsonElement root)
+    {
+        var tag = GetString(root, "tag_name");
+        if (string.IsNullOrWhiteSpace(tag)) return null;
+
+        tag = tag.Trim();
+        var htmlUrl = GetString(root, "html_url");
+        var releaseUrl = IsAllowedReleaseUrl(htmlUrl) ? htmlUrl! : BuildTagReleaseUrl(tag);
+        var publishedAt = GetDateTimeOffset(root, "published_at")
+            ?? GetDateTimeOffset(root, "created_at");
+        var assets = ParseAssets(root);
+        var windowsPackage = assets.FirstOrDefault(asset => WindowsPackagePattern.IsMatch(asset.Name));
+        var checksumAsset = windowsPackage is null
+            ? null
+            : assets.FirstOrDefault(asset =>
+                string.Equals(asset.Name, windowsPackage.Name + ".sha256", StringComparison.OrdinalIgnoreCase));
+
+        return new ReleaseUpdateInfo(
+            tag,
+            GetString(root, "name")?.Trim() ?? tag,
+            GetString(root, "body")?.Trim() ?? string.Empty,
+            releaseUrl,
+            publishedAt,
+            root.TryGetProperty("prerelease", out var prerelease) && prerelease.ValueKind == JsonValueKind.True,
+            windowsPackage,
+            checksumAsset,
+            null,
+            checksumAsset is null ? PackageChecksumStatus.NotProvided : PackageChecksumStatus.ReadFailed);
+    }
+
+    private static IReadOnlyList<ReleaseAssetInfo> ParseAssets(JsonElement root)
+    {
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            return Array.Empty<ReleaseAssetInfo>();
+
+        var result = new List<ReleaseAssetInfo>();
+        foreach (var asset in assets.EnumerateArray())
+        {
+            if (asset.ValueKind != JsonValueKind.Object) continue;
+            var name = GetString(asset, "name")?.Trim();
+            var url = GetString(asset, "browser_download_url");
+            if (string.IsNullOrWhiteSpace(name) || !IsAllowedAssetUrl(url)) continue;
+            result.Add(new ReleaseAssetInfo(name, GetInt64(asset, "size"), url!));
+        }
+
+        return result;
+    }
+
+    private async Task<ReleaseUpdateInfo> ReadReleaseChecksumAsync(
+        ReleaseUpdateInfo release,
+        CancellationToken cancellationToken)
+    {
+        if (release.WindowsPackage is not { } package || release.ChecksumAsset is not { } checksumAsset)
+            return release;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var response = await _httpClient.GetAsync(
+                checksumAsset.DownloadUrl,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
+            if (!response.IsSuccessStatusCode) return release;
+
+            var payload = await ReadLimitedResponseAsync(response, MaxChecksumBytes, timeout.Token);
+            var sha256 = ParseChecksum(payload, package.Name);
+            return string.IsNullOrWhiteSpace(sha256)
+                ? release
+                : release with
+                {
+                    PackageSha256 = sha256,
+                    ChecksumStatus = PackageChecksumStatus.Available
+                };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return release;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException)
+        {
+            return release;
+        }
+    }
+
+    internal static string? ParseChecksum(string payload, string packageName)
+    {
+        var match = Regex.Match(
+            payload.Trim().TrimStart('\uFEFF'),
+            @"(?m)^\s*(?<hash>[A-Fa-f0-9]{64})(?:\s+\*?(?<name>[^\r\n]+))?\s*$",
+            RegexOptions.CultureInvariant);
+        if (!match.Success) return null;
+
+        var fileName = match.Groups["name"].Value.Trim();
+        if (!string.IsNullOrWhiteSpace(fileName)
+            && !string.Equals(Path.GetFileName(fileName), packageName, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return match.Groups["hash"].Value.ToUpperInvariant();
+    }
+
+    // Gitee 默认按时间正序返回（最新在末页）；direction=desc 让最新版本排在第 1 页。
+    internal static string BuildReleasesPageUrl(int page) =>
+        $"{ReleasesApiUrl}?page={page}&per_page={ReleasesPerPage}&direction=desc";
+
+    private static ReleaseUpdateInfo? SelectLatestStableRelease(IReadOnlyList<ReleaseUpdateInfo> releases)
+    {
+        ReleaseUpdateInfo? selected = null;
+        Version? selectedVersion = null;
+        foreach (var release in releases)
+        {
+            if (release.IsPrerelease) continue;
+            if (!ApplicationVersionInfo.TryParseVersion(release.Version, out var version)) continue;
+            if (selectedVersion is null || version > selectedVersion)
+            {
+                selected = release;
+                selectedVersion = version;
+            }
+        }
+
+        return selected;
     }
 
     private static HttpClient CreateHttpClient()
@@ -156,9 +319,12 @@ public sealed class UpdateCheckService
         return client;
     }
 
-    private static async Task<string> ReadLimitedResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task<string> ReadLimitedResponseAsync(
+        HttpResponseMessage response,
+        int maximumBytes,
+        CancellationToken cancellationToken)
     {
-        if (response.Content.Headers.ContentLength > MaxResponseBytes)
+        if (response.Content.Headers.ContentLength > maximumBytes)
             throw new IOException("版本信息响应过大。");
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -168,7 +334,7 @@ public sealed class UpdateCheckService
         {
             var read = await stream.ReadAsync(chunk, cancellationToken);
             if (read == 0) break;
-            if (buffer.Length + read > MaxResponseBytes)
+            if (buffer.Length + read > maximumBytes)
                 throw new IOException("版本信息响应过大。");
             buffer.Write(chunk, 0, read);
         }
@@ -176,14 +342,33 @@ public sealed class UpdateCheckService
         return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
     }
 
+    private static string BuildTagReleaseUrl(string tag) =>
+        $"{RepositoryReleaseUrl}/tag/{Uri.EscapeDataString(tag)}";
+
     private static string? GetString(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
 
+    private static long? GetInt64(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var property)) return null;
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out var number)) return number;
+        return property.ValueKind == JsonValueKind.String
+            && long.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
+                ? number
+                : null;
+    }
+
     private static DateTimeOffset? GetDateTimeOffset(JsonElement root, string propertyName)
     {
         var value = GetString(root, propertyName);
-        return DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces,
+            out var parsed)
+                ? parsed
+                : null;
     }
 }

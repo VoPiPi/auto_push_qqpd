@@ -1,0 +1,73 @@
+<Window x:Class="QqChannelDesk.Pages.Collection.NewSourceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新建来源" Width="620" Height="540"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" Background="{StaticResource Canvas}">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock x:Name="TitleText" Text="新建来源" FontSize="18" FontWeight="SemiBold" />
+      <TextBlock Text="只接受公开 HTTP/HTTPS 地址；保存前请确认内容使用授权。" Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,16">
+      <StackPanel>
+        <TextBlock Text="来源类型" Foreground="{StaticResource Muted}" Margin="0,0,0,4" />
+        <ComboBox x:Name="TypeBox" SelectedIndex="0" SelectionChanged="TypeBox_SelectionChanged">
+          <ComboBoxItem Content="RSS / Atom" Tag="rss" />
+          <ComboBoxItem Content="网页栏目" Tag="web-column" />
+          <ComboBoxItem Content="单页链接" Tag="single-page" />
+          <ComboBoxItem Content="Telegram 频道" Tag="telegram" />
+        </ComboBox>
+        <StackPanel x:Name="TgHintPanel" Visibility="Collapsed" Margin="0,12,0,0">
+          <TextBlock Text="TG 来源沿用现有“TG定时采集”页签配置，采集水位和调度仍由原 TG 采集器负责，这里不重复维护。"
+                     Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+          <Button Content="打开 TG 定时采集配置" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="TgJumpButton_Click" />
+        </StackPanel>
+        <StackPanel x:Name="FormPanel">
+          <TextBlock Text="来源名称" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+          <TextBox x:Name="NameBox" Tag="例：官方更新日志" />
+          <TextBlock Text="入口地址" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+          <TextBox x:Name="UrlBox" Tag="https://example.com/feed.xml" />
+          <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="12" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="采集频率（分钟）" Foreground="{StaticResource Muted}" Margin="0,0,0,4" />
+              <TextBox x:Name="FrequencyBox" Text="60" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Text="单次上限" Foreground="{StaticResource Muted}" Margin="0,0,0,4" />
+              <TextBox x:Name="LimitBox" Text="20" />
+            </StackPanel>
+          </Grid>
+          <TextBlock Text="包含词（逗号分隔，可选）" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+          <TextBox x:Name="IncludeBox" />
+          <TextBlock Text="排除词（逗号分隔，可选）" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+          <TextBox x:Name="ExcludeBox" />
+          <TextBlock Text="解析规则 JSON（可选，网页栏目用 itemXPath/linkXPath，单页可用 contentSelector）" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+          <TextBox x:Name="RuleConfigBox" Text="{}" MinHeight="68" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+          <CheckBox x:Name="AuthBox" Content="我已确认来源授权和转载范围" Margin="0,14,0,0" />
+          <CheckBox x:Name="AiBox" Content="规则解析失败时允许在线 AI 兜底" Margin="0,8,0,0" />
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock x:Name="MessageText" Foreground="{StaticResource Warn}" VerticalAlignment="Center" TextWrapping="Wrap" />
+      <Button Grid.Column="1" Content="取消" Style="{StaticResource QuietButton}" Click="Cancel_Click" />
+      <Button x:Name="SaveButton" Grid.Column="2" Content="保存" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="Save_Click" />
+    </Grid>
+  </Grid>
+</Window>

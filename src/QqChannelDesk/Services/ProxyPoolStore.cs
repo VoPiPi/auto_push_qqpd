@@ -46,6 +46,10 @@ public sealed class ProxyPoolStore
 {
     public const string CbSourceKey = "cb-x2-jun";
     public const string XiaoSourceKey = "xiaocongyu66";
+    public const string CbSourceUrl = "https://ghproxy.net/https://raw.githubusercontent.com/CB-X2-Jun/proxy-lists/main/proxy.txt";
+    public const string XiaoSourceUrl = "https://ghproxy.net/https://raw.githubusercontent.com/xiaocongyu66/proxypool/main/output/nodes.txt";
+    private const string CbLegacySourceUrl = "https://raw.githubusercontent.com/CB-X2-Jun/proxy-lists/main/proxy.txt";
+    private const string XiaoLegacySourceUrl = "https://raw.githubusercontent.com/xiaocongyu66/proxypool/main/output/nodes.txt";
 
     private readonly string _databasePath;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
@@ -111,8 +115,8 @@ public sealed class ProxyPoolStore
                 CREATE INDEX IF NOT EXISTS IX_ProxyNodes_SourcePresent ON ProxyNodes (SourceId, IsPresentInLatestFetch);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
-            await SeedBuiltInSourceAsync(connection, CbSourceKey, "CB-X2-Jun Proxy List", "https://raw.githubusercontent.com/CB-X2-Jun/proxy-lists/main/proxy.txt", cancellationToken);
-            await SeedBuiltInSourceAsync(connection, XiaoSourceKey, "xiaocongyu66 Proxy Pool", "https://raw.githubusercontent.com/xiaocongyu66/proxypool/main/output/nodes.txt", cancellationToken);
+            await SeedBuiltInSourceAsync(connection, CbSourceKey, "CB-X2-Jun Proxy List", CbSourceUrl, CbLegacySourceUrl, cancellationToken);
+            await SeedBuiltInSourceAsync(connection, XiaoSourceKey, "xiaocongyu66 Proxy Pool", XiaoSourceUrl, XiaoLegacySourceUrl, cancellationToken);
             _initialized = true;
         }
         finally { _initializeLock.Release(); }
@@ -183,6 +187,39 @@ public sealed class ProxyPoolStore
         var result = new List<ProxyNode>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(ReadNode(reader));
+        return result;
+    }
+
+    /// <summary>
+    /// 返回所有来源启用、仍在最新同步结果中、测活通过且 TG 可访问的节点，按最近一次 TG 验证时间倒序。
+    /// 不同来源可能收录同一个节点，按协议+主机+端口去重，避免自动回退时重复请求同一地址。
+    /// </summary>
+    public async Task<IReadOnlyList<ProxyNode>> GetTelegramNodesAsync(CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT n.Id, n.SourceId, n.RawValue, n.Scheme, n.Host, n.Port, n.SourceCountry, n.IsAlive, n.ExitIp,
+                   n.CountryCode, n.CountryName, n.LastCheckedAt, n.LastCheckError, n.LastTgCheckedAt, n.TgAccessible,
+                   n.LastTgMessageCount, n.LastTgCheckError, n.IsPresentInLatestFetch, n.FirstSeenAt, n.LastSeenAt
+            FROM ProxyNodes n
+            INNER JOIN ProxySources s ON s.Id = n.SourceId
+            WHERE n.IsAlive = 1
+              AND n.TgAccessible = 1
+              AND n.IsPresentInLatestFetch = 1
+              AND s.IsEnabled = 1
+              AND n.Scheme IN ('http', 'https')
+            ORDER BY n.LastTgCheckedAt DESC
+            """;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<ProxyNode>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var node = ReadNode(reader);
+            if (seen.Add($"{node.Scheme}://{node.Host}:{node.Port}")) result.Add(node);
+        }
         return result;
     }
 
@@ -289,7 +326,7 @@ public sealed class ProxyPoolStore
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("代理节点不存在。");
     }
 
-    private static async Task SeedBuiltInSourceAsync(SqliteConnection connection, string key, string name, string url, CancellationToken cancellationToken)
+    private static async Task SeedBuiltInSourceAsync(SqliteConnection connection, string key, string name, string url, string legacyUrl, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "INSERT OR IGNORE INTO ProxySources (SourceKey, DisplayName, SourceUrl, IsBuiltIn, IsEnabled, CreatedAt, UpdatedAt) VALUES ($key, $name, $url, 1, 1, $now, $now)";
@@ -298,6 +335,15 @@ public sealed class ProxyPoolStore
         command.Parameters.AddWithValue("$url", url);
         command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        // 只迁移仍在使用旧默认地址的系统源；用户改过的地址保持不变。
+        await using var migrate = connection.CreateCommand();
+        migrate.CommandText = "UPDATE ProxySources SET SourceUrl=$url, UpdatedAt=$now WHERE SourceKey=$key AND IsBuiltIn=1 AND SourceUrl=$legacyUrl";
+        migrate.Parameters.AddWithValue("$url", url);
+        migrate.Parameters.AddWithValue("$key", key);
+        migrate.Parameters.AddWithValue("$legacyUrl", legacyUrl);
+        migrate.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
+        await migrate.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

@@ -1,0 +1,36 @@
+<Window x:Class="QqChannelDesk.Pages.Collection.RunDetailWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="采集批次详情" Width="720" Height="600"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" Background="{StaticResource Canvas}">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="采集批次详情" FontSize="18" FontWeight="SemiBold" />
+      <TextBlock x:Name="SummaryText" Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,16,0,0">
+      <StackPanel>
+        <TextBox x:Name="DetailBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" MinHeight="260" />
+        <TextBlock x:Name="ItemsHeader" Text="本次新增条目" Foreground="{StaticResource Muted}" Margin="0,14,0,4" Visibility="Collapsed" />
+        <TextBox x:Name="ItemsBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" MinHeight="120" MaxHeight="220" Visibility="Collapsed" />
+      </StackPanel>
+    </ScrollViewer>
+    <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="{StaticResource Muted}" Margin="0,10,0,0" TextWrapping="Wrap" />
+    <WrapPanel Grid.Row="3" Margin="0,12,0,0" HorizontalAlignment="Right">
+      <Button x:Name="ViewItemsButton" Content="查看新增条目" Style="{StaticResource QuietButton}" Click="ViewItemsButton_Click" />
+      <Button x:Name="RunAgainButton" Content="再次运行" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="RunAgainButton_Click" />
+      <Button x:Name="PauseSourceButton" Content="暂停来源" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="PauseSourceButton_Click" />
+      <Button Content="复制脱敏诊断" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="CopyDiagnosticsButton_Click" />
+      <Button Content="关闭" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Click="Close_Click" />
+    </WrapPanel>
+  </Grid>
+</Window>

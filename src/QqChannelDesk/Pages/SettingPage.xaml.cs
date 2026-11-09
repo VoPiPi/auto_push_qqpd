@@ -1,4 +1,5 @@
 using QqChannelDesk.Services;
+using QqChannelDesk.Services.Collection;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,13 +9,20 @@ namespace QqChannelDesk.Pages;
 
 public partial class SettingPage : UserControl
 {
+    private const double CompactLayoutBreakpoint = 960;
     private readonly SystemSettingsStore _settingsStore;
     private readonly MediaStorageService _mediaStorage;
     private readonly FfmpegManager _ffmpegManager;
     private AppSettings _currentSettings = new();
+    private DateTimeOffset? _lastUpdateCheckAt;
+    private string? _updateStatusMessage;
+    private bool _updateCheckInProgress;
     private int _loadVersion;
     private int _activeLoadVersion;
     private CancellationTokenSource? _pageLifetimeCts;
+    private bool _aiKeyConfigured;
+    private string _machineCode = "";
+    private bool? _isCompactLayout;
 
     public event Action<AppSettings>? SettingsChanged;
     public event EventHandler? UpdateCheckRequested;
@@ -29,10 +37,40 @@ public partial class SettingPage : UserControl
         _settingsStore = settingsStore;
         _mediaStorage = mediaStorage ?? new MediaStorageService(settingsStore);
         _ffmpegManager = ffmpegManager ?? new FfmpegManager(settingsStore: settingsStore);
-        MachineCodeBox.Text = "正在生成机器码…";
         Loaded += (_, _) => StartPageLifetime();
         Unloaded += (_, _) => EndPageLifetime();
         VersionText.Text = ApplicationVersionInfo.CurrentVersion;
+    }
+
+    private void SettingPage_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateSettingsLayout(e.NewSize.Width);
+
+    internal void UpdateSettingsLayout(double width)
+    {
+        if (double.IsNaN(width)) return;
+
+        var compact = width < CompactLayoutBreakpoint;
+        if (_isCompactLayout == compact) return;
+        _isCompactLayout = compact;
+
+        var columns = compact ? 1 : 2;
+        TopSettingsGrid.Columns = columns;
+        BottomSettingsGrid.Columns = columns;
+        TopContentRow.Height = compact ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+        BottomContentRow.Height = compact ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+
+        StartupSettingsCard.Margin = compact
+            ? new Thickness(0, 0, 0, 12)
+            : new Thickness(0, 0, 8, 0);
+        PublishingSettingsCard.Margin = compact
+            ? new Thickness(0)
+            : new Thickness(8, 0, 0, 0);
+        StorageSettingsCard.Margin = compact
+            ? new Thickness(0, 0, 0, 12)
+            : new Thickness(0, 0, 8, 0);
+        AiSettingsCard.Margin = compact
+            ? new Thickness(0)
+            : new Thickness(8, 0, 0, 0);
     }
 
     private CancellationToken CurrentPageToken =>
@@ -69,7 +107,8 @@ public partial class SettingPage : UserControl
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
         if (!IsPageActive(cancellationToken)) return;
-        MachineCodeBox.Text = "正在生成机器码…";
+        _machineCode = "";
+        MachineCodeText.Text = "正在生成…";
         var machineCodeTask = Task.Run(MachineCodeProvider.GetMachineCode);
         await LoadAsync(cancellationToken);
 
@@ -87,13 +126,14 @@ public partial class SettingPage : UserControl
         if (!IsPageActive(cancellationToken)) return;
         if (machineCodeError is not null)
         {
-            MachineCodeBox.Text = "机器码生成失败";
+            MachineCodeText.Text = "生成失败";
             SettingsStatus.Text = $"设置已加载，但机器码生成失败：{CliDiagnostics.Sanitize(machineCodeError.Message)}";
             return;
         }
 
-        MachineCodeBox.Text = machineCode ?? "机器码生成失败";
-        SettingsStatus.Text = $"设置已加载，机器码：{MachineCodeBox.Text}";
+        _machineCode = machineCode ?? "";
+        MachineCodeText.Text = _machineCode.Length > 0 ? _machineCode : "生成失败";
+        SettingsStatus.Text = "设置已加载。";
     }
 
     private async Task LoadAsync(CancellationToken cancellationToken)
@@ -105,7 +145,12 @@ public partial class SettingPage : UserControl
         {
             var settings = await _settingsStore.GetAsync(cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
+            var updatePreferences = await _settingsStore.GetUpdatePreferencesAsync(cancellationToken);
+            if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
             _currentSettings = settings;
+            _lastUpdateCheckAt = updatePreferences.LastCheckedAt;
+            _updateStatusMessage = null;
+            RefreshUpdateStatusText();
             NotifyUpgradeCheckBox.IsChecked = _currentSettings.NotifyUpgrade;
             RunTasksOnStartupCheckBox.IsChecked = _currentSettings.RunTasksOnStartup;
             AutoExecuteSchedulesCheckBox.IsChecked = _currentSettings.AutoExecuteSchedules;
@@ -113,7 +158,19 @@ public partial class SettingPage : UserControl
             ScheduleConcurrencyCombo.SelectedItem = ScheduleConcurrencyCombo.Items
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => item.Tag?.ToString() == _currentSettings.MaxScheduleConcurrency.ToString());
+            TelegramCollectionConcurrencyCombo.SelectedItem = TelegramCollectionConcurrencyCombo.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item => item.Tag?.ToString() == _currentSettings.TelegramCollectionConcurrency.ToString());
+            NotifyTelegramCollectionFailureCheckBox.IsChecked = _currentSettings.NotifyTelegramCollectionFailure;
             StoragePathBox.Text = _currentSettings.EffectiveMaterialStoragePath;
+            AiAssistEnabledCheckBox.IsChecked = _currentSettings.AiAssistEnabled;
+            AiBaseUrlBox.Text = _currentSettings.AiBaseUrl;
+            AiModelNameBox.Text = _currentSettings.AiModelName;
+            AiDailyLimitBox.Text = _currentSettings.AiDailyCallLimit.ToString();
+            _aiKeyConfigured = (await _settingsStore.GetAiApiKeyAsync(cancellationToken)).Length > 0;
+            if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
+            AiKeyStatusText.Text = _aiKeyConfigured ? "Key 已配置" : "未配置 Key";
+            AiApiKeyBox.Clear();
             await RefreshFfmpegPathAsync(cancellationToken);
             if (!IsPageActive(cancellationToken) || version != _loadVersion) return;
             RetentionPolicyCombo.SelectedItem = RetentionPolicyCombo.Items
@@ -153,7 +210,8 @@ public partial class SettingPage : UserControl
                 NotifyUpgrade = NotifyUpgradeCheckBox.IsChecked == true,
                 RunTasksOnStartup = RunTasksOnStartupCheckBox.IsChecked == true,
                 AutoExecuteSchedules = AutoExecuteSchedulesCheckBox.IsChecked == true,
-                StartWithWindows = StartWithWindowsCheckBox.IsChecked == true
+                StartWithWindows = StartWithWindowsCheckBox.IsChecked == true,
+                NotifyTelegramCollectionFailure = NotifyTelegramCollectionFailureCheckBox.IsChecked == true
             });
             if (IsPageActive(pageToken)) SettingsStatus.Text = "设置已保存。";
         }
@@ -199,6 +257,30 @@ public partial class SettingPage : UserControl
         {
             await SaveSettingsAsync(_currentSettings with { MaxScheduleConcurrency = SystemSettingsStore.NormalizeConcurrency(concurrency) });
             if (IsPageActive(pageToken)) SettingsStatus.Text = "发帖最大并发数已保存（仅作用于发布计划）。";
+        }
+        catch (Exception ex)
+        {
+            if (IsPageActive(pageToken))
+                SettingsStatus.Text = $"保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试或检查程序目录权限。";
+        }
+        });
+
+    private void TelegramCollectionConcurrencyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UiAsync.Run("保存 TG 采集并发数", async () =>
+        {
+        var pageToken = CurrentPageToken;
+        if (_activeLoadVersion != 0
+            || !IsPageActive(pageToken)
+            || TelegramCollectionConcurrencyCombo.SelectedItem is not ComboBoxItem item ||
+            !int.TryParse(item.Tag?.ToString(), out var concurrency)) return;
+        try
+        {
+            await SaveSettingsAsync(_currentSettings with
+            {
+                TelegramCollectionConcurrency =
+                    SystemSettingsStore.NormalizeTelegramCollectionConcurrency(concurrency)
+            });
+            if (IsPageActive(pageToken)) SettingsStatus.Text = "TG 采集并发数已保存（仅作用于 TG 定时采集）。";
         }
         catch (Exception ex)
         {
@@ -318,6 +400,61 @@ public partial class SettingPage : UserControl
         }
         });
 
+    private void SaveAiSettingsButton_Click(object sender, RoutedEventArgs e) =>
+        UiAsync.Run("保存 AI 配置", async () =>
+        {
+            var pageToken = CurrentPageToken;
+            if (_activeLoadVersion != 0 || !IsPageActive(pageToken)) return;
+            var enabled = AiAssistEnabledCheckBox.IsChecked == true;
+            var baseUrl = AiBaseUrlBox.Text.Trim();
+            var modelName = AiModelNameBox.Text.Trim();
+            var apiKey = AiApiKeyBox.Password.Trim();
+            if (!int.TryParse(AiDailyLimitBox.Text, out var dailyLimit) || dailyLimit < 1 || dailyLimit > 10_000)
+            {
+                SettingsStatus.Text = "AI 每日调用上限必须在 1 到 10000 之间。";
+                return;
+            }
+
+            if (enabled)
+            {
+                if (!AiClientOptions.TryCreate(baseUrl, apiKey.Length > 0 ? apiKey : "placeholder", modelName, out _, out var endpointError))
+                {
+                    SettingsStatus.Text = endpointError;
+                    return;
+                }
+
+                if (apiKey.Length == 0 && !_aiKeyConfigured)
+                {
+                    SettingsStatus.Text = "启用 AI 兜底前请先配置 API Key。";
+                    return;
+                }
+            }
+
+            try
+            {
+                var updated = _currentSettings with
+                {
+                    AiAssistEnabled = enabled,
+                    AiBaseUrl = baseUrl,
+                    AiModelName = modelName,
+                    AiDailyCallLimit = dailyLimit
+                };
+                if (apiKey.Length > 0) await _settingsStore.SaveAiApiKeyAsync(apiKey, pageToken);
+                if (!IsPageActive(pageToken)) return;
+                await SaveSettingsAsync(updated);
+                if (!IsPageActive(pageToken)) return;
+                _aiKeyConfigured = _aiKeyConfigured || apiKey.Length > 0;
+                AiApiKeyBox.Clear();
+                AiKeyStatusText.Text = _aiKeyConfigured ? "Key 已配置" : "未配置 Key";
+                SettingsStatus.Text = "AI 配置已保存。";
+            }
+            catch (Exception ex)
+            {
+                if (IsPageActive(pageToken))
+                    SettingsStatus.Text = $"AI 配置保存未完成：{CliDiagnostics.Sanitize(ex.Message)}。请重试。";
+            }
+        });
+
     private async Task RefreshFfmpegPathAsync(CancellationToken cancellationToken)
     {
         if (!IsPageActive(cancellationToken)) return;
@@ -381,7 +518,13 @@ public partial class SettingPage : UserControl
     {
         try
         {
-            Clipboard.SetText(MachineCodeBox.Text);
+            if (_machineCode.Length == 0)
+            {
+                SettingsStatus.Text = "机器码尚未生成，请稍后再试。";
+                return;
+            }
+
+            Clipboard.SetText(_machineCode);
             SettingsStatus.Text = "机器码已复制到剪贴板。";
         }
         catch (Exception ex)
@@ -392,15 +535,29 @@ public partial class SettingPage : UserControl
 
     public void SetUpdateCheckInProgress(bool inProgress)
     {
-        if (!IsPageActiveForUpdates) return;
-        if (inProgress) UpdateStatusText.Text = "正在查询 Gitee 最新发布…";
+        _updateCheckInProgress = inProgress;
         CheckUpdateButton.IsEnabled = !inProgress;
+        RefreshUpdateStatusText();
     }
 
-    public void DisplayUpdateCheckResult(UpdateCheckResult result)
+    public void DisplayUpdateCheckResult(UpdateCheckResult result, DateTimeOffset checkedAt)
     {
-        if (!IsPageActiveForUpdates) return;
-        UpdateStatusText.Text = result.Message;
+        _lastUpdateCheckAt = checkedAt;
+        _updateStatusMessage = result.Message;
+        _updateCheckInProgress = false;
+        RefreshUpdateStatusText();
+    }
+
+    private void RefreshUpdateStatusText()
+    {
+        var checkedText = _lastUpdateCheckAt is { } checkedAt
+            ? $"最近检查：{checkedAt.ToLocalTime():yyyy-MM-dd HH:mm}"
+            : "尚未检查版本。";
+        UpdateStatusText.Text = _updateCheckInProgress
+            ? $"正在查询 Gitee 最新发布…\n{checkedText}"
+            : string.IsNullOrWhiteSpace(_updateStatusMessage)
+                ? checkedText
+                : $"{_updateStatusMessage}\n{checkedText}";
     }
 
     private void CheckUpdateButton_Click(object sender, RoutedEventArgs e) => UpdateCheckRequested?.Invoke(this, EventArgs.Empty);

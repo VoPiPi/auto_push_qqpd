@@ -27,6 +27,137 @@ public sealed record WebProxySelection(string Value)
     public bool IsAutomatic => string.Equals(Value, Automatic, StringComparison.OrdinalIgnoreCase);
 }
 
+/// <summary>
+/// TG 采集传输通道。与网页代理不同，直连/系统代理/代理池都是标准 HTTP(S)
+/// 请求，只改“怎么连”，不改目标主机、端口、路径或查询串；在线解析才走 WebView2 网页代理。
+/// </summary>
+public sealed record TelegramTransportSelection(string Value)
+{
+    public const string Auto = "auto";
+    public const string Direct = "direct";
+    public const string System = "system";
+    public const string ProxyPool = "proxy-pool";
+    public const string Online = "online";
+    public const string OnlineProviderPrefix = "online:";
+
+    private static readonly HashSet<string> LegacyOnlineProviderIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "proxyunblocker",
+        "coproxy",
+        "lumiproxy"
+    };
+
+    public static TelegramTransportSelection Automatic { get; } = new(Auto);
+
+    public bool IsAutomatic => string.Equals(Value, Auto, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsDirect => string.Equals(Value, Direct, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsSystem => string.Equals(Value, System, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsProxyPool => string.Equals(Value, ProxyPool, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsOnline =>
+        string.Equals(Value, Online, StringComparison.OrdinalIgnoreCase) ||
+        Value.StartsWith(OnlineProviderPrefix, StringComparison.OrdinalIgnoreCase) ||
+        IsLegacyOnlineProviderId(Value);
+
+    public static bool IsLegacyOnlineProviderId(string? value) =>
+        LegacyOnlineProviderIds.Contains((value ?? "").Trim());
+
+    /// <summary>把在线解析的旧 provider ID 归一化为 online:&lt;providerId&gt;，非在线通道返回 null。</summary>
+    public static string? NormalizeOnlineSelection(string? value)
+    {
+        var trimmed = (value ?? "").Trim();
+        if (trimmed.Equals(Online, StringComparison.OrdinalIgnoreCase)) return Online;
+        if (trimmed.StartsWith(OnlineProviderPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var providerId = trimmed[OnlineProviderPrefix.Length..].Trim();
+            return providerId.Length == 0 ? Online : OnlineProviderPrefix + providerId;
+        }
+        return IsLegacyOnlineProviderId(trimmed) ? OnlineProviderPrefix + trimmed : null;
+    }
+
+    public static string ForOnlineProvider(string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+            throw new ArgumentException("网页代理标识不能为空。", nameof(providerId));
+        return OnlineProviderPrefix + providerId.Trim();
+    }
+}
+
+/// <summary>提供给 UI 的传输通道选项：自动选择 / 系统代理 / 代理池节点 / 在线解析。</summary>
+public static class TelegramTransportSelector
+{
+    /// <summary>旧版本“自定义代理”通道的存储前缀，仅用于把历史配置安全降级为自动选择。</summary>
+    private const string LegacyCustomPrefix = "custom:";
+
+    public const string SystemDisplayName = "系统代理";
+    public const string ProxyPoolDisplayName = "代理池节点";
+    public const string OnlineDisplayName = "在线解析";
+
+    public static IReadOnlyList<WebProxyOption> Options { get; } = new[]
+    {
+        new WebProxyOption(TelegramTransportSelection.Auto, "自动选择"),
+        new WebProxyOption(TelegramTransportSelection.System, SystemDisplayName),
+        new WebProxyOption(TelegramTransportSelection.ProxyPool, ProxyPoolDisplayName),
+        new WebProxyOption(TelegramTransportSelection.Online, OnlineDisplayName)
+    };
+
+    public static WebProxyOption? FindOption(string? value)
+    {
+        var trimmed = (value ?? "").Trim();
+        if (IsLegacyCustomProxyValue(trimmed)) return Options[0];
+        if (trimmed.StartsWith(TelegramTransportSelection.OnlineProviderPrefix, StringComparison.OrdinalIgnoreCase) ||
+            TelegramTransportSelection.IsLegacyOnlineProviderId(trimmed))
+            return Options[3];
+        return Options.FirstOrDefault(option => string.Equals(option.Value, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>把已保存的通道值还原为下拉框文本：已下线的自定义代理映射到自动选择，旧网页代理值映射到在线解析。</summary>
+    public static string DisplayValue(string? value)
+    {
+        var trimmed = (value ?? "").Trim();
+        if (IsLegacyCustomProxyValue(trimmed)) return Options[0].DisplayName;
+        if (TelegramTransportSelection.IsLegacyOnlineProviderId(trimmed))
+            return OnlineDisplayName;
+        return FindOption(trimmed)?.DisplayName ?? trimmed;
+    }
+
+    /// <summary>
+    /// 解析下拉框文本或已保存的通道值：旧网页代理 ID 归一到在线解析，其余按通道处理。
+    /// 旧版本的自定义代理（custom: 前缀或裸 HTTP(S) 地址）已下线，统一降级为自动选择；
+    /// 无法识别时返回 null，由调用方提示用户。
+    /// </summary>
+    public static string? Parse(string? text, string? selectedValue = null)
+    {
+        var trimmed = (text ?? "").Trim();
+        if (trimmed.Length == 0) return TelegramTransportSelection.Auto;
+        if (IsLegacyCustomProxyValue(trimmed)) return TelegramTransportSelection.Auto;
+
+        var online = TelegramTransportSelection.NormalizeOnlineSelection(trimmed);
+        if (online is not null) return online;
+
+        if (string.Equals(trimmed, TelegramTransportSelection.Direct, StringComparison.OrdinalIgnoreCase))
+            return TelegramTransportSelection.Direct;
+
+        var selectedOption = Options.FirstOrDefault(option =>
+            string.Equals(option.Value, selectedValue, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(option.DisplayName, trimmed, StringComparison.OrdinalIgnoreCase));
+        if (selectedOption is not null) return selectedOption.Value;
+
+        var named = Options.FirstOrDefault(option =>
+            string.Equals(option.Value, trimmed, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(option.DisplayName, trimmed, StringComparison.OrdinalIgnoreCase));
+        return named?.Value;
+    }
+
+    private static bool IsLegacyCustomProxyValue(string value) =>
+        value.StartsWith(LegacyCustomPrefix, StringComparison.OrdinalIgnoreCase) ||
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+}
+
 public sealed record WebProxyOption(string Value, string DisplayName)
 {
     public override string ToString() => DisplayName;
@@ -81,11 +212,6 @@ public sealed class WebProxyProviderRegistry
     public WebProxySelection ParseSelection(string text, string? selectedValue = null)
     {
         var trimmed = (text ?? "").Trim();
-        // ComboBox.IsEditable keeps SelectedItem while the user types. Treat a typed
-        // HTTP(S) address as custom input before honoring the stale selected value.
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var typedUri) &&
-            (typedUri.Scheme == Uri.UriSchemeHttp || typedUri.Scheme == Uri.UriSchemeHttps))
-            return new(trimmed);
 
         if (string.Equals(trimmed, AutomaticDisplayName, StringComparison.OrdinalIgnoreCase) ||
             trimmed.Length == 0)
@@ -110,9 +236,34 @@ public sealed class WebProxyProviderRegistry
         var provider = _providers.FirstOrDefault(item =>
             string.Equals(item.Id, selection.Value, StringComparison.OrdinalIgnoreCase));
         if (provider is not null) return new[] { provider };
-        if (DirectUrlWebProxyProvider.TryNormalizeBaseUrl(selection.Value, out var baseUrl, out var error))
-            return new[] { new DirectUrlWebProxyProvider(baseUrl, selection.Value) };
-        throw new InvalidOperationException(error);
+        if (Uri.TryCreate(selection.Value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            throw new InvalidOperationException("自定义网页代理已下线，请从下拉框重新选择采集通道。");
+        throw new InvalidOperationException($"未知的网页代理：{selection.Value}。");
+    }
+
+    /// <summary>
+    /// 在线解析专用解析：auto/online 使用全部在线 provider，online:&lt;id&gt; 或旧 provider ID
+    /// 只使用指定 provider；未知值或自定义代理明确报错，不能静默改成直连或系统代理。
+    /// </summary>
+    public IReadOnlyList<IWebProxyProvider> ResolveOnlineProviders(TelegramTransportSelection selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        if (selection.IsAutomatic || string.Equals(selection.Value, TelegramTransportSelection.Online, StringComparison.OrdinalIgnoreCase))
+            return _providers;
+
+        var normalized = TelegramTransportSelection.NormalizeOnlineSelection(selection.Value);
+        if (normalized is null)
+            throw new InvalidOperationException($"“{selection.Value}”不是可用的在线解析通道，请重新选择。");
+        if (string.Equals(normalized, TelegramTransportSelection.Online, StringComparison.OrdinalIgnoreCase))
+            return _providers;
+
+        var providerId = normalized[TelegramTransportSelection.OnlineProviderPrefix.Length..];
+        var provider = _providers.FirstOrDefault(item =>
+            string.Equals(item.Id, providerId, StringComparison.OrdinalIgnoreCase));
+        if (provider is null)
+            throw new InvalidOperationException($"在线解析服务“{providerId}”未注册，请重新选择。");
+        return new[] { provider };
     }
 
     private static IEnumerable<IWebProxyProvider> CreateDefaultProviders()
@@ -707,84 +858,5 @@ internal sealed class WebProxyBrowserHost : IDisposable
             return string.Join("; ", cookies.Where(cookie => !string.IsNullOrEmpty(cookie.Name)).Select(cookie => $"{cookie.Name}={cookie.Value}"));
         }
         catch { return ""; }
-    }
-}
-
-/// <summary>用户自定义代理：只拼接地址并请求，不执行任何网页代理模拟。</summary>
-public sealed class DirectUrlWebProxyProvider : HttpWebProxyProviderBase
-{
-    private readonly string _baseUrl;
-    private readonly string _displayName;
-
-    public DirectUrlWebProxyProvider(string baseUrl, string? displayName = null)
-    {
-        _baseUrl = baseUrl.TrimEnd('/');
-        _displayName = string.IsNullOrWhiteSpace(displayName) ? _baseUrl : displayName.Trim();
-    }
-
-    public override string Id => "custom:" + _baseUrl;
-    public override string DisplayName => _displayName;
-    public override string HomepageUrl => _baseUrl;
-    public override bool SupportsSimulation => false;
-
-    internal string BuildTargetUrl(string targetUrl) => $"{_baseUrl}/{targetUrl.TrimStart('/')}";
-
-    public override async Task<ProxyPageResult> FetchAsync(string targetUrl, string? waitSelector = null, CancellationToken cancellationToken = default)
-    {
-        var baseUri = new Uri(_baseUrl, UriKind.Absolute);
-        var addresses = await Dns.GetHostAddressesAsync(baseUri.DnsSafeHost, cancellationToken);
-        if (addresses.Length == 0 || addresses.Any(address => !IsPublicAddress(address)))
-            throw new InvalidOperationException("为保护本机安全，不能访问解析到本机或私有网络的自定义代理地址。");
-        var request = new HttpRequestMessage(HttpMethod.Get, BuildTargetUrl(targetUrl));
-        return await GetHtmlAsync(request, Id, DisplayName, cancellationToken);
-    }
-
-    internal static bool TryNormalizeBaseUrl(string input, out string normalized, out string error)
-    {
-        normalized = "";
-        error = "请输入有效的自定义网页代理地址（HTTP/HTTPS）。";
-        if (!Uri.TryCreate(input?.Trim(), UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
-            string.IsNullOrWhiteSpace(uri.Host) || !string.IsNullOrEmpty(uri.UserInfo))
-            return false;
-        if (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6)
-        {
-            if (uri.HostNameType == UriHostNameType.IPv4 && IsPrivate(IPAddress.Parse(uri.Host)) ||
-                uri.HostNameType == UriHostNameType.IPv6 && !IsPublicAddress(IPAddress.Parse(uri.Host)))
-                return false;
-            if (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
-        }
-        var builder = new UriBuilder(uri) { Fragment = "" };
-        if ((builder.Scheme == "http" && builder.Port == 80) || (builder.Scheme == "https" && builder.Port == 443)) builder.Port = -1;
-        normalized = builder.Uri.AbsoluteUri.TrimEnd('/');
-        error = "";
-        return true;
-    }
-
-    private static bool IsPrivate(IPAddress address)
-    {
-        var bytes = address.GetAddressBytes();
-        return bytes.Length == 4 && (bytes[0] == 10 || bytes[0] == 127 || bytes[0] == 192 && bytes[1] == 168 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31 || bytes[0] == 169 && bytes[1] == 254);
-    }
-
-    private static bool IsPublicAddress(IPAddress address)
-    {
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-        if (IPAddress.IsLoopback(address)) return false;
-        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-        {
-            var bytes = address.GetAddressBytes();
-            return !(bytes[0] == 0 || bytes[0] == 10 || bytes[0] == 127 || bytes[0] >= 224 ||
-                bytes[0] == 169 && bytes[1] == 254 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||
-                bytes[0] == 192 && bytes[1] == 168 || bytes[0] == 100 && bytes[1] is >= 64 and <= 127 ||
-                bytes[0] == 192 && bytes[1] == 0 || bytes[0] == 198 && bytes[1] is 18 or 19 ||
-                bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100 || bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113);
-        }
-        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-        {
-            var bytes = address.GetAddressBytes();
-            return (bytes[0] & 0xE0) == 0x20 && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0D && bytes[3] == 0xB8);
-        }
-        return false;
     }
 }

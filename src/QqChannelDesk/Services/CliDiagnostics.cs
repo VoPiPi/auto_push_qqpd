@@ -478,7 +478,10 @@ public sealed class CliDiagnostics
     {
         var safe = value ?? string.Empty;
         safe = Regex.Replace(safe, """(?i)(QQ_AI_CONNECT_TOKEN\s*[=:]\s*)[^\s"']+""", "$1[已隐藏]");
-        safe = Regex.Replace(safe, """(?i)(access_token|refresh_token|authorization|cookie)\s*[=:]\s*[^\s,;"']+""", "$1=[已隐藏]");
+        safe = Regex.Replace(
+            safe,
+            """(?i)(access_token|refresh_token|authorization|cookie)\s*[=:]\s*(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,;"']+""",
+            "$1=[已隐藏]");
         safe = Regex.Replace(safe, @"(?i)bot:v1_[A-Za-z0-9._-]+", "[凭证已隐藏]");
         return safe.Trim();
     }

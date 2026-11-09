@@ -1,0 +1,142 @@
+<Window x:Class="QqChannelDesk.TelegramCollectionHistoryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TG 采集历史" Width="1180" Height="720" MinWidth="960" MinHeight="560"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Canvas}">
+  <Window.Resources>
+    <Style x:Key="HistoryFilterLabel" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+    </Style>
+    <Style x:Key="HistoryCellText" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellText}">
+      <Setter Property="HorizontalAlignment" Value="Left"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+      <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+    </Style>
+  </Window.Resources>
+
+  <Grid Margin="24,22,24,20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="TG 采集历史" Style="{StaticResource PageTitle}"/>
+        <TextBlock Text="查看每次采集的结果、频道首页水位、自动排期和错误摘要；最多显示最近 500 条记录。"
+                   Foreground="{StaticResource Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+      </StackPanel>
+      <Border Grid.Column="1" Background="{StaticResource InfoSoft}" CornerRadius="12" Padding="11,6"
+              VerticalAlignment="Top">
+        <TextBlock Text="按账号隔离" Foreground="{StaticResource Info}" FontSize="12"/>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,14,0,12"
+            KeyDown="HistoryFilter_KeyDown">
+      <WrapPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6" VerticalAlignment="Center">
+          <TextBlock Text="计划" Style="{StaticResource HistoryFilterLabel}"/>
+          <ComboBox x:Name="ScheduleFilterBox" Width="230" DisplayMemberPath="DisplayName"
+                    ToolTip="切换当前计划或查看全部计划的采集历史"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6" VerticalAlignment="Center">
+          <TextBlock Text="状态" Style="{StaticResource HistoryFilterLabel}"/>
+          <ComboBox x:Name="StatusFilterBox" Width="112" SelectedIndex="0">
+            <ComboBoxItem Tag="" Content="全部状态"/>
+            <ComboBoxItem Tag="成功" Content="成功"/>
+            <ComboBoxItem Tag="部分成功" Content="部分成功"/>
+            <ComboBoxItem Tag="失败" Content="失败"/>
+            <ComboBoxItem Tag="已取消" Content="已取消"/>
+          </ComboBox>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,14,6" VerticalAlignment="Center">
+          <TextBlock Text="关键词" Style="{StaticResource HistoryFilterLabel}"/>
+          <TextBox x:Name="SearchBox" Width="220" ToolTip="匹配频道名称、地址、状态或错误摘要"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,6" VerticalAlignment="Center">
+          <Button x:Name="RefreshButton" Content="刷新" Style="{StaticResource PrimaryButton}"
+                  Click="RefreshButton_Click"/>
+          <Button Content="重置" Style="{StaticResource QuietButton}" Margin="8,0,0,0"
+                  Click="ResetButton_Click"/>
+        </StackPanel>
+      </WrapPanel>
+    </Border>
+
+    <Border x:Name="HistoryTableCard" Grid.Row="2" Style="{StaticResource TableCard}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+      <Grid>
+      <DataGrid x:Name="HistoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow"
+                CanUserResizeColumns="True" CanUserReorderColumns="False"
+                HeadersVisibility="Column" HorizontalScrollBarVisibility="Auto"
+                VerticalScrollBarVisibility="Auto" RowStyle="{StaticResource CompactDataGridRow}">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="开始时间" Binding="{Binding StartedDisplay}" Width="Auto" MinWidth="145"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="频道" Binding="{Binding ChannelName}" Width="1.1*" MinWidth="140"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="触发来源" Binding="{Binding TriggerDisplay}" Width="Auto" MinWidth="82"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTemplateColumn Header="状态" Width="Auto" MinWidth="92">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate>
+                <Border Style="{StaticResource StatusPill}"
+                        Background="{Binding Status, Converter={StaticResource StatusSoftBrushConverter}}">
+                  <TextBlock Text="{Binding Status}" Style="{StaticResource StatusPillText}"
+                             Foreground="{Binding Status, Converter={StaticResource StatusStrongBrushConverter}}"/>
+                </Border>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+          <DataGridTextColumn Header="耗时" Binding="{Binding DurationDisplay}" Width="Auto" MinWidth="76"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="统计" Binding="{Binding StatisticsDisplay}" Width="2.1*" MinWidth="140"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="首页 / 水位" Binding="{Binding PagingDisplay}" Width="Auto" MinWidth="128"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="自动排期" Binding="{Binding AutoScheduleDisplay}" Width="1.35*" MinWidth="130"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+          <DataGridTextColumn Header="错误摘要" Binding="{Binding Error}" Width="1.45*" MinWidth="140"
+                              ElementStyle="{StaticResource HistoryCellText}"/>
+        </DataGrid.Columns>
+      </DataGrid>
+
+      <Border x:Name="EmptyState" Margin="1,43,1,1" Background="{StaticResource EmptySurface}"
+              CornerRadius="0,0,5,5" IsHitTestVisible="False" Visibility="Collapsed">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock x:Name="EmptyTitle" Text="暂无采集历史" FontSize="16" FontWeight="SemiBold"
+                     HorizontalAlignment="Center"/>
+          <TextBlock x:Name="EmptyMessage" Text="完成一次 TG 采集后，运行结果会显示在这里。"
+                     Foreground="{StaticResource Muted}" TextAlignment="Center" MaxWidth="420"
+                     Margin="0,7,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+      </Grid>
+
+    <Grid Grid.Row="1" Margin="0,12,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock x:Name="StatusText" Text="正在读取采集历史…" Foreground="{StaticResource Muted}"
+                 VerticalAlignment="Center" TextWrapping="Wrap"/>
+      <Button Grid.Column="1" Content="关闭" Width="86" HorizontalAlignment="Right"
+              Style="{StaticResource QuietButton}" IsCancel="True"/>
+    </Grid>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

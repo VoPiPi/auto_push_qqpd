@@ -54,6 +54,7 @@ public partial class MaterialsPage : UserControl
             _allMaterials = await _store.GetMaterialsAsync(MaterialSearchBox.Text, filter?.Tag?.ToString());
             _currentPage = 1;
             RenderCurrentPage();
+            MaterialsLastRefreshText.Text = $"刷新于 {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
         }
         catch (Exception ex)
         {
@@ -62,6 +63,7 @@ public partial class MaterialsPage : UserControl
             UpdatePagination();
             UpdateSelectionCount();
             MaterialsStatus.Text = $"未能读取素材库，请刷新重试：{CliDiagnostics.Sanitize(ex.Message)}";
+            MaterialsLastRefreshText.Text = "刷新未完成";
         }
         finally { _loading = false; }
     }
@@ -189,10 +191,28 @@ public partial class MaterialsPage : UserControl
             }
 
             var result = await Task.Run(() => MaterialTemplateService.ParseWorkbook(dialog.FileName, targets, DateTimeOffset.Now));
-            var preview = new MaterialImportPreviewWindow(result, targets) { Owner = Window.GetWindow(this) };
-            if (preview.ShowDialog() != true) return;
-
-            await ImportRowsAsync(preview.RowsToImport, preview.FailureCount, fileHash, Path.GetFileName(dialog.FileName), Window.GetWindow(this));
+            var owner = Window.GetWindow(this);
+            var sourceFileName = Path.GetFileName(dialog.FileName);
+            var preview = new MaterialImportPreviewWindow(
+                result,
+                targets,
+                importAsync: rows => ImportRowsAsync(rows, fileHash, sourceFileName))
+            {
+                Owner = owner
+            };
+            preview.ShowDialog();
+            if (preview.ImportedCount > 0)
+            {
+                var skippedText = preview.RemainingCount > 0
+                    ? $"\n另有 {preview.RemainingCount} 条待修正项未导入。"
+                    : "";
+                MessageBox.Show(
+                    owner,
+                    $"导入完成：成功 {preview.ImportedCount} 条。{skippedText}",
+                    "导入完成",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
         }
         catch (Exception ex)
         {
@@ -216,12 +236,10 @@ public partial class MaterialsPage : UserControl
         return targets.Where(target => target.Channels.Count > 0).ToArray();
     }
 
-    private async Task ImportRowsAsync(
+    private async Task<int> ImportRowsAsync(
         IReadOnlyList<MaterialTemplateImportRow> rows,
-        int failureCount,
         string fileHash,
-        string sourceFileName,
-        Window? owner)
+        string sourceFileName)
     {
         var drafts = new List<MaterialDraft>(rows.Count);
         var importedMedia = new List<string>();
@@ -279,16 +297,8 @@ public partial class MaterialsPage : UserControl
             }
             throw;
         }
-
-        try
-        {
-            await LoadMaterialsAsync();
-            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(owner, $"导入完成：成功 {drafts.Count} 条，失败 {failureCount} 条。\n列表未刷新，请手动刷新。\n\n{CliDiagnostics.Sanitize(ex.Message)}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
+        await LoadMaterialsAsync();
+        return drafts.Count;
     }
 
     private void EditMaterialButton_Click(object sender, RoutedEventArgs e) =>
@@ -339,7 +349,7 @@ public partial class MaterialsPage : UserControl
 
     public async Task MarkMaterialPublishedAsync(long id, string? link)
     {
-        await _store.UpdateMaterialStatusAsync(id, "published", link);
+        await _store.UpdateMaterialStatusAsync(id, "published", link, clearPublishAt: true);
         await LoadMaterialsAsync();
     }
 
@@ -694,8 +704,8 @@ public partial class MaterialsPage : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                "所选素材中没有可设置发布时间的记录。已发布素材不参与批量设置。",
-                "批量设置发布时间",
+                "所选素材中没有可设置定时时间的记录。已发布素材不参与批量设置。",
+                "批量设置定时时间",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -715,7 +725,7 @@ public partial class MaterialsPage : UserControl
             publishAt);
         await LoadMaterialsAsync();
         ShowBatchResult(
-            "批量设置发布时间",
+            "批量设置定时时间",
             result.UpdatedIds.Count,
             result.RunningIds,
             result.PublishedIds,

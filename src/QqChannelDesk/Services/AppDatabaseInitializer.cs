@@ -1,5 +1,7 @@
 namespace QqChannelDesk.Services;
 
+using QqChannelDesk.Services.Collection;
+
 /// <summary>
 /// Initializes the single application database before the main window starts
 /// using any feature that depends on persisted data.
@@ -13,6 +15,9 @@ public sealed class AppDatabaseInitializer
     private readonly ProxyPoolStore? _proxyPool;
     private readonly TelegramCollectionStore? _telegramCollections;
     private readonly PublishPolicyStore? _publishPolicies;
+    private readonly CollectionSourceStore? _collectionSources;
+    private readonly CollectionRunStore? _collectionRuns;
+    private readonly CollectionAiUsageStore? _collectionAiUsage;
 
     public AppDatabaseInitializer(
         SystemSettingsStore settings,
@@ -21,7 +26,10 @@ public sealed class AppDatabaseInitializer
         PublishHistoryStore history,
         ProxyPoolStore? proxyPool = null,
         TelegramCollectionStore? telegramCollections = null,
-        PublishPolicyStore? publishPolicies = null)
+        PublishPolicyStore? publishPolicies = null,
+        CollectionSourceStore? collectionSources = null,
+        CollectionRunStore? collectionRuns = null,
+        CollectionAiUsageStore? collectionAiUsage = null)
     {
         _settings = settings;
         _channels = channels;
@@ -30,6 +38,9 @@ public sealed class AppDatabaseInitializer
         _proxyPool = proxyPool;
         _telegramCollections = telegramCollections;
         _publishPolicies = publishPolicies;
+        _collectionSources = collectionSources;
+        _collectionRuns = collectionRuns;
+        _collectionAiUsage = collectionAiUsage;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -44,5 +55,8 @@ public sealed class AppDatabaseInitializer
         if (_proxyPool is not null) await _proxyPool.InitializeAsync(cancellationToken);
         if (_telegramCollections is not null) await _telegramCollections.InitializeAsync(cancellationToken);
         if (_publishPolicies is not null) await _publishPolicies.InitializeAsync(cancellationToken);
+        if (_collectionSources is not null) await _collectionSources.InitializeAsync(cancellationToken);
+        if (_collectionRuns is not null) await _collectionRuns.InitializeAsync(cancellationToken);
+        if (_collectionAiUsage is not null) await _collectionAiUsage.InitializeAsync(cancellationToken);
     }
 }

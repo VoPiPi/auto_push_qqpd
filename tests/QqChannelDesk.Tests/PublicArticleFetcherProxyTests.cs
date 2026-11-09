@@ -45,6 +45,28 @@ public sealed class PublicArticleFetcherProxyTests
     }
 
     [Fact]
+    public void IsConfiguredProxyEndpoint_AllowsOnlySystemProxyForTheActualTarget()
+    {
+        var target = new Uri("https://ai.example.test/v1/chat/completions");
+        var proxy = new StubProxy(new Uri("http://127.0.0.1:7897"), isBypassed: false);
+
+        Assert.True(PublicArticleFetcher.IsConfiguredProxyEndpoint(
+            target, new DnsEndPoint("127.0.0.1", 7897), proxy));
+        Assert.False(PublicArticleFetcher.IsConfiguredProxyEndpoint(
+            target, new DnsEndPoint("127.0.0.1", 8080), proxy));
+    }
+
+    [Fact]
+    public void IsConfiguredProxyEndpoint_RejectsSystemProxyWhenTargetIsBypassed()
+    {
+        var target = new Uri("https://ai.example.test/v1/chat/completions");
+        var proxy = new StubProxy(new Uri("http://127.0.0.1:7897"), isBypassed: true);
+
+        Assert.False(PublicArticleFetcher.IsConfiguredProxyEndpoint(
+            target, new DnsEndPoint("127.0.0.1", 7897), proxy));
+    }
+
+    [Fact]
     public void EnsurePublicAddress_StillRejectsPrivateTargets()
     {
         Assert.Throws<HttpRequestException>(() =>

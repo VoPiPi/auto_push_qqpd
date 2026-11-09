@@ -48,32 +48,61 @@ public sealed class StatusBrushConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         Binding.DoNothing;
 
+    /// <summary>
+    /// 状态文案到语义色的统一映射。匹配顺序很重要：
+    /// “不可用/不可访问/未启用”等否定词必须先于“可用/启用”判断，否则会被误判为成功色。
+    /// </summary>
     private static StatusTone ResolveTone(string status)
     {
+        if (string.IsNullOrWhiteSpace(status)) return StatusTone.Neutral;
+
+        // 阻断性、需要立即处理的结果保留红色提醒。
         if (status.Contains("失败", StringComparison.Ordinal) ||
             status.Contains("不可用", StringComparison.Ordinal) ||
             status.Contains("不可访问", StringComparison.Ordinal) ||
             status.Contains("逾期", StringComparison.Ordinal) ||
-            status.Contains("删除", StringComparison.Ordinal))
+            status.Contains("已删除", StringComparison.Ordinal) ||
+            status.Contains("异常", StringComparison.Ordinal))
             return StatusTone.Danger;
 
-        if (status.Contains("成功", StringComparison.Ordinal) ||
-            status.Contains("已发布", StringComparison.Ordinal) ||
-            status.Contains("可用", StringComparison.Ordinal) ||
-            status.Contains("可访问", StringComparison.Ordinal) ||
-            status.Contains("保留", StringComparison.Ordinal) ||
-            status.Contains("转草稿", StringComparison.Ordinal))
-            return StatusTone.Success;
+        // 已停用、取消等非故障收尾状态使用灰色。
+        if (status.Contains("未完成", StringComparison.Ordinal) ||
+            status.Contains("已取消", StringComparison.Ordinal) ||
+            status.Contains("已停用", StringComparison.Ordinal) ||
+            status.Contains("未启用", StringComparison.Ordinal) ||
+            status.Contains("未验证", StringComparison.Ordinal) ||
+            status.Contains("忽略", StringComparison.Ordinal))
+            return StatusTone.Neutral;
 
-        if (status.Contains("处理中", StringComparison.Ordinal) ||
+        // “部分成功”必须先于“成功”判断，否则会被误映射为绿色。
+        if (status.Contains("部分成功", StringComparison.Ordinal) ||
+            status.Contains("等待重试", StringComparison.Ordinal) ||
+            status.Contains("处理中", StringComparison.Ordinal) ||
             status.Contains("执行中", StringComparison.Ordinal) ||
             status.Contains("发布中", StringComparison.Ordinal) ||
+            status.Contains("运行中", StringComparison.Ordinal) ||
             status.Contains("已暂停", StringComparison.Ordinal) ||
             status.Contains("待核实", StringComparison.Ordinal) ||
             status.Contains("未测", StringComparison.Ordinal))
             return StatusTone.Warning;
 
-        if (status.Contains("待发布", StringComparison.Ordinal) ||
+        // 明确的成功、可用或已开启状态，使用正色。
+        if (status.Contains("正常", StringComparison.Ordinal) ||
+            status.Contains("成功", StringComparison.Ordinal) ||
+            status.Contains("已发布", StringComparison.Ordinal) ||
+            status.Contains("已启用", StringComparison.Ordinal) ||
+            status.Contains("已入素材库", StringComparison.Ordinal) ||
+            status.Contains("可用", StringComparison.Ordinal) ||
+            status.Contains("可访问", StringComparison.Ordinal) ||
+            status.Contains("保留", StringComparison.Ordinal) ||
+            status.Contains("转草稿", StringComparison.Ordinal) ||
+            status.Contains("通过", StringComparison.Ordinal))
+            return StatusTone.Success;
+
+        // 排队等待，使用中等强调程度。
+        if (status.Contains("排队", StringComparison.Ordinal) ||
+            status.Contains("待发布", StringComparison.Ordinal) ||
+            status.Contains("等待发布", StringComparison.Ordinal) ||
             status.Contains("等待执行", StringComparison.Ordinal) ||
             status.Contains("待处理", StringComparison.Ordinal) ||
             status.Contains("未发布", StringComparison.Ordinal))

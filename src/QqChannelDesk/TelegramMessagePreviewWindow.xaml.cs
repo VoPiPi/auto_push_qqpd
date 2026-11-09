@@ -12,6 +12,7 @@ namespace QqChannelDesk;
 public partial class TelegramMessagePreviewWindow : Window
 {
     private readonly TelegramTempItem _item;
+    private readonly ITelegramTransport? _transport;
     private readonly string _cookieHeader;
     private readonly Func<TelegramTempItem, Task<bool>> _draftAction;
     private readonly Action<TelegramTempItem> _deleteAction;
@@ -22,10 +23,25 @@ public partial class TelegramMessagePreviewWindow : Window
         string cookieHeader,
         Func<TelegramTempItem, Task<bool>> draftAction,
         Action<TelegramTempItem> deleteAction)
+        : this(item, transport: null, cookieHeader, draftAction, deleteAction)
+    {
+    }
+
+    /// <summary>
+    /// 生产链路使用的构造：优先用消息自己记录的传输通道下载图片，
+    /// <paramref name="fallbackCookieHeader"/> 只服务旧的网页代理路径。
+    /// </summary>
+    public TelegramMessagePreviewWindow(
+        TelegramTempItem item,
+        ITelegramTransport? transport,
+        string fallbackCookieHeader,
+        Func<TelegramTempItem, Task<bool>> draftAction,
+        Action<TelegramTempItem> deleteAction)
     {
         InitializeComponent();
         _item = item;
-        _cookieHeader = cookieHeader;
+        _transport = transport;
+        _cookieHeader = fallbackCookieHeader;
         _draftAction = draftAction;
         _deleteAction = deleteAction;
         Title = $"消息预览 · {item.Channel}";
@@ -65,9 +81,31 @@ public partial class TelegramMessagePreviewWindow : Window
         {
             var directory = TelegramCollectorService.BuildPreviewDirectory(
                 AppContext.BaseDirectory, TelegramCollectorService.ReadMessageId(_item.Url));
-            var download = await _collector.DownloadMediaAsync(images, _cookieHeader, cancellationToken: default, targetDirectory: directory);
+            var paths = new List<string>(images.Length);
+            var failed = 0;
+            if (_transport is not null && _item.TransportContext is { } context)
+            {
+                foreach (var media in images)
+                {
+                    try
+                    {
+                        paths.Add(await _transport.DownloadMediaAsync(media, context, directory));
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        AppLogger.Instance.Warning($"tg 预览图片下载失败：{CliDiagnostics.Sanitize(ex.Message)}");
+                    }
+                }
+            }
+            else
+            {
+                var legacy = await _collector.DownloadMediaAsync(images, _cookieHeader, cancellationToken: default, targetDirectory: directory);
+                paths.AddRange(legacy.Paths);
+                failed = legacy.Failed;
+            }
             ImagePanel.Children.Clear();
-            foreach (var path in download.Paths)
+            foreach (var path in paths)
             {
                 if (!File.Exists(path)) continue;
                 var bitmap = new BitmapImage();
@@ -85,9 +123,9 @@ public partial class TelegramMessagePreviewWindow : Window
                     ToolTip = Path.GetFileName(path)
                 });
             }
-            SetStatus(download.Failed > 0
-                ? $"已加载 {download.Paths.Count} 张图片；{download.Failed} 张失败，请重试。"
-                : $"已加载 {download.Paths.Count} 张图片。", download.Failed == 0);
+            SetStatus(failed > 0
+                ? $"已加载 {paths.Count} 张图片；{failed} 张失败，请重试。"
+                : $"已加载 {paths.Count} 张图片。", failed == 0);
         }
         catch (Exception ex)
         {

@@ -43,9 +43,9 @@ public partial class MaterialBatchSettingsWindow : Window
         }
         else
         {
-            Title = "批量设置发布时间";
-            Heading.Text = "批量设置发布时间";
-            Description.Text = $"为所选的 {_selectedCount} 条素材统一设置未来发布时间。";
+            Title = "批量设置定时时间";
+            Heading.Text = "批量设置定时时间";
+            Description.Text = $"为所选的 {_selectedCount} 条素材统一设置未来定时时间。";
             TargetPanel.Visibility = Visibility.Collapsed;
             TimePanel.Visibility = Visibility.Visible;
             var defaultTime = DateTimeOffset.Now.AddHours(1);
@@ -122,7 +122,7 @@ public partial class MaterialBatchSettingsWindow : Window
         PublishAt = ResolvePublishAt(PublishDatePicker.SelectedDate, PublishTimeBox.Text, DateTimeOffset.Now);
         if (PublishAt is null)
         {
-            FormMessage.Text = "请选择有效的未来发布时间,格式为 时:分:秒。";
+            FormMessage.Text = "请选择有效的未来定时时间,格式为 时:分:秒。";
             return;
         }
 

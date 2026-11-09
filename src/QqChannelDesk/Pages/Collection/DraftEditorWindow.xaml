@@ -1,0 +1,69 @@
+<Window x:Class="QqChannelDesk.Pages.Collection.DraftEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="采集结果" Width="640" Height="600" MinWidth="520" MinHeight="480"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        ShowInTaskbar="False" Background="{StaticResource Canvas}"
+        Closed="Window_Closed">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock x:Name="TitleText" Text="采集结果" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock x:Name="SubtitleText" Text="" Foreground="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap" />
+      </StackPanel>
+      <TextBlock x:Name="ParsedByText" Grid.Column="1" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Visibility="Collapsed" />
+    </Grid>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,16">
+      <StackPanel>
+        <TextBlock Text="标题" Foreground="{StaticResource Muted}" Margin="0,0,0,4" />
+        <TextBox x:Name="TitleBox" />
+        <TextBlock Text="原文链接" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+        <TextBox x:Name="UrlBox" ToolTip="来源链接只作为出处信息，不会附加到帖子正文" />
+        <TextBlock Text="正文（可编辑）" Foreground="{StaticResource Muted}" Margin="0,12,0,4" />
+        <TextBox x:Name="ContentBox" MinHeight="220" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" />
+        <StackPanel x:Name="MediaSection" Margin="0,10,0,0" Visibility="Collapsed">
+          <TextBlock x:Name="MediaInfoText" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,6" />
+          <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6" Padding="6">
+            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+              <ItemsControl x:Name="MediaItems">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="0,1">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="2,0,8,0" />
+                      <Button Grid.Column="1" Content="×" Tag="{Binding Index}" Click="RemoveMediaButton_Click"
+                              Style="{StaticResource QuietButton}" Width="28" Height="24" MinWidth="0" MinHeight="0" Padding="0"
+                              ToolTip="从当前草稿中移除该媒体" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+    <Grid Grid.Row="2" x:Name="ActionPanel">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock x:Name="MessageText" Foreground="{StaticResource Warn}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0" />
+      <Button x:Name="ReparseButton" Grid.Column="1" Content="再次解析" Style="{StaticResource QuietButton}" ToolTip="换一种采集规则重新解析；规则用尽时尝试 AI 兜底" Click="ReparseButton_Click" />
+      <Button x:Name="SaveButton" Grid.Column="2" Content="保留草稿" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="SaveButton_Click" />
+    </Grid>
+  </Grid>
+</Window>

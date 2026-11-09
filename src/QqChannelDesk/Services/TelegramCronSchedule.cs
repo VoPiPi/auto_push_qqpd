@@ -99,7 +99,7 @@ public sealed class TelegramCronSchedule
     {
         if (!_month.Contains(candidate.Month) || !_hour.Contains(candidate.Hour) || !_minute.Contains(candidate.Minute)) return false;
         var dayOfMonthMatches = _dayOfMonth.Contains(candidate.Day);
-        var dayOfWeekMatches = _dayOfWeek.Contains(CronDayOfWeek(candidate.DayOfWeek));
+        var dayOfWeekMatches = _dayOfWeek.ContainsWeekday(CronDayOfWeek(candidate.DayOfWeek));
         return MatchesDay(dayOfMonthMatches, dayOfWeekMatches);
     }
 
@@ -122,13 +122,11 @@ public sealed class TelegramCronSchedule
         private readonly HashSet<int> _values;
         private CronField(HashSet<int> values, bool wildcard) { _values = values; IsWildcard = wildcard; }
         public bool IsWildcard { get; }
-        public bool Contains(int value)
-        {
-            if (_values.Contains(value)) return true;
-            // Cron accepts both 0 and 7 for Sunday. Treat either spelling as
-            // the same value when evaluating the weekday field.
-            return value is 0 or 7 && (_values.Contains(0) || _values.Contains(7));
-        }
+        public bool Contains(int value) => _values.Contains(value);
+        // Cron accepts both 0 and 7 for Sunday. Keep that alias scoped to the
+        // weekday field so a minute or hour value of 7 is not treated as Sunday.
+        public bool ContainsWeekday(int day) =>
+            _values.Contains(day) || (day == 0 && _values.Contains(7));
 
         public static bool TryParse(string text, int minimum, int maximum, out CronField field, out string error)
         {
